@@ -4,6 +4,7 @@ import android.Manifest
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -40,6 +41,8 @@ class MainActivity : ComponentActivity() {
                     if (Build.VERSION.SDK_INT >= 33) permissions += Manifest.permission.POST_NOTIFICATIONS
                     launcher.launch(permissions.toTypedArray())
                 }
+
+                BackHandler(enabled = showSettings) { showSettings = false }
 
                 if (showSettings) {
                     SettingsScreen(
@@ -95,7 +98,7 @@ private fun MainScreen(
 
     Scaffold(topBar = {
         TopAppBar(
-            title = { Text("CellTracker 0.2.2") },
+            title = { Text("CellTracker 0.2.3") },
             actions = { TextButton(onClick = onSettings) { Text("Settings") } }
         )
     }) { padding ->

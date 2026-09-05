@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
+import android.os.Looper
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -30,7 +31,7 @@ class LocationRepository(private val context: Context) {
         fun request(provider: String) {
             try {
                 if (lm.isProviderEnabled(provider)) {
-                    lm.requestLocationUpdates(provider, 1000L, 0f, listener)
+                    lm.requestLocationUpdates(provider, 1000L, 0f, listener, Looper.getMainLooper())
                     lm.getLastKnownLocation(provider)?.let { trySend(it.toData()) }
                 }
             } catch (_: Exception) { }
@@ -48,6 +49,7 @@ class LocationRepository(private val context: Context) {
         altitude = if (hasAltitude()) String.format(Locale.US, "%.1f m", altitude) else "--",
         accuracy = if (hasAccuracy()) String.format(Locale.US, "%.1f m", accuracy) else "--",
         speedKmh = if (hasSpeed()) String.format(Locale.US, "%.1f km/h", speed * 3.6f) else "--",
-        bearing = if (hasBearing()) String.format(Locale.US, "%.1f°", bearing) else "--"
+        bearing = if (hasBearing()) String.format(Locale.US, "%.1f°", bearing) else "--",
+        isValid = true
     )
 }

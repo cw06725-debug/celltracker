@@ -33,7 +33,8 @@ data class LocationData(
     val altitude: String = "--",
     val accuracy: String = "--",
     val speedKmh: String = "--",
-    val bearing: String = "--"
+    val bearing: String = "--",
+    val isValid: Boolean = false
 )
 
 enum class MarkerAction(val label: String) {
