@@ -4,6 +4,7 @@ import android.Manifest
 import android.graphics.Color as AndroidColor
 import android.os.Build
 import android.os.Bundle
+import android.preference.PreferenceManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -31,7 +32,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.osmdroid.config.Configuration
-import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.tileprovider.tilesource.XYTileSource
 import org.osmdroid.util.BoundingBox
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
@@ -131,7 +132,7 @@ private fun MainScreen(
 
     Scaffold(topBar = {
         TopAppBar(
-            title = { Text("CellTracker 0.3.0") },
+            title = { Text("CellTracker 0.3.1") },
             actions = { TextButton(onClick = onSettings) { Text("Settings") } }
         )
     }) { padding ->
@@ -435,44 +436,68 @@ private fun RatLegend(rats: List<String>) {
 @Composable
 private fun OsmTrackMap(samples: List<TrackSample>, modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    val mapView = remember {
-        Configuration.getInstance().userAgentValue = context.packageName
+    val mapView = remember(context) {
+        Configuration.getInstance().apply {
+            load(context, PreferenceManager.getDefaultSharedPreferences(context))
+            userAgentValue = "${context.packageName}/0.3.1"
+        }
+        val osmHttps = XYTileSource(
+            "OpenStreetMap", 0, 19, 256, ".png",
+            arrayOf("https://tile.openstreetmap.org/")
+        )
         MapView(context).apply {
-            setTileSource(TileSourceFactory.MAPNIK)
+            setTileSource(osmHttps)
+            setUseDataConnection(true)
             setMultiTouchControls(true)
+            minZoomLevel = 3.0
+            maxZoomLevel = 19.0
             controller.setZoom(16.0)
         }
     }
+
     DisposableEffect(mapView) {
         mapView.onResume()
-        onDispose { mapView.onPause(); mapView.onDetach() }
+        onDispose {
+            mapView.onPause()
+            mapView.onDetach()
+        }
     }
-    AndroidView(factory = { mapView }, modifier = modifier, update = { map ->
-        map.overlays.clear()
+
+    // Keep AndroidView.update free of camera/overlay side effects. Compose can invoke update
+    // repeatedly during layout, which previously caused the map to refit continuously and
+    // made the tab/header area appear to shake.
+    LaunchedEffect(mapView, samples) {
+        mapView.overlays.clear()
         val allPoints = mutableListOf<GeoPoint>()
+
         samples.groupBy { it.simSlot }.values.forEach { simSamples ->
             var currentRat: String? = null
             var segment = mutableListOf<GeoPoint>()
+
             fun flush() {
                 if (segment.size >= 2 && currentRat != null) {
-                    val line = Polyline().apply {
+                    mapView.overlays.add(Polyline().apply {
                         setPoints(segment.toList())
                         outlinePaint.color = ratColor(currentRat!!)
                         outlinePaint.strokeWidth = 10f
-                    }
-                    map.overlays.add(line)
+                    })
                 }
                 segment = mutableListOf()
             }
+
             simSamples.sortedBy { it.timestampMs }.forEach { s ->
                 val point = GeoPoint(s.latitude!!, s.longitude!!)
                 allPoints += point
                 val rat = normalizedRat(s)
                 if (currentRat == null) currentRat = rat
-                if (rat != currentRat) { flush(); currentRat = rat }
+                if (rat != currentRat) {
+                    flush()
+                    currentRat = rat
+                }
                 segment += point
+
                 if (s.isMarker) {
-                    map.overlays.add(Marker(map).apply {
+                    mapView.overlays.add(Marker(mapView).apply {
                         position = point
                         title = if (s.eventType.isNotBlank()) s.eventType else "Marker"
                         snippet = "${s.operator} · ${normalizedRat(s)} · RSRP ${s.rsrp} dBm"
@@ -482,13 +507,25 @@ private fun OsmTrackMap(samples: List<TrackSample>, modifier: Modifier = Modifie
             }
             flush()
         }
-        if (allPoints.size == 1) {
-            map.controller.setCenter(allPoints.first()); map.controller.setZoom(18.0)
-        } else if (allPoints.size > 1) {
-            map.post { runCatching { map.zoomToBoundingBox(BoundingBox.fromGeoPoints(allPoints), true, 80) } }
+
+        mapView.invalidate()
+        mapView.post {
+            when {
+                allPoints.size == 1 -> {
+                    mapView.controller.setCenter(allPoints.first())
+                    mapView.controller.setZoom(18.0)
+                }
+                allPoints.size > 1 -> runCatching {
+                    mapView.zoomToBoundingBox(BoundingBox.fromGeoPoints(allPoints), true, 80)
+                }
+            }
         }
-        map.invalidate()
-    })
+    }
+
+    AndroidView(
+        factory = { mapView },
+        modifier = modifier
+    )
 }
 
 @Composable

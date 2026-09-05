@@ -1,3 +1,12 @@
+# CellTracker v0.3.1
+
+Fix release for the historical track map.
+
+- Uses an explicit HTTPS OpenStreetMap tile source.
+- Initializes osmdroid configuration/cache before creating the map.
+- Removes camera/overlay mutations from AndroidView.update to stop repeated relayout/refit jitter.
+- Fits the camera only when the selected sample set changes.
+
 # CellTracker v0.3.0
 
 V0.3 introduces recording history preview and the first in-app map workflow.
