@@ -11,6 +11,13 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -83,15 +90,23 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                when {
-                    detailPath != null -> RecordingDetailScreen(
+                val rootDestination = when { detailPath != null -> "detail"; showSettings -> "settings"; else -> "main" }
+                AnimatedContent(
+                    targetState = rootDestination,
+                    transitionSpec = {
+                        (fadeIn() + scaleIn(initialScale = 0.96f)).togetherWith(fadeOut() + scaleOut(targetScale = 1.02f))
+                    },
+                    label = "rootNavigation"
+                ) { destination ->
+                when (destination) {
+                    "detail" -> RecordingDetailScreen(
                         path = detailPath!!,
                         fallbackItem = state.recordings.firstOrNull { it.path == detailPath },
                         onBack = { detailPath = null },
                         onExport = vm::exportRecording,
                         onDelete = { path -> vm.deleteRecording(path); detailPath = null }
                     )
-                    showSettings -> SettingsScreen(
+                    "settings" -> SettingsScreen(
                         settings = state.settings,
                         onSave = { vm.updateSettings(it); showSettings = false },
                         onBack = { showSettings = false }
@@ -110,6 +125,7 @@ class MainActivity : ComponentActivity() {
                         onSettings = { showSettings = true },
                         onDismissMessage = vm::clearMessage
                     )
+                }
                 }
             }
         }
@@ -156,7 +172,14 @@ private fun MainScreen(
             }
         )
     }) { padding ->
-        if (showLiveMap) {
+        AnimatedContent(
+            targetState = showLiveMap,
+            transitionSpec = {
+                (fadeIn() + scaleIn(initialScale = 0.97f)).togetherWith(fadeOut() + scaleOut(targetScale = 1.03f))
+            },
+            label = "mainLiveMap"
+        ) { liveMapVisible ->
+        if (liveMapVisible) {
             LiveMapScreen(state = state, onSelectSim = onSelectSim, modifier = Modifier.padding(padding).fillMaxSize())
         } else Column(
             modifier = Modifier.padding(padding).padding(16.dp).fillMaxSize().verticalScroll(rememberScrollState()),
@@ -295,6 +318,7 @@ private fun MainScreen(
             state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             Text("Last cellular update: ${state.lastUpdated}", style = MaterialTheme.typography.bodySmall)
         }
+        }
     }
 
     if (showExportDialog) {
@@ -334,20 +358,21 @@ private fun LiveMapScreen(
     val selected = state.sims.firstOrNull { it.subscriptionId == state.selectedSubscriptionId } ?: state.sims.firstOrNull()
     var liveSamples by remember { mutableStateOf<List<TrackSample>>(emptyList()) }
 
-    // The recording CSV is the single source of truth for the live track. Polling it at a
-    // modest cadence keeps the map independent from the UI refresh interval and ensures
-    // the live view is identical to the track that will later be exported/replayed.
+    // Live Map only owns the active recording. Once Stop is pressed, historical
+    // samples disappear from this screen; history remains available from Recording Detail.
     LaunchedEffect(state.latestRecordingPath, state.isRecording, state.recordingSamples) {
-        val path = state.latestRecordingPath
-        if (path == null) {
+        if (!state.isRecording) {
             liveSamples = emptyList()
             return@LaunchedEffect
         }
-        while (true) {
+        val path = state.latestRecordingPath ?: run {
+            liveSamples = emptyList()
+            return@LaunchedEffect
+        }
+        while (state.isRecording) {
             liveSamples = withContext(Dispatchers.IO) {
                 runCatching { RecordingDetailRepository.loadSamples(path) }.getOrDefault(emptyList())
             }
-            if (!state.isRecording) break
             delay(1000L)
         }
     }
@@ -377,7 +402,7 @@ private fun LiveMapScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column {
-                        Text(if (state.isRecording) "Recording · live track" else "Latest recorded track", style = MaterialTheme.typography.labelLarge)
+                        Text(if (state.isRecording) "Recording · live track" else "Live location", style = MaterialTheme.typography.labelLarge)
                         Text("${visibleSamples.count { it.locationValid }} GPS points", style = MaterialTheme.typography.bodySmall)
                     }
                     val c = selected?.servingCell
@@ -389,6 +414,17 @@ private fun LiveMapScreen(
         val currentLat = state.location.latitude.toDoubleOrNull()
         val currentLon = state.location.longitude.toDoubleOrNull()
         val currentPoint = if (state.location.isValid && currentLat != null && currentLon != null) GeoPoint(currentLat, currentLon) else null
+        val currentSample = if (currentPoint != null && selected != null) {
+            val c = selected.servingCell
+            TrackSample(
+                timestampMs = state.location.timestampMs.takeIf { it > 0 } ?: System.currentTimeMillis(),
+                simSlot = selected.simSlotIndex + 1, subscriptionId = selected.subscriptionId, operator = c.operator,
+                rat = c.rat, displayRat = c.displayRat, mcc = c.mcc, mnc = c.mnc, tac = c.tac, cellId = c.cellId,
+                pci = c.pci, arfcn = c.arfcn, rsrp = c.rsrp, rsrq = c.rsrq, sinr = c.sinr,
+                latitude = currentLat, longitude = currentLon, altitude = state.location.altitude, accuracy = state.location.accuracy,
+                speedKmh = state.location.speedKmh, bearing = state.location.bearing, locationValid = true
+            )
+        } else null
         val valid = visibleSamples.filter { it.locationValid && it.latitude != null && it.longitude != null }
         if (valid.isEmpty() && currentPoint == null) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -402,6 +438,7 @@ private fun LiveMapScreen(
                     modifier = Modifier.fillMaxWidth().weight(1f),
                     currentPoint = currentPoint,
                     currentLabel = selected?.servingCell?.let { "${it.displayRat.ifBlank { it.rat }} · ${valueWithUnit(it.rsrp, "dBm")}" },
+                    currentSample = currentSample,
                     liveFollow = state.isRecording,
                     detailFields = state.settings.mapDetailFields
                 )
@@ -574,6 +611,7 @@ private fun OsmTrackMap(
     modifier: Modifier = Modifier,
     currentPoint: GeoPoint? = null,
     currentLabel: String? = null,
+    currentSample: TrackSample? = null,
     liveFollow: Boolean = false,
     detailFields: Set<MapDetailField> = AppSettings().mapDetailFields
 ) {
@@ -715,7 +753,7 @@ private fun OsmTrackMap(
                 snippet = currentLabel ?: "Live GPS"
                 setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
                 setOnMarkerClickListener { _, _ ->
-                    selectedSample = samples.maxByOrNull { it.timestampMs }
+                    selectedSample = currentSample ?: samples.maxByOrNull { it.timestampMs }
                     true
                 }
             })
@@ -830,43 +868,79 @@ private fun NeighborCellItem(index: Int, n: CellData) {
 @Composable
 private fun SettingsScreen(settings: AppSettings, onSave: (AppSettings) -> Unit, onBack: () -> Unit) {
     var draft by remember(settings) { mutableStateOf(settings) }
+    var page by remember { mutableStateOf("root") }
+    var newIssue by remember { mutableStateOf("") }
+    BackHandler(enabled = page != "root") { page = "root" }
     Scaffold(topBar = {
-        TopAppBar(title = { Text("Settings") }, navigationIcon = { TextButton(onClick = onBack) { Text("Back") } },
-            actions = { TextButton(onClick = { onSave(draft) }) { Text("Save") } })
+        TopAppBar(
+            title = { Text(when (page) { "sampling" -> "Sampling"; "marker" -> "Marker Button"; "map" -> "Map Point Details"; "issues" -> "Issue Types"; else -> "Settings" }) },
+            navigationIcon = { TextButton(onClick = { if (page == "root") onBack() else page = "root" }) { Text("Back") } },
+            actions = { if (page == "root") TextButton(onClick = { onSave(draft) }) { Text("Save") } }
+        )
     }) { padding ->
-        Column(modifier = Modifier.padding(padding).padding(16.dp).fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            Text("Sampling", style = MaterialTheme.typography.titleLarge)
-            IntervalPicker("UI refresh interval", draft.uiRefreshMs) { draft = draft.copy(uiRefreshMs = it) }
-            IntervalPicker("Recording interval", draft.recordIntervalMs) { draft = draft.copy(recordIntervalMs = it) }
-            HorizontalDivider(); Text("Marker Button", style = MaterialTheme.typography.titleLarge)
-            ActionPicker("Tap action", draft.tapAction) { draft = draft.copy(tapAction = it) }
-            ActionPicker("Long press action", draft.longPressAction) { draft = draft.copy(longPressAction = it) }
-            Text("Marker actions are saved and the TestEvent model is ready for manual and future automatic events.", style = MaterialTheme.typography.bodySmall)
-            HorizontalDivider(); Text("Map Point Details", style = MaterialTheme.typography.titleLarge)
-            Text("Choose fields shown after tapping a track point or marker.", style = MaterialTheme.typography.bodySmall)
-            MapDetailField.entries.forEach { field ->
-                SettingSwitch(field.label, field in draft.mapDetailFields) { checked ->
-                    draft = draft.copy(mapDetailFields = if (checked) draft.mapDetailFields + field else draft.mapDetailFields - field)
+        AnimatedContent(
+            targetState = page,
+            transitionSpec = { (fadeIn() + scaleIn(initialScale = 0.97f)).togetherWith(fadeOut() + scaleOut(targetScale = 1.02f)) },
+            label = "settingsNavigation",
+            modifier = Modifier.padding(padding).fillMaxSize()
+        ) { currentPage ->
+            when (currentPage) {
+                "sampling" -> Column(Modifier.padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    IntervalPicker("UI refresh interval", draft.uiRefreshMs) { draft = draft.copy(uiRefreshMs = it) }
+                    IntervalPicker("Recording interval", draft.recordIntervalMs) { draft = draft.copy(recordIntervalMs = it) }
+                }
+                "marker" -> Column(Modifier.padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    ActionPicker("Tap action", draft.tapAction) { draft = draft.copy(tapAction = it) }
+                    ActionPicker("Long press action", draft.longPressAction) { draft = draft.copy(longPressAction = it) }
+                    HorizontalDivider(); Text("After mark", style = MaterialTheme.typography.titleMedium)
+                    SettingSwitch("Vibrate", draft.vibrateOnMark) { draft = draft.copy(vibrateOnMark = it) }
+                    SettingSwitch("Show toast", draft.toastOnMark) { draft = draft.copy(toastOnMark = it) }
+                    SettingSwitch("Play sound", draft.soundOnMark) { draft = draft.copy(soundOnMark = it) }
+                }
+                "map" -> Column(Modifier.padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Choose fields shown after tapping a track point or live-location pin.", style = MaterialTheme.typography.bodySmall)
+                    MapDetailField.entries.forEach { field ->
+                        SettingSwitch(field.label, field in draft.mapDetailFields) { checked ->
+                            draft = draft.copy(mapDetailFields = if (checked) draft.mapDetailFields + field else draft.mapDetailFields - field)
+                        }
+                    }
+                }
+                "issues" -> Column(Modifier.padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Issue choices used by the upcoming Mark workflow.", style = MaterialTheme.typography.bodySmall)
+                    draft.issueTypes.forEach { issue ->
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(issue); TextButton(onClick = { draft = draft.copy(issueTypes = draft.issueTypes - issue) }) { Text("Remove") }
+                        }
+                    }
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(newIssue, { newIssue = it }, label = { Text("Custom issue") }, modifier = Modifier.weight(1f), singleLine = true)
+                        Spacer(Modifier.width(8.dp))
+                        Button(onClick = { val v = newIssue.trim(); if (v.isNotEmpty() && v !in draft.issueTypes) { draft = draft.copy(issueTypes = draft.issueTypes + v); newIssue = "" } }) { Text("Add") }
+                    }
+                }
+                else -> Column(Modifier.padding(12.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    SettingsMenuRow("Sampling", "UI refresh and recording intervals") { page = "sampling" }
+                    HorizontalDivider()
+                    SettingsMenuRow("Marker Button", "Tap, long press and feedback") { page = "marker" }
+                    HorizontalDivider()
+                    SettingsMenuRow("Map Point Details", "Choose information shown for a map point") { page = "map" }
+                    HorizontalDivider()
+                    SettingsMenuRow("Issue Types", "Manage built-in and custom issue choices") { page = "issues" }
                 }
             }
-            HorizontalDivider(); Text("Issue Types", style = MaterialTheme.typography.titleLarge)
-            Text("These options are reserved for Mark → issue selection and TestEvent logging.", style = MaterialTheme.typography.bodySmall)
-            var newIssue by remember { mutableStateOf("") }
-            draft.issueTypes.forEach { issue ->
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(issue); TextButton(onClick = { draft = draft.copy(issueTypes = draft.issueTypes - issue) }) { Text("Remove") }
-                }
-            }
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(newIssue, { newIssue = it }, label = { Text("Custom issue") }, modifier = Modifier.weight(1f), singleLine = true)
-                Spacer(Modifier.width(8.dp))
-                Button(onClick = { val v = newIssue.trim(); if (v.isNotEmpty() && v !in draft.issueTypes) { draft = draft.copy(issueTypes = draft.issueTypes + v); newIssue = "" } }) { Text("Add") }
-            }
-            HorizontalDivider(); Text("After mark", style = MaterialTheme.typography.titleMedium)
-            SettingSwitch("Vibrate", draft.vibrateOnMark) { draft = draft.copy(vibrateOnMark = it) }
-            SettingSwitch("Show toast", draft.toastOnMark) { draft = draft.copy(toastOnMark = it) }
-            SettingSwitch("Play sound", draft.soundOnMark) { draft = draft.copy(soundOnMark = it) }
         }
+    }
+}
+
+@Composable
+private fun SettingsMenuRow(title: String, subtitle: String, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 8.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Column(Modifier.weight(1f)) { Text(title, style = MaterialTheme.typography.titleMedium); Text(subtitle, style = MaterialTheme.typography.bodySmall) }
+        Text("›", style = MaterialTheme.typography.headlineSmall)
     }
 }
 

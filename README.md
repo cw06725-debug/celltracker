@@ -1,15 +1,10 @@
-# CellTracker v0.4.1
+# CellTracker v0.4.2
 
-Map Point Inspector + TestEvent foundation.
+Fix and UX iteration based on v0.4.1 field testing.
 
-## New
-- Tap the live or historical route to snap to the nearest recorded sample.
-- Point card supports configurable Time/SIM/Operator/RAT/RSRP/RSRQ/SINR/PCI/ARFCN/TAC/Cell ID/GPS fields.
-- Marker points remain visible and can open the same inspector.
-- Settings > Map Point Details controls visible fields.
-- Settings > Issue Types includes built-in drive-test issues and custom issue creation/removal.
-- Added TestEvent model with MANUAL/AUTO source foundation for future Mark, screenshot and automated issue detection.
-- Version code 11 / version 0.4.1.
-
-## Next
-Wire the Mark action to create TestEvents immediately, show issue selection, persist events to CSV, and attach screenshots/notes.
+## Changes
+- Live-location pin is now inspectable even when there is no active/recorded track sample. The detail card is built from the current serving-cell snapshot + current GPS fix.
+- Live Map no longer replays the latest historical recording after Stop. Historical tracks stay in Recording Detail; Live Map shows only the active recording plus current live location.
+- Added fade + subtle scale transitions between main/settings/recording detail and between main/live map.
+- Settings reorganized into second-level pages: Sampling, Marker Button, Map Point Details, Issue Types. This leaves room for future third-level configuration without making the root page excessively long.
+- Version: 0.4.2 (versionCode 12).
