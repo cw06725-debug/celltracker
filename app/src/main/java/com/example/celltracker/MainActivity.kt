@@ -24,6 +24,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -347,20 +349,39 @@ private fun RecordingDetailScreen(
             val d = detail!!
             val filtered = if (selectedSimSlot == null) d.samples else d.samples.filter { it.simSlot == selectedSimSlot }
             Column(Modifier.padding(padding).fillMaxSize()) {
-                if (d.simSlots.size > 1) {
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(selected = selectedSimSlot == null, onClick = { selectedSimSlot = null }, label = { Text("Both") })
-                        d.simSlots.forEach { slot ->
-                            FilterChip(selected = selectedSimSlot == slot, onClick = { selectedSimSlot = slot }, label = { Text("SIM $slot") })
+                // Keep all controls in an opaque Compose layer above the Android MapView.
+                // AndroidView interop can otherwise visually bleed over sibling composables
+                // on some devices/Compose versions.
+                Surface(
+                    modifier = Modifier.fillMaxWidth().zIndex(2f),
+                    color = MaterialTheme.colorScheme.surface
+                ) {
+                    Column(Modifier.fillMaxWidth()) {
+                        if (d.simSlots.size > 1) {
+                            Row(
+                                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                FilterChip(selected = selectedSimSlot == null, onClick = { selectedSimSlot = null }, label = { Text("Both") })
+                                d.simSlots.forEach { slot ->
+                                    FilterChip(selected = selectedSimSlot == slot, onClick = { selectedSimSlot = slot }, label = { Text("SIM $slot") })
+                                }
+                            }
+                        }
+                        TabRow(selectedTabIndex = selectedTab.ordinal) {
+                            DetailTab.entries.forEach { tab ->
+                                Tab(
+                                    selected = selectedTab == tab,
+                                    onClick = { selectedTab = tab },
+                                    text = { Text(tab.name.lowercase().replaceFirstChar { it.uppercase() }) }
+                                )
+                            }
                         }
                     }
                 }
-                TabRow(selectedTabIndex = selectedTab.ordinal) {
-                    DetailTab.entries.forEach { tab ->
-                        Tab(selected = selectedTab == tab, onClick = { selectedTab = tab }, text = { Text(tab.name.lowercase().replaceFirstChar { it.uppercase() }) })
-                    }
-                }
-                Box(Modifier.fillMaxWidth().weight(1f)) {
+                Box(
+                    Modifier.fillMaxWidth().weight(1f).clipToBounds().zIndex(0f)
+                ) {
                     when (selectedTab) {
                         DetailTab.SUMMARY -> RecordingSummary(d.item, filtered)
                         DetailTab.MAP -> RecordingMap(filtered)
@@ -537,6 +558,28 @@ private fun OsmTrackMap(samples: List<TrackSample>, modifier: Modifier = Modifie
             flush()
         }
 
+        // Always show the first/last valid GPS fixes, even when the device was
+        // stationary and the polyline has effectively zero length.
+        val ordered = samples.sortedBy { it.timestampMs }
+        ordered.firstOrNull()?.let { sample ->
+            val point = GeoPoint(sample.latitude!!, sample.longitude!!)
+            mapView.overlays.add(Marker(mapView).apply {
+                position = point
+                title = "Start"
+                snippet = "${sample.operator} · ${normalizedRat(sample)} · ${formatCoord(sample.latitude)}, ${formatCoord(sample.longitude)}"
+                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+            })
+        }
+        ordered.lastOrNull()?.let { sample ->
+            val point = GeoPoint(sample.latitude!!, sample.longitude!!)
+            mapView.overlays.add(Marker(mapView).apply {
+                position = point
+                title = if (ordered.size == 1) "Location" else "End"
+                snippet = "${sample.operator} · ${normalizedRat(sample)} · ${formatCoord(sample.latitude)}, ${formatCoord(sample.longitude)}"
+                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+            })
+        }
+
         mapView.invalidate()
         mapView.post {
             when {
@@ -555,7 +598,7 @@ private fun OsmTrackMap(samples: List<TrackSample>, modifier: Modifier = Modifie
     Box(modifier) {
         AndroidView(
             factory = { mapView },
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier.fillMaxSize().clipToBounds()
         )
         Text(
             "© OpenStreetMap contributors",
