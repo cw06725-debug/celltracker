@@ -62,6 +62,7 @@ data class AppState(
     val isRecording: Boolean = false,
     val recordingElapsedMs: Long = 0L,
     val recordingSamples: Long = 0L,
+    val recordingSamplesBySubscription: Map<Int, Long> = emptyMap(),
     val latestRecordingPath: String? = null,
     val exportMessage: String? = null,
     val error: String? = null,

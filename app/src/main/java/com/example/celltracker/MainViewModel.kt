@@ -40,7 +40,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     _state.value = _state.value.copy(
                         isRecording = status.isRecording,
                         recordingElapsedMs = if (status.isRecording) System.currentTimeMillis() - status.startedAt else _state.value.recordingElapsedMs,
-                        recordingSamples = status.samples,
+                        recordingSamples = status.totalSamples,
+                        recordingSamplesBySubscription = status.samplesBySubscription,
                         latestRecordingPath = status.latestPath ?: latestPathFromPrefs()
                     )
                 }
@@ -99,7 +100,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         app.stopService(Intent(app, RecordingService::class.java))
     }
 
-    fun exportLatestCsv() {
+    fun exportLatestCsv(mode: CsvExportMode) {
         val path = _state.value.latestRecordingPath ?: latestPathFromPrefs()
         if (path == null) {
             _state.value = _state.value.copy(exportMessage = "No recording available")
@@ -107,7 +108,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         viewModelScope.launch {
             try {
-                val result = CsvExporter.exportLatest(getApplication(), path)
+                val result = CsvExporter.exportLatest(getApplication(), path, mode)
                 _state.value = _state.value.copy(exportMessage = result, error = null)
             } catch (e: Exception) {
                 _state.value = _state.value.copy(error = e.message ?: "Export failed")

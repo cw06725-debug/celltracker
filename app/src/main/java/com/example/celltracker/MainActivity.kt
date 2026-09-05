@@ -70,17 +70,28 @@ private fun MainScreen(
     onSelectSim: (Int) -> Unit,
     onStartRecording: () -> Unit,
     onStopRecording: () -> Unit,
-    onExport: () -> Unit,
+    onExport: (CsvExportMode) -> Unit,
     onSettings: () -> Unit,
     onDismissMessage: () -> Unit
 ) {
     var neighborsExpanded by remember { mutableStateOf(false) }
+    var recordingSubscriptionId by remember { mutableStateOf<Int?>(null) }
+    var showExportDialog by remember { mutableStateOf(false) }
+
     val selected = state.sims.firstOrNull { it.subscriptionId == state.selectedSubscriptionId } ?: state.sims.firstOrNull()
     val c = selected?.servingCell ?: CellData()
+    val sortedNeighbors = selected?.neighbors.orEmpty().sortedByDescending { it.rsrp.toIntOrNull() ?: Int.MIN_VALUE }
+    val strongestNeighbor = sortedNeighbors.firstOrNull()
+
+    LaunchedEffect(state.sims.map { it.subscriptionId }) {
+        if (recordingSubscriptionId == null || state.sims.none { it.subscriptionId == recordingSubscriptionId }) {
+            recordingSubscriptionId = state.sims.firstOrNull()?.subscriptionId
+        }
+    }
 
     Scaffold(topBar = {
         TopAppBar(
-            title = { Text("CellTracker 0.2") },
+            title = { Text("CellTracker 0.2.1") },
             actions = { TextButton(onClick = onSettings) { Text("Settings") } }
         )
     }) { padding ->
@@ -127,14 +138,38 @@ private fun MainScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(if (neighborsExpanded) "▼ Neighbor Cells (${selected?.neighbors?.size ?: 0})" else "▶ Neighbor Cells (${selected?.neighbors?.size ?: 0})", style = MaterialTheme.typography.titleMedium)
+                        Column {
+                            Text("Neighbor Cells", style = MaterialTheme.typography.titleMedium)
+                            Text("${sortedNeighbors.size} detected", style = MaterialTheme.typography.bodySmall)
+                        }
+                        Text(if (neighborsExpanded) "▲" else "▼", style = MaterialTheme.typography.titleMedium)
                     }
+
+                    if (!neighborsExpanded) {
+                        Spacer(Modifier.height(10.dp))
+                        HorizontalDivider()
+                        Spacer(Modifier.height(10.dp))
+                        if (strongestNeighbor == null) {
+                            Text("No neighbor cells reported", style = MaterialTheme.typography.bodySmall)
+                        } else {
+                            Text("Strongest", style = MaterialTheme.typography.labelMedium)
+                            Text(
+                                "${strongestNeighbor.rat} · PCI ${strongestNeighbor.pci} · ${valueWithUnit(strongestNeighbor.rsrp, "dBm")}",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                    }
+
                     AnimatedVisibility(neighborsExpanded) {
-                        Column(modifier = Modifier.padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Column(modifier = Modifier.padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             HorizontalDivider()
-                            if (selected?.neighbors.isNullOrEmpty()) Text("No neighbor cells reported")
-                            selected?.neighbors?.forEach { n ->
-                                Text("${n.rat}  PCI ${n.pci}  ARFCN ${n.arfcn}  RSRP ${valueWithUnit(n.rsrp, "dBm")}  RSRQ ${valueWithUnit(n.rsrq, "dB")}", style = MaterialTheme.typography.bodySmall)
+                            if (sortedNeighbors.isEmpty()) {
+                                Text("No neighbor cells reported", style = MaterialTheme.typography.bodySmall)
+                            } else {
+                                sortedNeighbors.forEachIndexed { index, n ->
+                                    NeighborCellItem(index + 1, n)
+                                    if (index != sortedNeighbors.lastIndex) HorizontalDivider()
+                                }
                             }
                         }
                     }
@@ -154,20 +189,80 @@ private fun MainScreen(
             InfoCard("Recording") {
                 Field("Status", if (state.isRecording) "Recording" else "Stopped")
                 Field("Elapsed", formatElapsed(state.recordingElapsedMs))
-                Field("Samples", state.recordingSamples.toString())
                 Field("Record interval", "${state.settings.recordIntervalMs / 1000.0} s")
+
+                if (state.sims.size > 1) {
+                    val recordingIndex = state.sims.indexOfFirst { it.subscriptionId == recordingSubscriptionId }.coerceAtLeast(0)
+                    TabRow(selectedTabIndex = recordingIndex) {
+                        state.sims.forEach { sim ->
+                            Tab(
+                                selected = sim.subscriptionId == recordingSubscriptionId,
+                                onClick = { recordingSubscriptionId = sim.subscriptionId },
+                                text = { Text("SIM ${sim.simSlotIndex + 1}") }
+                            )
+                        }
+                    }
+                }
+
+                val recordingSim = state.sims.firstOrNull { it.subscriptionId == recordingSubscriptionId } ?: state.sims.firstOrNull()
+                if (recordingSim != null) {
+                    Spacer(Modifier.height(4.dp))
+                    Field("SIM", "SIM ${recordingSim.simSlotIndex + 1}")
+                    Field("Operator", recordingSim.servingCell.operator)
+                    Field("RAT", recordingSim.servingCell.displayRat.ifBlank { recordingSim.servingCell.rat })
+                    Field("Samples", (state.recordingSamplesBySubscription[recordingSim.subscriptionId] ?: 0L).toString())
+                } else {
+                    Field("Samples", state.recordingSamples.toString())
+                }
+
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (state.isRecording) Button(onClick = onStopRecording) { Text("Stop") }
                     else Button(onClick = onStartRecording) { Text("Start Recording") }
-                    OutlinedButton(onClick = onExport, enabled = state.latestRecordingPath != null) { Text("Export CSV") }
+                    OutlinedButton(onClick = { showExportDialog = true }, enabled = state.latestRecordingPath != null) { Text("Export CSV") }
                 }
             }
 
-            state.exportMessage?.let {
-                AssistChip(onClick = onDismissMessage, label = { Text(it) })
-            }
+            state.exportMessage?.let { AssistChip(onClick = onDismissMessage, label = { Text(it) }) }
             state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             Text("Last cellular update: ${state.lastUpdated}", style = MaterialTheme.typography.bodySmall)
+        }
+    }
+
+    if (showExportDialog) {
+        AlertDialog(
+            onDismissRequest = { showExportDialog = false },
+            title = { Text("Export CSV") },
+            text = { Text("Choose how to export the latest dual-SIM recording.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showExportDialog = false
+                    onExport(CsvExportMode.SEPARATE_BY_SIM)
+                }) { Text("Separate by SIM") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showExportDialog = false
+                    onExport(CsvExportMode.COMBINED)
+                }) { Text("Combined") }
+            }
+        )
+    }
+}
+
+@Composable
+private fun NeighborCellItem(index: Int, n: CellData) {
+    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("#$index ${n.rat}", style = MaterialTheme.typography.labelLarge)
+            Text(valueWithUnit(n.rsrp, "dBm"), style = MaterialTheme.typography.labelLarge)
+        }
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("PCI ${n.pci}", style = MaterialTheme.typography.bodySmall)
+            Text("${if (n.rat == "NR") "NR-ARFCN" else "EARFCN"} ${n.arfcn}", style = MaterialTheme.typography.bodySmall)
+        }
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("RSRQ ${valueWithUnit(n.rsrq, "dB")}", style = MaterialTheme.typography.bodySmall)
+            if (n.sinr != "--") Text("SINR ${valueWithUnit(n.sinr, "dB")}", style = MaterialTheme.typography.bodySmall)
         }
     }
 }

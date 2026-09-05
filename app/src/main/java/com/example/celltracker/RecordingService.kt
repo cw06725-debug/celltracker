@@ -47,9 +47,7 @@ class RecordingService : Service() {
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
-        scope.launch {
-            location.locations().collectLatest { latestLocation = it }
-        }
+        scope.launch { location.locations().collectLatest { latestLocation = it } }
         startRecording()
     }
 
@@ -61,21 +59,28 @@ class RecordingService : Service() {
             val file = File(dir, "CellTracker_$stamp.csv")
             FileWriter(file, false).use { it.appendLine(CSV_HEADER) }
             val started = System.currentTimeMillis()
-            RecordingState.status.value = RecordingStatus(true, started, 0, file.absolutePath)
+            val perSim = mutableMapOf<Int, Long>()
+            RecordingState.status.value = RecordingStatus(true, started, 0, emptyMap(), file.absolutePath)
             getSharedPreferences("celltracker_recording", MODE_PRIVATE).edit().putString("latest_path", file.absolutePath).apply()
-            var sampleCount = 0L
+
             while (true) {
-                val now = System.currentTimeMillis()
+                val cycleStart = System.currentTimeMillis()
                 val sims = cellular.readAllSims()
                 FileWriter(file, true).use { writer ->
                     sims.forEach { sim ->
                         val c = sim.servingCell
-                        writer.appendLine(csvLine(now, c, latestLocation, false, "", ""))
-                        sampleCount++
+                        writer.appendLine(csvLine(cycleStart, c, latestLocation, false, "", ""))
+                        perSim[c.subscriptionId] = (perSim[c.subscriptionId] ?: 0L) + 1L
                     }
                 }
-                RecordingState.status.value = RecordingStatus(true, started, sampleCount, file.absolutePath)
-                delay(settingsRepository.load().recordIntervalMs)
+                val total = perSim.values.sum()
+                RecordingState.status.value = RecordingStatus(true, started, total, perSim.toMap(), file.absolutePath)
+
+                // Keep one sampling cycle per configured interval. Cellular reads take time, so subtract
+                // the work duration instead of adding it on top of the requested interval.
+                val interval = settingsRepository.load().recordIntervalMs
+                val spent = System.currentTimeMillis() - cycleStart
+                delay((interval - spent).coerceAtLeast(0L))
             }
         }
     }
@@ -102,14 +107,7 @@ class RecordingService : Service() {
         const val NOTIFICATION_ID = 1001
         const val CSV_HEADER = "timestamp,sim_slot,subscription_id,operator,rat,display_rat,mcc,mnc,tac,cell_id,pci,arfcn,rsrp,rsrq,sinr,latitude,longitude,altitude,accuracy,speed_kmh,bearing,is_marker,event_type,event_note,screenshot"
 
-        fun csvLine(
-            timestamp: Long,
-            c: CellData,
-            l: LocationData,
-            isMarker: Boolean,
-            eventType: String,
-            eventNote: String
-        ): String {
+        fun csvLine(timestamp: Long, c: CellData, l: LocationData, isMarker: Boolean, eventType: String, eventNote: String): String {
             val time = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US).format(Date(timestamp))
             val values = listOf(
                 time, (c.simSlotIndex + 1).toString(), c.subscriptionId.toString(), c.operator,

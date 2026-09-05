@@ -1,23 +1,23 @@
-# CellTracker v0.2
+# CellTracker v0.2.1
 
-Android cellular + location drive-test helper.
+Changes from v0.2.0:
 
-## v0.2 features
-- Dual-SIM tabs based on active subscriptions
-- Per-SIM serving cell + neighbor cells
-- Neighbor cells inline expand/collapse
-- LTE / NR display logic with first-pass NSA indication
-- Configurable UI refresh: 0.5 / 1 / 2 / 5 / 10 s
-- Configurable recording interval: 0.5 / 1 / 2 / 5 / 10 s
-- Foreground recording service
-- CSV recording for all active SIMs with GPS data
-- Export latest CSV to Downloads/CellTracker
-- Settings framework for marker button Tap / Long Press actions and feedback
+- Neighbor Cells UI redesigned.
+  - Collapsed state shows detected count and strongest neighbor summary.
+  - Expanded state uses compact per-cell layout.
+  - Neighbors are sorted by RSRP from strongest to weakest.
+- Recording card now has SIM 1 / SIM 2 tabs and per-SIM sample counts.
+- Dual-SIM recording still samples both SIMs in parallel.
+- CSV export now offers:
+  - Separate by SIM (default/recommended): creates one CSV per SIM.
+  - Combined: exports the original combined dual-SIM CSV.
+- Recording loop compensates for cellular-read processing time so the requested interval is treated as the target cycle period.
+- Version bumped to 0.2.1.
 
-## Planned next
-- v0.3 map track, RAT coloring, GPX, marker points
-- v0.4 overlay with configurable fields and opacity
-- v0.5 MediaProjection screenshots linked to markers
+Build with GitHub Actions as before. Replace the existing project contents, then run:
 
-## Build
-GitHub Actions -> Build Android APK -> artifact: CellTracker-debug-apk
+```bash
+git add .
+git commit -m "CellTracker v0.2.1 neighbor and dual SIM export"
+git push
+```
