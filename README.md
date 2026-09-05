@@ -1,4 +1,4 @@
-# CellTracker v0.4.3
+# CellTracker v0.4.4
 
 Map interaction & stability update.
 
@@ -11,3 +11,11 @@ Map interaction & stability update.
 - Start/End markers select their exact samples.
 - Lighter page transitions to reduce MapView animation jank.
 - Backward-compatible GPS validity parsing for older recordings.
+
+
+## v0.4.4 fixes
+- Fixed Recording Detail -> Back crash by preserving the outgoing detail path during AnimatedContent exit.
+- Removed manual MapView onDetach during Compose disposal to avoid double-detach edge cases.
+- Live point inspector now follows SIM switching and refreshes the current cellular snapshot.
+- Operator/SIM are always shown in map point inspector headers.
+- Neighbor cells now show Band in both collapsed strongest-cell summary and expanded rows.

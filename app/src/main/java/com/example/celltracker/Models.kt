@@ -88,7 +88,7 @@ data class AppSettings(
     val toastOnMark: Boolean = true,
     val soundOnMark: Boolean = false,
     val recordScope: RecordScope = RecordScope.CURRENT_SIM,
-    val mapDetailFields: Set<MapDetailField> = setOf(MapDetailField.TIME, MapDetailField.RAT, MapDetailField.RSRP, MapDetailField.RSRQ, MapDetailField.SINR, MapDetailField.PCI, MapDetailField.ARFCN, MapDetailField.BAND, MapDetailField.LATITUDE, MapDetailField.LONGITUDE),
+    val mapDetailFields: Set<MapDetailField> = setOf(MapDetailField.TIME, MapDetailField.SIM, MapDetailField.OPERATOR, MapDetailField.RAT, MapDetailField.RSRP, MapDetailField.RSRQ, MapDetailField.SINR, MapDetailField.PCI, MapDetailField.ARFCN, MapDetailField.BAND, MapDetailField.LATITUDE, MapDetailField.LONGITUDE),
     val issueTypes: List<String> = listOf("Call Drop", "No Audio", "VoLTE Lost", "No Signal", "No Data", "Slow Data", "Video Stuck", "Handover Issue", "Poor Voice Quality", "Other")
 )
 

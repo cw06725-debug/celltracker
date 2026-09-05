@@ -91,28 +91,36 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                val rootDestination = when { detailPath != null -> "detail"; showSettings -> "settings"; else -> "main" }
+                // Keep the detail path inside the AnimatedContent target itself. During an
+                // exit animation Compose still renders the outgoing destination; reading
+                // detailPath!! after Back had already set it to null caused the history-map
+                // back crash. Capturing the path here keeps the outgoing screen valid.
+                val rootDestination: RootDestination = when {
+                    detailPath != null -> RootDestination.Detail(detailPath!!)
+                    showSettings -> RootDestination.Settings
+                    else -> RootDestination.Main
+                }
                 AnimatedContent(
                     targetState = rootDestination,
                     transitionSpec = {
-                        fadeIn(animationSpec = tween(120)).togetherWith(fadeOut(animationSpec = tween(90)) )
+                        fadeIn(animationSpec = tween(90)).togetherWith(fadeOut(animationSpec = tween(70)))
                     },
                     label = "rootNavigation"
                 ) { destination ->
                 when (destination) {
-                    "detail" -> RecordingDetailScreen(
-                        path = detailPath!!,
-                        fallbackItem = state.recordings.firstOrNull { it.path == detailPath },
+                    is RootDestination.Detail -> RecordingDetailScreen(
+                        path = destination.path,
+                        fallbackItem = state.recordings.firstOrNull { it.path == destination.path },
                         onBack = { detailPath = null },
                         onExport = vm::exportRecording,
                         onDelete = { path -> vm.deleteRecording(path); detailPath = null }
                     )
-                    "settings" -> SettingsScreen(
+                    RootDestination.Settings -> SettingsScreen(
                         settings = state.settings,
                         onSave = { vm.updateSettings(it); showSettings = false },
                         onBack = { showSettings = false }
                     )
-                    else -> MainScreen(
+                    RootDestination.Main -> MainScreen(
                         state = state,
                         onSelectSim = vm::selectSubscription,
                         onStartRecording = vm::startRecording,
@@ -131,6 +139,12 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+}
+
+private sealed interface RootDestination {
+    data object Main : RootDestination
+    data object Settings : RootDestination
+    data class Detail(val path: String) : RootDestination
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -243,7 +257,7 @@ private fun MainScreen(
                         if (strongestNeighbor == null) Text("No neighbor cells reported", style = MaterialTheme.typography.bodySmall)
                         else {
                             Text("Strongest", style = MaterialTheme.typography.labelMedium)
-                            Text("${strongestNeighbor.rat} · PCI ${strongestNeighbor.pci} · ${valueWithUnit(strongestNeighbor.rsrp, "dBm")}")
+                            Text("${strongestNeighbor.rat} · ${strongestNeighbor.band} · PCI ${strongestNeighbor.pci} · ${valueWithUnit(strongestNeighbor.rsrp, "dBm")}")
                         }
                     }
                     AnimatedVisibility(neighborsExpanded) {
@@ -447,7 +461,7 @@ private fun LiveMapScreen(
                     samples = valid,
                     modifier = Modifier.fillMaxWidth().weight(1f),
                     currentPoint = currentPoint,
-                    currentLabel = selected?.servingCell?.let { "${it.displayRat.ifBlank { it.rat }} · ${valueWithUnit(it.rsrp, "dBm")}" },
+                    currentLabel = selected?.servingCell?.let { "${it.operator} · ${it.displayRat.ifBlank { it.rat }} · ${valueWithUnit(it.rsrp, "dBm")}" },
                     currentSample = currentSample,
                     liveFollow = state.isRecording,
                     detailFields = state.settings.mapDetailFields
@@ -627,6 +641,14 @@ private fun OsmTrackMap(
 ) {
     val context = LocalContext.current
     var selectedSample by remember { mutableStateOf<TrackSample?>(null) }
+    var selectedIsCurrent by remember { mutableStateOf(false) }
+
+    // When the user is inspecting the live/current location, SIM switching and
+    // cellular refreshes must update the inspector immediately instead of leaving
+    // the old SIM snapshot on screen.
+    LaunchedEffect(currentSample) {
+        if (selectedIsCurrent) selectedSample = currentSample
+    }
 
     // OSM's current tile policy requires the canonical host (no a/b/c subdomains) and an
     // identifiable User-Agent. osmdroid's historical MAPNIK source can resolve through old
@@ -657,8 +679,10 @@ private fun OsmTrackMap(
     DisposableEffect(mapView) {
         mapView.onResume()
         onDispose {
+            // AndroidView owns attach/detach. Calling onDetach() manually while the
+            // outgoing Compose destination is also being removed can double-detach
+            // osmdroid internals on some devices. Pause only here.
             mapView.onPause()
-            mapView.onDetach()
         }
     }
 
@@ -704,7 +728,7 @@ private fun OsmTrackMap(
                         title = sample.eventType.ifBlank { "Marker" }
                         snippet = "${sample.operator} · ${normalizedRat(sample)} · RSRP ${sample.rsrp} dBm"
                         setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
-                        setOnMarkerClickListener { _, _ -> selectedSample = sample; true }
+                        setOnMarkerClickListener { _, _ -> selectedIsCurrent = false; selectedSample = sample; true }
                     })
                 }
             }
@@ -717,7 +741,7 @@ private fun OsmTrackMap(
                 position = GeoPoint(sample.latitude!!, sample.longitude!!)
                 title = "Start"
                 setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
-                setOnMarkerClickListener { _, _ -> selectedSample = sample; true }
+                setOnMarkerClickListener { _, _ -> selectedIsCurrent = false; selectedSample = sample; true }
             })
         }
         ordered.lastOrNull()?.takeIf { it.timestampMs != ordered.firstOrNull()?.timestampMs }?.let { sample ->
@@ -725,7 +749,7 @@ private fun OsmTrackMap(
                 position = GeoPoint(sample.latitude!!, sample.longitude!!)
                 title = "End"
                 setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
-                setOnMarkerClickListener { _, _ -> selectedSample = sample; true }
+                setOnMarkerClickListener { _, _ -> selectedIsCurrent = false; selectedSample = sample; true }
             })
         }
 
@@ -736,7 +760,7 @@ private fun OsmTrackMap(
                 title = "Current location"
                 snippet = currentLabel ?: "Live GPS"
                 setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
-                setOnMarkerClickListener { _, _ -> selectedSample = currentSample; true }
+                setOnMarkerClickListener { _, _ -> selectedIsCurrent = true; selectedSample = currentSample; true }
             })
         }
 
@@ -745,12 +769,14 @@ private fun OsmTrackMap(
         mapView.overlays.add(MapEventsOverlay(object : MapEventsReceiver {
             override fun singleTapConfirmedHelper(p: GeoPoint): Boolean {
                 if (currentPoint != null && currentPoint.distanceToAsDouble(p) <= 45.0) {
+                    selectedIsCurrent = true
                     selectedSample = currentSample
                     return true
                 }
                 val nearest = samples.filter { it.latitude != null && it.longitude != null }
                     .minByOrNull { GeoPoint(it.latitude!!, it.longitude!!).distanceToAsDouble(p) }
                 val distance = nearest?.let { GeoPoint(it.latitude!!, it.longitude!!).distanceToAsDouble(p) } ?: Double.MAX_VALUE
+                selectedIsCurrent = false
                 selectedSample = if (distance <= 80.0) nearest else null
                 return true
             }
@@ -783,9 +809,12 @@ private fun OsmTrackMap(
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text(if (sample.isMarker) (sample.eventType.ifBlank { "Marker" }) else "Track point", style = MaterialTheme.typography.titleSmall)
-                        TextButton(onClick = { selectedSample = null }, contentPadding = PaddingValues(0.dp)) { Text("Close") }
+                        TextButton(onClick = { selectedIsCurrent = false; selectedSample = null }, contentPadding = PaddingValues(0.dp)) { Text("Close") }
                     }
-                    mapPointRows(sample, detailFields).forEach { (label, value) ->
+                    // Operator is essential context on dual-SIM maps, so keep it visible
+                    // even when the optional OPERATOR row is disabled in Map Point Details.
+                    Text("SIM ${sample.simSlot} · ${sample.operator}", style = MaterialTheme.typography.labelMedium)
+                    mapPointRows(sample, detailFields - MapDetailField.OPERATOR - MapDetailField.SIM).forEach { (label, value) ->
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text(label, style = MaterialTheme.typography.bodySmall)
                             Text(value, style = MaterialTheme.typography.bodySmall)
@@ -839,7 +868,7 @@ private fun NeighborCellItem(index: Int, n: CellData) {
             Text(valueWithUnit(n.rsrp, "dBm"), style = MaterialTheme.typography.labelLarge)
         }
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("PCI ${n.pci}", style = MaterialTheme.typography.bodySmall)
+            Text("Band ${n.band} · PCI ${n.pci}", style = MaterialTheme.typography.bodySmall)
             Text("${if (n.rat == "NR") "NR-ARFCN" else "EARFCN"} ${n.arfcn}", style = MaterialTheme.typography.bodySmall)
         }
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
