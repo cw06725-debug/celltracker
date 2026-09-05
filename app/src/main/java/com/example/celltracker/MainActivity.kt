@@ -52,8 +52,12 @@ class MainActivity : ComponentActivity() {
                         state = state,
                         onSelectSim = vm::selectSubscription,
                         onStartRecording = vm::startRecording,
+                        onRecordScope = vm::setRecordScope,
                         onStopRecording = vm::stopRecording,
                         onExport = vm::exportLatestCsv,
+                        onExportRecording = vm::exportRecording,
+                        onDeleteRecording = vm::deleteRecording,
+                        onDeleteAll = vm::deleteAllRecordings,
                         onSettings = { showSettings = true },
                         onDismissMessage = vm::clearMessage
                     )
@@ -69,29 +73,29 @@ private fun MainScreen(
     state: AppState,
     onSelectSim: (Int) -> Unit,
     onStartRecording: () -> Unit,
+    onRecordScope: (RecordScope) -> Unit,
     onStopRecording: () -> Unit,
     onExport: (CsvExportMode) -> Unit,
+    onExportRecording: (String, CsvExportMode) -> Unit,
+    onDeleteRecording: (String) -> Unit,
+    onDeleteAll: () -> Unit,
     onSettings: () -> Unit,
     onDismissMessage: () -> Unit
 ) {
     var neighborsExpanded by remember { mutableStateOf(false) }
-    var recordingSubscriptionId by remember { mutableStateOf<Int?>(null) }
     var showExportDialog by remember { mutableStateOf(false) }
+    var exportPath by remember { mutableStateOf<String?>(null) }
+    var deletePath by remember { mutableStateOf<String?>(null) }
+    var showDeleteAll by remember { mutableStateOf(false) }
 
     val selected = state.sims.firstOrNull { it.subscriptionId == state.selectedSubscriptionId } ?: state.sims.firstOrNull()
     val c = selected?.servingCell ?: CellData()
     val sortedNeighbors = selected?.neighbors.orEmpty().sortedByDescending { it.rsrp.toIntOrNull() ?: Int.MIN_VALUE }
     val strongestNeighbor = sortedNeighbors.firstOrNull()
 
-    LaunchedEffect(state.sims.map { it.subscriptionId }) {
-        if (recordingSubscriptionId == null || state.sims.none { it.subscriptionId == recordingSubscriptionId }) {
-            recordingSubscriptionId = state.sims.firstOrNull()?.subscriptionId
-        }
-    }
-
     Scaffold(topBar = {
         TopAppBar(
-            title = { Text("CellTracker 0.2.1") },
+            title = { Text("CellTracker 0.2.2") },
             actions = { TextButton(onClick = onSettings) { Text("Settings") } }
         )
     }) { padding ->
@@ -191,34 +195,48 @@ private fun MainScreen(
                 Field("Elapsed", formatElapsed(state.recordingElapsedMs))
                 Field("Record interval", "${state.settings.recordIntervalMs / 1000.0} s")
 
-                if (state.sims.size > 1) {
-                    val recordingIndex = state.sims.indexOfFirst { it.subscriptionId == recordingSubscriptionId }.coerceAtLeast(0)
-                    TabRow(selectedTabIndex = recordingIndex) {
-                        state.sims.forEach { sim ->
-                            Tab(
-                                selected = sim.subscriptionId == recordingSubscriptionId,
-                                onClick = { recordingSubscriptionId = sim.subscriptionId },
-                                text = { Text("SIM ${sim.simSlotIndex + 1}") }
-                            )
-                        }
+                Text("Record scope", style = MaterialTheme.typography.labelLarge)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(selected = state.settings.recordScope == RecordScope.CURRENT_SIM, enabled = !state.isRecording,
+                        onClick = { onRecordScope(RecordScope.CURRENT_SIM) })
+                    Text("Current SIM")
+                    Spacer(Modifier.width(12.dp))
+                    RadioButton(selected = state.settings.recordScope == RecordScope.BOTH_SIMS, enabled = !state.isRecording,
+                        onClick = { onRecordScope(RecordScope.BOTH_SIMS) })
+                    Text("Both SIMs")
+                }
+                val active = state.sims.firstOrNull { it.subscriptionId == state.selectedSubscriptionId }
+                if (state.isRecording) {
+                    if (state.settings.recordScope == RecordScope.BOTH_SIMS) {
+                        Field("Recording", state.sims.joinToString(" + ") { "SIM ${it.simSlotIndex + 1} ${it.servingCell.operator}" })
+                        state.sims.forEach { Field("SIM ${it.simSlotIndex + 1} samples", (state.recordingSamplesBySubscription[it.subscriptionId] ?: 0).toString()) }
+                    } else if (active != null) {
+                        Field("Recording", "SIM ${active.simSlotIndex + 1} ${active.servingCell.operator}")
+                        Field("Samples", state.recordingSamples.toString())
                     }
                 }
-
-                val recordingSim = state.sims.firstOrNull { it.subscriptionId == recordingSubscriptionId } ?: state.sims.firstOrNull()
-                if (recordingSim != null) {
-                    Spacer(Modifier.height(4.dp))
-                    Field("SIM", "SIM ${recordingSim.simSlotIndex + 1}")
-                    Field("Operator", recordingSim.servingCell.operator)
-                    Field("RAT", recordingSim.servingCell.displayRat.ifBlank { recordingSim.servingCell.rat })
-                    Field("Samples", (state.recordingSamplesBySubscription[recordingSim.subscriptionId] ?: 0L).toString())
-                } else {
-                    Field("Samples", state.recordingSamples.toString())
-                }
-
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (state.isRecording) Button(onClick = onStopRecording) { Text("Stop") }
-                    else Button(onClick = onStartRecording) { Text("Start Recording") }
-                    OutlinedButton(onClick = { showExportDialog = true }, enabled = state.latestRecordingPath != null) { Text("Export CSV") }
+                    else Button(onClick = onStartRecording, enabled = active != null) { Text("Start Recording") }
+                }
+
+                if (state.recordings.isNotEmpty()) {
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Text("Recent recordings", style = MaterialTheme.typography.titleSmall)
+                        TextButton(onClick = { showDeleteAll = true }) { Text("Delete all") }
+                    }
+                    state.recordings.take(5).forEach { item ->
+                        Column(Modifier.fillMaxWidth().padding(vertical = 5.dp)) {
+                            Text(java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(java.util.Date(item.startedAt)), style = MaterialTheme.typography.labelLarge)
+                            Text("${item.simSummary} · ${formatElapsed(item.durationMs)} · ${item.totalSamples} samples", style = MaterialTheme.typography.bodySmall)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                TextButton(onClick = { exportPath = item.path; showExportDialog = true }) { Text("Export") }
+                                TextButton(onClick = { deletePath = item.path }) { Text("Delete") }
+                            }
+                        }
+                        HorizontalDivider()
+                    }
                 }
             }
 
@@ -236,17 +254,33 @@ private fun MainScreen(
             confirmButton = {
                 TextButton(onClick = {
                     showExportDialog = false
-                    onExport(CsvExportMode.SEPARATE_BY_SIM)
+                    exportPath?.let { onExportRecording(it, CsvExportMode.SEPARATE_BY_SIM) } ?: onExport(CsvExportMode.SEPARATE_BY_SIM)
+                    exportPath = null
                 }) { Text("Separate by SIM") }
             },
             dismissButton = {
                 TextButton(onClick = {
                     showExportDialog = false
-                    onExport(CsvExportMode.COMBINED)
+                    exportPath?.let { onExportRecording(it, CsvExportMode.COMBINED) } ?: onExport(CsvExportMode.COMBINED)
+                    exportPath = null
                 }) { Text("Combined") }
             }
         )
     }
+
+    deletePath?.let { path ->
+        AlertDialog(onDismissRequest = { deletePath = null }, title = { Text("Delete recording?") },
+            text = { Text("This recording will be permanently deleted.") },
+            confirmButton = { TextButton(onClick = { onDeleteRecording(path); deletePath = null }) { Text("Delete") } },
+            dismissButton = { TextButton(onClick = { deletePath = null }) { Text("Cancel") } })
+    }
+    if (showDeleteAll) {
+        AlertDialog(onDismissRequest = { showDeleteAll = false }, title = { Text("Delete all recordings?") },
+            text = { Text("All saved recording sessions will be permanently deleted.") },
+            confirmButton = { TextButton(onClick = { onDeleteAll(); showDeleteAll = false }) { Text("Delete all") } },
+            dismissButton = { TextButton(onClick = { showDeleteAll = false }) { Text("Cancel") } })
+    }
+
 }
 
 @Composable

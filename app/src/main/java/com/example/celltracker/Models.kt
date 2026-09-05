@@ -44,6 +44,13 @@ enum class MarkerAction(val label: String) {
     NONE("No action")
 }
 
+enum class RecordScope { CURRENT_SIM, BOTH_SIMS }
+
+data class RecordingItem(
+    val path: String, val name: String, val startedAt: Long, val durationMs: Long,
+    val totalSamples: Long, val simSummary: String
+)
+
 data class AppSettings(
     val uiRefreshMs: Long = 1000L,
     val recordIntervalMs: Long = 1000L,
@@ -51,7 +58,8 @@ data class AppSettings(
     val longPressAction: MarkerAction = MarkerAction.MARK_WITH_SCREENSHOT,
     val vibrateOnMark: Boolean = true,
     val toastOnMark: Boolean = true,
-    val soundOnMark: Boolean = false
+    val soundOnMark: Boolean = false,
+    val recordScope: RecordScope = RecordScope.CURRENT_SIM
 )
 
 data class AppState(
@@ -64,6 +72,7 @@ data class AppState(
     val recordingSamples: Long = 0L,
     val recordingSamplesBySubscription: Map<Int, Long> = emptyMap(),
     val latestRecordingPath: String? = null,
+    val recordings: List<RecordingItem> = emptyList(),
     val exportMessage: String? = null,
     val error: String? = null,
     val lastUpdated: String = "--"

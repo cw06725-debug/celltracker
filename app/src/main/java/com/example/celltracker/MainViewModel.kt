@@ -14,6 +14,7 @@ import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.io.File
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val cellular = CellularRepository(app)
@@ -47,7 +48,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
         }
-        _state.value = _state.value.copy(latestRecordingPath = latestPathFromPrefs())
+        _state.value = _state.value.copy(latestRecordingPath = latestPathFromPrefs(), recordings = loadRecordings())
     }
 
     private fun restartCellLoop() {
@@ -92,12 +93,39 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun startRecording() {
         val app = getApplication<Application>()
-        ContextCompat.startForegroundService(app, Intent(app, RecordingService::class.java))
+        val selectedId = _state.value.selectedSubscriptionId ?: return
+        val both = _state.value.settings.recordScope == RecordScope.BOTH_SIMS
+        val intent = Intent(app, RecordingService::class.java)
+            .putExtra(RecordingService.EXTRA_SUBSCRIPTION_ID, selectedId)
+            .putExtra(RecordingService.EXTRA_BOTH_SIMS, both)
+        ContextCompat.startForegroundService(app, intent)
     }
 
     fun stopRecording() {
         val app = getApplication<Application>()
         app.stopService(Intent(app, RecordingService::class.java))
+        viewModelScope.launch { delay(200); _state.value = _state.value.copy(recordings = loadRecordings()) }
+    }
+
+    fun setRecordScope(scope: RecordScope) {
+        val updated = _state.value.settings.copy(recordScope = scope)
+        settingsRepository.save(updated); _state.value = _state.value.copy(settings = updated)
+    }
+
+    fun deleteRecording(path: String) {
+        File(path).delete()
+        if (latestPathFromPrefs() == path) getApplication<Application>().getSharedPreferences("celltracker_recording", Application.MODE_PRIVATE).edit().remove("latest_path").apply()
+        _state.value = _state.value.copy(recordings = loadRecordings(), latestRecordingPath = latestPathFromPrefs(), exportMessage = "Recording deleted")
+    }
+
+    fun deleteAllRecordings() {
+        recordingsDir().listFiles()?.forEach { it.delete() }
+        getApplication<Application>().getSharedPreferences("celltracker_recording", Application.MODE_PRIVATE).edit().remove("latest_path").apply()
+        _state.value = _state.value.copy(recordings = emptyList(), latestRecordingPath = null, exportMessage = "All recordings deleted")
+    }
+
+    fun exportRecording(path: String, mode: CsvExportMode) {
+        viewModelScope.launch { try { _state.value = _state.value.copy(exportMessage = CsvExporter.exportLatest(getApplication(), path, mode)) } catch(e:Exception){ _state.value=_state.value.copy(error=e.message?:"Export failed") } }
     }
 
     fun exportLatestCsv(mode: CsvExportMode) {
@@ -119,6 +147,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun clearMessage() {
         _state.value = _state.value.copy(exportMessage = null)
     }
+
+    private fun recordingsDir() = File(getApplication<Application>().getExternalFilesDir(null), "recordings").apply { mkdirs() }
+
+    private fun loadRecordings(): List<RecordingItem> = recordingsDir().listFiles { f -> f.extension.equals("csv", true) }?.mapNotNull { f ->
+        try {
+            val lines=f.readLines().filter { it.isNotBlank() }; if(lines.size<2) return@mapNotNull null
+            val rows=lines.drop(1); val first=rows.first().split(','); val last=rows.last().split(',')
+            val fmt=SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
+            val start=fmt.parse(first[0].trim('"'))?.time ?: f.lastModified(); val end=fmt.parse(last[0].trim('"'))?.time ?: start
+            val sims=rows.mapNotNull { r -> val x=r.split(','); if(x.size>3) "SIM ${x[1]} ${x[3].trim('"')}" else null }.distinct().joinToString(" + ")
+            RecordingItem(f.absolutePath,f.name,start,(end-start).coerceAtLeast(0),rows.size.toLong(),sims)
+        } catch(_:Exception){ null }
+    }?.sortedByDescending { it.startedAt } ?: emptyList()
 
     private fun latestPathFromPrefs(): String? = getApplication<Application>()
         .getSharedPreferences("celltracker_recording", Application.MODE_PRIVATE)

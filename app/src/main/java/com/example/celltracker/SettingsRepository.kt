@@ -12,7 +12,8 @@ class SettingsRepository(context: Context) {
         longPressAction = enumValueOrDefault(prefs.getString("long_press_action", null), MarkerAction.MARK_WITH_SCREENSHOT),
         vibrateOnMark = prefs.getBoolean("vibrate_on_mark", true),
         toastOnMark = prefs.getBoolean("toast_on_mark", true),
-        soundOnMark = prefs.getBoolean("sound_on_mark", false)
+        soundOnMark = prefs.getBoolean("sound_on_mark", false),
+        recordScope = enumValueOrDefault(prefs.getString("record_scope", null), RecordScope.CURRENT_SIM)
     )
 
     fun save(settings: AppSettings) {
@@ -24,6 +25,7 @@ class SettingsRepository(context: Context) {
             .putBoolean("vibrate_on_mark", settings.vibrateOnMark)
             .putBoolean("toast_on_mark", settings.toastOnMark)
             .putBoolean("sound_on_mark", settings.soundOnMark)
+            .putString("record_scope", settings.recordScope.name)
             .apply()
     }
 
