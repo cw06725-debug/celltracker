@@ -21,6 +21,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -35,6 +36,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -197,7 +199,22 @@ private fun MainScreen(
         if (liveMapVisible) {
             LiveMapScreen(state = state, onSelectSim = onSelectSim, modifier = Modifier.padding(padding).fillMaxSize())
         } else Column(
-            modifier = Modifier.padding(padding).padding(16.dp).fillMaxSize().verticalScroll(rememberScrollState()),
+            modifier = Modifier
+                .padding(padding)
+                .padding(16.dp)
+                .fillMaxSize()
+                .horizontalSwipe(
+                    enabled = state.sims.size > 1,
+                    onSwipeLeft = {
+                        val index = state.sims.indexOfFirst { it.subscriptionId == selected?.subscriptionId }
+                        if (index in 0 until state.sims.lastIndex) onSelectSim(state.sims[index + 1].subscriptionId)
+                    },
+                    onSwipeRight = {
+                        val index = state.sims.indexOfFirst { it.subscriptionId == selected?.subscriptionId }
+                        if (index > 0) onSelectSim(state.sims[index - 1].subscriptionId)
+                    }
+                )
+                .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             if (state.sims.size > 1) {
@@ -285,12 +302,15 @@ private fun MainScreen(
                 Field("Record interval", "${state.settings.recordIntervalMs / 1000.0} s")
                 Text("Record scope", style = MaterialTheme.typography.labelLarge)
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    RadioButton(selected = state.settings.recordScope == RecordScope.CURRENT_SIM, enabled = !state.isRecording,
+                    RadioButton(selected = state.settings.recordScope == RecordScope.CURRENT_SIM || state.sims.size < 2, enabled = !state.isRecording,
                         onClick = { onRecordScope(RecordScope.CURRENT_SIM) })
-                    Text("Current SIM"); Spacer(Modifier.width(12.dp))
-                    RadioButton(selected = state.settings.recordScope == RecordScope.BOTH_SIMS, enabled = !state.isRecording,
-                        onClick = { onRecordScope(RecordScope.BOTH_SIMS) })
-                    Text("Both SIMs")
+                    Text("Current SIM")
+                    if (state.sims.size > 1) {
+                        Spacer(Modifier.width(12.dp))
+                        RadioButton(selected = state.settings.recordScope == RecordScope.BOTH_SIMS, enabled = !state.isRecording,
+                            onClick = { onRecordScope(RecordScope.BOTH_SIMS) })
+                        Text("Both SIMs")
+                    }
                 }
                 val active = state.sims.firstOrNull { it.subscriptionId == state.selectedSubscriptionId }
                 if (state.isRecording) {
@@ -404,7 +424,19 @@ private fun LiveMapScreen(
         else liveSamples.filter { it.simSlot == selected.simSlotIndex + 1 }
     }
 
-    Column(modifier) {
+    Column(
+        modifier.horizontalSwipe(
+            enabled = state.sims.size > 1,
+            onSwipeLeft = {
+                val index = state.sims.indexOfFirst { it.subscriptionId == selected?.subscriptionId }
+                if (index in 0 until state.sims.lastIndex) onSelectSim(state.sims[index + 1].subscriptionId)
+            },
+            onSwipeRight = {
+                val index = state.sims.indexOfFirst { it.subscriptionId == selected?.subscriptionId }
+                if (index > 0) onSelectSim(state.sims[index - 1].subscriptionId)
+            }
+        )
+    ) {
         Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 2.dp) {
             Column(Modifier.fillMaxWidth()) {
                 if (state.sims.size > 1) {
@@ -539,12 +571,32 @@ private fun RecordingDetailScreen(
                     }
                 }
                 Box(
-                    Modifier.fillMaxWidth().weight(1f).clipToBounds().zIndex(0f)
+                    Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .clipToBounds()
+                        .zIndex(0f)
+                        .horizontalSwipe(
+                            onSwipeLeft = {
+                                val next = (selectedTab.ordinal + 1).coerceAtMost(DetailTab.entries.lastIndex)
+                                selectedTab = DetailTab.entries[next]
+                            },
+                            onSwipeRight = {
+                                val previous = (selectedTab.ordinal - 1).coerceAtLeast(0)
+                                selectedTab = DetailTab.entries[previous]
+                            }
+                        )
                 ) {
-                    when (selectedTab) {
+                    AnimatedContent(
+                        targetState = selectedTab,
+                        transitionSpec = { fadeIn(animationSpec = tween(120)).togetherWith(fadeOut(animationSpec = tween(90))) },
+                        label = "detailTabSwipe"
+                    ) { tab ->
+                    when (tab) {
                         DetailTab.SUMMARY -> RecordingSummary(d.item, filtered)
                         DetailTab.MAP -> RecordingMap(filtered)
                         DetailTab.SAMPLES -> RecordingSamples(filtered)
+                    }
                     }
                 }
             }
@@ -944,6 +996,29 @@ private fun SettingsScreen(settings: AppSettings, onSave: (AppSettings) -> Unit,
             }
         }
     }
+}
+
+private fun Modifier.horizontalSwipe(
+    enabled: Boolean = true,
+    onSwipeLeft: () -> Unit,
+    onSwipeRight: () -> Unit
+): Modifier = if (!enabled) this else pointerInput(onSwipeLeft, onSwipeRight) {
+    var totalDrag = 0f
+    detectHorizontalDragGestures(
+        onDragStart = { totalDrag = 0f },
+        onHorizontalDrag = { change, dragAmount ->
+            totalDrag += dragAmount
+            change.consume()
+        },
+        onDragEnd = {
+            when {
+                totalDrag < -80f -> onSwipeLeft()
+                totalDrag > 80f -> onSwipeRight()
+            }
+            totalDrag = 0f
+        },
+        onDragCancel = { totalDrag = 0f }
+    )
 }
 
 @Composable

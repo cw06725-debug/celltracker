@@ -96,7 +96,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun startRecording() {
         val app = getApplication<Application>()
         val selectedId = _state.value.selectedSubscriptionId ?: return
-        val both = _state.value.settings.recordScope == RecordScope.BOTH_SIMS
+        val both = _state.value.settings.recordScope == RecordScope.BOTH_SIMS && _state.value.sims.size > 1
         val intent = Intent(app, RecordingService::class.java)
             .putExtra(RecordingService.EXTRA_SUBSCRIPTION_ID, selectedId)
             .putExtra(RecordingService.EXTRA_BOTH_SIMS, both)
@@ -117,13 +117,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun deleteRecording(path: String) {
         File(path).delete()
         if (latestPathFromPrefs() == path) getApplication<Application>().getSharedPreferences("celltracker_recording", Application.MODE_PRIVATE).edit().remove("latest_path").apply()
-        _state.value = _state.value.copy(recordings = loadRecordings(), latestRecordingPath = latestPathFromPrefs(), exportMessage = "Recording deleted")
+        _state.value = _state.value.copy(recordings = loadRecordings(), latestRecordingPath = latestPathFromPrefs(), exportMessage = null)
     }
 
     fun deleteAllRecordings() {
         recordingsDir().listFiles()?.forEach { it.delete() }
         getApplication<Application>().getSharedPreferences("celltracker_recording", Application.MODE_PRIVATE).edit().remove("latest_path").apply()
-        _state.value = _state.value.copy(recordings = emptyList(), latestRecordingPath = null, exportMessage = "All recordings deleted")
+        _state.value = _state.value.copy(recordings = emptyList(), latestRecordingPath = null, exportMessage = null)
     }
 
     fun exportRecording(path: String, mode: CsvExportMode) {
