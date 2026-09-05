@@ -98,7 +98,7 @@ private fun MainScreen(
 
     Scaffold(topBar = {
         TopAppBar(
-            title = { Text("CellTracker 0.2.3") },
+            title = { Text("CellTracker 0.2.4") },
             actions = { TextButton(onClick = onSettings) { Text("Settings") } }
         )
     }) { padding ->
@@ -217,6 +217,9 @@ private fun MainScreen(
                         Field("Recording", "SIM ${active.simSlotIndex + 1} ${active.servingCell.operator}")
                         Field("Samples", state.recordingSamples.toString())
                     }
+                    val ageText = if (state.recordingLocationAgeMs == Long.MAX_VALUE) "--" else String.format(Locale.US, "%.1f s ago", state.recordingLocationAgeMs / 1000.0)
+                    Field("Location", if (state.recordingLocationValid) "GPS ready" else "Waiting for GPS...")
+                    Field("Last fix", ageText)
                 }
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (state.isRecording) Button(onClick = onStopRecording) { Text("Stop") }
@@ -234,7 +237,14 @@ private fun MainScreen(
                             Text(java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(java.util.Date(item.startedAt)), style = MaterialTheme.typography.labelLarge)
                             Text("${item.simSummary} · ${formatElapsed(item.durationMs)} · ${item.totalSamples} samples", style = MaterialTheme.typography.bodySmall)
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                TextButton(onClick = { exportPath = item.path; showExportDialog = true }) { Text("Export") }
+                                TextButton(onClick = {
+                                    if (item.simCount > 1) {
+                                        exportPath = item.path
+                                        showExportDialog = true
+                                    } else {
+                                        onExportRecording(item.path, CsvExportMode.COMBINED)
+                                    }
+                                }) { Text("Export") }
                                 TextButton(onClick = { deletePath = item.path }) { Text("Delete") }
                             }
                         }
@@ -253,7 +263,7 @@ private fun MainScreen(
         AlertDialog(
             onDismissRequest = { showExportDialog = false },
             title = { Text("Export CSV") },
-            text = { Text("Choose how to export the latest dual-SIM recording.") },
+            text = { Text("Choose how to export this dual-SIM recording.") },
             confirmButton = {
                 TextButton(onClick = {
                     showExportDialog = false

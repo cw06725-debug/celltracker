@@ -11,8 +11,17 @@ import android.os.Looper
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.callbackFlow
 import java.util.Locale
+
+object LocationStore {
+    private val _latest = MutableStateFlow(LocationData())
+    val latest: StateFlow<LocationData> = _latest.asStateFlow()
+    fun update(value: LocationData) { _latest.value = value }
+}
 
 class LocationRepository(private val context: Context) {
     private val lm = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
@@ -26,13 +35,19 @@ class LocationRepository(private val context: Context) {
             return@callbackFlow
         }
 
-        val listener = LocationListener { location -> trySend(location.toData()) }
+        fun publish(location: Location) {
+            val data = location.toData()
+            LocationStore.update(data)
+            trySend(data)
+        }
+
+        val listener = LocationListener { publish(it) }
 
         fun request(provider: String) {
             try {
                 if (lm.isProviderEnabled(provider)) {
                     lm.requestLocationUpdates(provider, 1000L, 0f, listener, Looper.getMainLooper())
-                    lm.getLastKnownLocation(provider)?.let { trySend(it.toData()) }
+                    lm.getLastKnownLocation(provider)?.let(::publish)
                 }
             } catch (_: Exception) { }
         }
@@ -50,6 +65,7 @@ class LocationRepository(private val context: Context) {
         accuracy = if (hasAccuracy()) String.format(Locale.US, "%.1f m", accuracy) else "--",
         speedKmh = if (hasSpeed()) String.format(Locale.US, "%.1f km/h", speed * 3.6f) else "--",
         bearing = if (hasBearing()) String.format(Locale.US, "%.1f°", bearing) else "--",
-        isValid = true
+        isValid = true,
+        timestampMs = System.currentTimeMillis()
     )
 }

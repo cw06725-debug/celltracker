@@ -18,7 +18,6 @@ class RecordingService : Service() {
     private lateinit var location: LocationRepository
     private lateinit var settingsRepository: SettingsRepository
     private var recordingJob: Job? = null
-    private var latestLocation = LocationData()
     private var targetSubscriptionId: Int = -1
     private var bothSims: Boolean = false
 
@@ -29,7 +28,8 @@ class RecordingService : Service() {
         val n = NotificationCompat.Builder(this, CHANNEL_ID).setSmallIcon(android.R.drawable.ic_menu_mylocation)
             .setContentTitle("CellTracker recording").setContentText("Recording cellular and location samples").setOngoing(true).build()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) startForeground(NOTIFICATION_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION) else startForeground(NOTIFICATION_ID, n)
-        scope.launch { location.locations().collectLatest { latestLocation = it } }
+        // Keep location updates active while recording. Every update is published into the shared LocationStore.
+        scope.launch { location.locations().collectLatest { /* LocationStore is updated by LocationRepository */ } }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -49,20 +49,23 @@ class RecordingService : Service() {
             val file = File(dir, "CellTracker_${scopeName}_$stamp.csv")
             FileWriter(file, false).use { it.appendLine(CSV_HEADER) }
             val started = System.currentTimeMillis(); val perSim = mutableMapOf<Int, Long>()
-            RecordingState.status.value = RecordingStatus(true, started, 0, emptyMap(), file.absolutePath)
+            val initialLocation = LocationStore.latest.value
+            RecordingState.status.value = RecordingStatus(true, started, 0, emptyMap(), file.absolutePath, initialLocation.isValid, locationAge(initialLocation))
             getSharedPreferences("celltracker_recording", MODE_PRIVATE).edit().putString("latest_path", file.absolutePath).apply()
             while (isActive) {
                 val cycleStart = System.currentTimeMillis()
                 val all = cellular.readAllSims()
                 val sims = if (bothSims) all else all.filter { it.subscriptionId == targetSubscriptionId }
+                val locationSnapshot = LocationStore.latest.value
                 FileWriter(file, true).use { w -> sims.forEach { sim ->
-                    val c=sim.servingCell; w.appendLine(csvLine(cycleStart,c,latestLocation,false,"","")); perSim[c.subscriptionId]=(perSim[c.subscriptionId]?:0)+1
+                    val c=sim.servingCell; w.appendLine(csvLine(cycleStart,c,locationSnapshot,false,"","")); perSim[c.subscriptionId]=(perSim[c.subscriptionId]?:0)+1
                 }}
-                RecordingState.status.value = RecordingStatus(true, started, perSim.values.sum(), perSim.toMap(), file.absolutePath)
+                RecordingState.status.value = RecordingStatus(true, started, perSim.values.sum(), perSim.toMap(), file.absolutePath, locationSnapshot.isValid, locationAge(locationSnapshot))
                 val spent=System.currentTimeMillis()-cycleStart; delay((settingsRepository.load().recordIntervalMs-spent).coerceAtLeast(0))
             }
         }
     }
+    private fun locationAge(l: LocationData): Long = if (!l.isValid || l.timestampMs <= 0L) Long.MAX_VALUE else (System.currentTimeMillis() - l.timestampMs).coerceAtLeast(0L)
     override fun onDestroy(){ RecordingState.status.value=RecordingState.status.value.copy(isRecording=false); scope.cancel(); super.onDestroy() }
     override fun onBind(intent: Intent?)=null
     private fun createNotificationChannel(){ if(Build.VERSION.SDK_INT>=26)getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel(CHANNEL_ID,"CellTracker recording",NotificationManager.IMPORTANCE_LOW)) }

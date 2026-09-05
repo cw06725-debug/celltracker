@@ -34,7 +34,8 @@ data class LocationData(
     val accuracy: String = "--",
     val speedKmh: String = "--",
     val bearing: String = "--",
-    val isValid: Boolean = false
+    val isValid: Boolean = false,
+    val timestampMs: Long = 0L
 )
 
 enum class MarkerAction(val label: String) {
@@ -49,7 +50,7 @@ enum class RecordScope { CURRENT_SIM, BOTH_SIMS }
 
 data class RecordingItem(
     val path: String, val name: String, val startedAt: Long, val durationMs: Long,
-    val totalSamples: Long, val simSummary: String
+    val totalSamples: Long, val simSummary: String, val simCount: Int = 1
 )
 
 data class AppSettings(
@@ -73,6 +74,8 @@ data class AppState(
     val recordingSamples: Long = 0L,
     val recordingSamplesBySubscription: Map<Int, Long> = emptyMap(),
     val latestRecordingPath: String? = null,
+    val recordingLocationValid: Boolean = false,
+    val recordingLocationAgeMs: Long = Long.MAX_VALUE,
     val recordings: List<RecordingItem> = emptyList(),
     val exportMessage: String? = null,
     val error: String? = null,

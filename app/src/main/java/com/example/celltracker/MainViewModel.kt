@@ -43,7 +43,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         recordingElapsedMs = if (status.isRecording) System.currentTimeMillis() - status.startedAt else _state.value.recordingElapsedMs,
                         recordingSamples = status.totalSamples,
                         recordingSamplesBySubscription = status.samplesBySubscription,
-                        latestRecordingPath = status.latestPath ?: latestPathFromPrefs()
+                        latestRecordingPath = status.latestPath ?: latestPathFromPrefs(),
+                        recordingLocationValid = status.locationValid,
+                        recordingLocationAgeMs = status.locationAgeMs
                     )
                 }
             }
@@ -156,8 +158,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val rows=lines.drop(1); val first=rows.first().split(','); val last=rows.last().split(',')
             val fmt=SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
             val start=fmt.parse(first[0].trim('"'))?.time ?: f.lastModified(); val end=fmt.parse(last[0].trim('"'))?.time ?: start
-            val sims=rows.mapNotNull { r -> val x=r.split(','); if(x.size>3) "SIM ${x[1]} ${x[3].trim('"')}" else null }.distinct().joinToString(" + ")
-            RecordingItem(f.absolutePath,f.name,start,(end-start).coerceAtLeast(0),rows.size.toLong(),sims)
+            val simEntries=rows.mapNotNull { r -> val x=r.split(','); if(x.size>3) "SIM ${x[1]} ${x[3].trim('"')}" else null }.distinct()
+            val sims=simEntries.joinToString(" + ")
+            RecordingItem(f.absolutePath,f.name,start,(end-start).coerceAtLeast(0),rows.size.toLong(),sims,simEntries.size.coerceAtLeast(1))
         } catch(_:Exception){ null }
     }?.sortedByDescending { it.startedAt } ?: emptyList()
 
