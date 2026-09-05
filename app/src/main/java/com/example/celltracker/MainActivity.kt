@@ -32,6 +32,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.XYTileSource
@@ -134,19 +135,28 @@ private fun MainScreen(
     var exportPath by remember { mutableStateOf<String?>(null) }
     var deletePath by remember { mutableStateOf<String?>(null) }
     var showDeleteAll by remember { mutableStateOf(false) }
+    var showLiveMap by remember { mutableStateOf(false) }
 
     val selected = state.sims.firstOrNull { it.subscriptionId == state.selectedSubscriptionId } ?: state.sims.firstOrNull()
     val c = selected?.servingCell ?: CellData()
     val sortedNeighbors = selected?.neighbors.orEmpty().sortedByDescending { it.rsrp.toIntOrNull() ?: Int.MIN_VALUE }
     val strongestNeighbor = sortedNeighbors.firstOrNull()
 
+    BackHandler(enabled = showLiveMap) { showLiveMap = false }
+
     Scaffold(topBar = {
         TopAppBar(
-            title = { Text("CellTracker ${BuildConfig.VERSION_NAME}") },
-            actions = { TextButton(onClick = onSettings) { Text("Settings") } }
+            title = { Text(if (showLiveMap) "Live Map" else "CellTracker ${BuildConfig.VERSION_NAME}") },
+            navigationIcon = { if (showLiveMap) TextButton(onClick = { showLiveMap = false }) { Text("Back") } },
+            actions = {
+                if (!showLiveMap) TextButton(onClick = { showLiveMap = true }) { Text("Map") }
+                TextButton(onClick = onSettings) { Text("Settings") }
+            }
         )
     }) { padding ->
-        Column(
+        if (showLiveMap) {
+            LiveMapScreen(state = state, onSelectSim = onSelectSim, modifier = Modifier.padding(padding).fillMaxSize())
+        } else Column(
             modifier = Modifier.padding(padding).padding(16.dp).fillMaxSize().verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
@@ -312,6 +322,91 @@ private fun MainScreen(
     }
 }
 
+
+@Composable
+private fun LiveMapScreen(
+    state: AppState,
+    onSelectSim: (Int) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val selected = state.sims.firstOrNull { it.subscriptionId == state.selectedSubscriptionId } ?: state.sims.firstOrNull()
+    var liveSamples by remember { mutableStateOf<List<TrackSample>>(emptyList()) }
+
+    // The recording CSV is the single source of truth for the live track. Polling it at a
+    // modest cadence keeps the map independent from the UI refresh interval and ensures
+    // the live view is identical to the track that will later be exported/replayed.
+    LaunchedEffect(state.latestRecordingPath, state.isRecording, state.recordingSamples) {
+        val path = state.latestRecordingPath
+        if (path == null) {
+            liveSamples = emptyList()
+            return@LaunchedEffect
+        }
+        while (true) {
+            liveSamples = withContext(Dispatchers.IO) {
+                runCatching { RecordingDetailRepository.loadSamples(path) }.getOrDefault(emptyList())
+            }
+            if (!state.isRecording) break
+            delay(1000L)
+        }
+    }
+
+    val visibleSamples = remember(liveSamples, state.settings.recordScope, selected?.simSlotIndex) {
+        if (state.settings.recordScope == RecordScope.BOTH_SIMS || selected == null) liveSamples
+        else liveSamples.filter { it.simSlot == selected.simSlotIndex + 1 }
+    }
+
+    Column(modifier) {
+        Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 2.dp) {
+            Column(Modifier.fillMaxWidth()) {
+                if (state.sims.size > 1) {
+                    TabRow(selectedTabIndex = state.sims.indexOfFirst { it.subscriptionId == selected?.subscriptionId }.coerceAtLeast(0)) {
+                        state.sims.forEach { sim ->
+                            Tab(
+                                selected = sim.subscriptionId == selected?.subscriptionId,
+                                onClick = { onSelectSim(sim.subscriptionId) },
+                                text = { Text("SIM ${sim.simSlotIndex + 1}\n${sim.servingCell.operator}") }
+                            )
+                        }
+                    }
+                }
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(if (state.isRecording) "Recording · live track" else "Latest recorded track", style = MaterialTheme.typography.labelLarge)
+                        Text("${visibleSamples.count { it.locationValid }} GPS points", style = MaterialTheme.typography.bodySmall)
+                    }
+                    val c = selected?.servingCell
+                    Text("${c?.displayRat?.ifBlank { c.rat } ?: "--"}  ${valueWithUnit(c?.rsrp ?: "--", "dBm")}", style = MaterialTheme.typography.labelLarge)
+                }
+            }
+        }
+
+        val currentLat = state.location.latitude.toDoubleOrNull()
+        val currentLon = state.location.longitude.toDoubleOrNull()
+        val currentPoint = if (state.location.isValid && currentLat != null && currentLon != null) GeoPoint(currentLat, currentLon) else null
+        val valid = visibleSamples.filter { it.locationValid && it.latitude != null && it.longitude != null }
+        if (valid.isEmpty() && currentPoint == null) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(if (state.isRecording) "Waiting for GPS track..." else "Start recording to build a live track")
+            }
+        } else {
+            Column(Modifier.fillMaxSize()) {
+                RatLegend((valid.map { normalizedRat(it) } + listOfNotNull(selected?.servingCell?.displayRat?.takeIf { it.isNotBlank() })).distinct())
+                OsmTrackMap(
+                    samples = valid,
+                    modifier = Modifier.fillMaxWidth().weight(1f),
+                    currentPoint = currentPoint,
+                    currentLabel = selected?.servingCell?.let { "${it.displayRat.ifBlank { it.rat }} · ${valueWithUnit(it.rsrp, "dBm")}" },
+                    liveFollow = state.isRecording
+                )
+            }
+        }
+    }
+}
+
 private enum class DetailTab { SUMMARY, MAP, SAMPLES }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -471,7 +566,13 @@ private fun RatLegend(rats: List<String>) {
 }
 
 @Composable
-private fun OsmTrackMap(samples: List<TrackSample>, modifier: Modifier = Modifier) {
+private fun OsmTrackMap(
+    samples: List<TrackSample>,
+    modifier: Modifier = Modifier,
+    currentPoint: GeoPoint? = null,
+    currentLabel: String? = null,
+    liveFollow: Boolean = false
+) {
     val context = LocalContext.current
 
     // OSM's current tile policy requires the canonical host (no a/b/c subdomains) and an
@@ -516,7 +617,9 @@ private fun OsmTrackMap(samples: List<TrackSample>, modifier: Modifier = Modifie
         }.hashCode()
     }
 
-    LaunchedEffect(mapView, trackKey) {
+    val livePointKey = currentPoint?.let { "${String.format(Locale.US, "%.6f", it.latitude)},${String.format(Locale.US, "%.6f", it.longitude)}" }
+
+    LaunchedEffect(mapView, trackKey, livePointKey, liveFollow) {
         mapView.overlays.clear()
         val allPoints = mutableListOf<GeoPoint>()
 
@@ -580,9 +683,25 @@ private fun OsmTrackMap(samples: List<TrackSample>, modifier: Modifier = Modifie
             })
         }
 
+        currentPoint?.let { point ->
+            if (allPoints.none { kotlin.math.abs(it.latitude - point.latitude) < 0.0000001 && kotlin.math.abs(it.longitude - point.longitude) < 0.0000001 }) {
+                allPoints += point
+            }
+            mapView.overlays.add(Marker(mapView).apply {
+                position = point
+                title = "Current location"
+                snippet = currentLabel ?: "Live GPS"
+                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+            })
+        }
+
         mapView.invalidate()
         mapView.post {
             when {
+                liveFollow && currentPoint != null -> {
+                    mapView.controller.setCenter(currentPoint)
+                    if (mapView.zoomLevelDouble < 16.0) mapView.controller.setZoom(17.0)
+                }
                 allPoints.size == 1 -> {
                     mapView.controller.setCenter(allPoints.first())
                     mapView.controller.setZoom(18.0)

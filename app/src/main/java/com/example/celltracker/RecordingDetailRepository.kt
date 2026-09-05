@@ -9,9 +9,17 @@ object RecordingDetailRepository {
 
     fun load(path: String, fallbackItem: RecordingItem? = null): RecordingDetail {
         val file = File(path)
+        val samples = loadSamples(path)
+        require(samples.isNotEmpty()) { "Recording has no samples" }
+        val item = fallbackItem ?: buildItem(file, samples)
+        return RecordingDetail(item, samples)
+    }
+
+    fun loadSamples(path: String): List<TrackSample> {
+        val file = File(path)
         require(file.exists()) { "Recording file not found" }
         val lines = file.readLines().filter { it.isNotBlank() }
-        require(lines.size >= 2) { "Recording has no samples" }
+        if (lines.size < 2) return emptyList()
         val header = parseCsvLine(lines.first())
         val index = header.withIndex().associate { it.value to it.index }
         fun field(fields: List<String>, name: String): String = fields.getOrNull(index[name] ?: -1).orEmpty()
@@ -53,8 +61,7 @@ object RecordingDetailRepository {
             }.getOrNull()
         }.filterNotNull()
 
-        val item = fallbackItem ?: buildItem(file, samples)
-        return RecordingDetail(item, samples)
+        return samples
     }
 
     private fun buildItem(file: File, samples: List<TrackSample>): RecordingItem {
