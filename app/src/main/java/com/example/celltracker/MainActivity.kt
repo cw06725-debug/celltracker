@@ -32,7 +32,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.osmdroid.config.Configuration
-import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.tileprovider.tilesource.XYTileSource
 import org.osmdroid.util.BoundingBox
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
@@ -45,6 +45,14 @@ import java.util.Locale
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Initialize osmdroid once, before any MapView is created. OSM requires a
+        // stable app-specific User-Agent; generic/default library agents are blocked.
+        Configuration.getInstance().apply {
+            load(applicationContext, PreferenceManager.getDefaultSharedPreferences(applicationContext))
+            userAgentValue = "CellTracker/${BuildConfig.VERSION_NAME} (+https://github.com/cw06725-debug/celltracker)"
+        }
+
         setContent {
             MaterialTheme {
                 val vm: MainViewModel = viewModel()
@@ -132,7 +140,7 @@ private fun MainScreen(
 
     Scaffold(topBar = {
         TopAppBar(
-            title = { Text("CellTracker 0.3.1") },
+            title = { Text("CellTracker ${BuildConfig.VERSION_NAME}") },
             actions = { TextButton(onClick = onSettings) { Text("Settings") } }
         )
     }) { padding ->
@@ -411,11 +419,17 @@ private fun RecordingSummary(item: RecordingItem, samples: List<TrackSample>) {
 
 @Composable
 private fun RecordingMap(samples: List<TrackSample>) {
-    val valid = samples.filter { it.locationValid && it.latitude != null && it.longitude != null }
+    // Keep the filtered list stable across recompositions. A freshly-created List on every
+    // recomposition was restarting the map effect and repeatedly refitting the camera.
+    val valid = remember(samples) {
+        samples.filter { it.locationValid && it.latitude != null && it.longitude != null }
+    }
     Column(Modifier.fillMaxSize()) {
         RatLegend(valid.map { normalizedRat(it) }.distinct())
         if (valid.isEmpty()) {
-            Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) { Text("No valid GPS points in this recording") }
+            Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                Text("No valid GPS points in this recording")
+            }
         } else {
             OsmTrackMap(valid, Modifier.fillMaxWidth().weight(1f))
         }
@@ -438,15 +452,25 @@ private fun RatLegend(rats: List<String>) {
 @Composable
 private fun OsmTrackMap(samples: List<TrackSample>, modifier: Modifier = Modifier) {
     val context = LocalContext.current
+
+    // OSM's current tile policy requires the canonical host (no a/b/c subdomains) and an
+    // identifiable User-Agent. osmdroid's historical MAPNIK source can resolve through old
+    // subdomain URLs, so use the canonical endpoint explicitly.
+    val osmTileSource = remember {
+        XYTileSource(
+            "OpenStreetMap",
+            0,
+            19,
+            256,
+            ".png",
+            arrayOf("https://tile.openstreetmap.org/"),
+            "© OpenStreetMap contributors"
+        )
+    }
+
     val mapView = remember(context) {
-        Configuration.getInstance().apply {
-            load(context, PreferenceManager.getDefaultSharedPreferences(context))
-            userAgentValue = "${context.packageName}/0.3.2"
-        }
         MapView(context).apply {
-            // Use osmdroid's maintained MAPNIK source instead of a custom tile source.
-            // This keeps the correct URL pattern and source metadata in one place.
-            setTileSource(TileSourceFactory.MAPNIK)
+            setTileSource(osmTileSource)
             setUseDataConnection(true)
             setMultiTouchControls(true)
             minZoomLevel = 3.0
@@ -463,10 +487,15 @@ private fun OsmTrackMap(samples: List<TrackSample>, modifier: Modifier = Modifie
         }
     }
 
-    // Keep AndroidView.update free of camera/overlay side effects. Compose can invoke update
-    // repeatedly during layout, which previously caused the map to refit continuously and
-    // made the tab/header area appear to shake.
-    LaunchedEffect(mapView, samples) {
+    // Use a value-based key instead of List identity. This prevents camera/overlay work from
+    // restarting merely because Compose created an equivalent list instance.
+    val trackKey = remember(samples) {
+        samples.joinToString("|") {
+            "${it.timestampMs},${it.simSlot},${it.latitude},${it.longitude},${normalizedRat(it)},${it.isMarker}"
+        }.hashCode()
+    }
+
+    LaunchedEffect(mapView, trackKey) {
         mapView.overlays.clear()
         val allPoints = mutableListOf<GeoPoint>()
 
@@ -485,10 +514,10 @@ private fun OsmTrackMap(samples: List<TrackSample>, modifier: Modifier = Modifie
                 segment = mutableListOf()
             }
 
-            simSamples.sortedBy { it.timestampMs }.forEach { s ->
-                val point = GeoPoint(s.latitude!!, s.longitude!!)
+            simSamples.sortedBy { it.timestampMs }.forEach { sample ->
+                val point = GeoPoint(sample.latitude!!, sample.longitude!!)
                 allPoints += point
-                val rat = normalizedRat(s)
+                val rat = normalizedRat(sample)
                 if (currentRat == null) currentRat = rat
                 if (rat != currentRat) {
                     flush()
@@ -496,11 +525,11 @@ private fun OsmTrackMap(samples: List<TrackSample>, modifier: Modifier = Modifie
                 }
                 segment += point
 
-                if (s.isMarker) {
+                if (sample.isMarker) {
                     mapView.overlays.add(Marker(mapView).apply {
                         position = point
-                        title = if (s.eventType.isNotBlank()) s.eventType else "Marker"
-                        snippet = "${s.operator} · ${normalizedRat(s)} · RSRP ${s.rsrp} dBm"
+                        title = if (sample.eventType.isNotBlank()) sample.eventType else "Marker"
+                        snippet = "${sample.operator} · ${normalizedRat(sample)} · RSRP ${sample.rsrp} dBm"
                         setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
                     })
                 }
@@ -516,16 +545,28 @@ private fun OsmTrackMap(samples: List<TrackSample>, modifier: Modifier = Modifie
                     mapView.controller.setZoom(18.0)
                 }
                 allPoints.size > 1 -> runCatching {
-                    mapView.zoomToBoundingBox(BoundingBox.fromGeoPoints(allPoints), true, 80)
+                    // No animation here: animated fit can fight MapView layout during the first frame.
+                    mapView.zoomToBoundingBox(BoundingBox.fromGeoPoints(allPoints), false, 80)
                 }
             }
         }
     }
 
-    AndroidView(
-        factory = { mapView },
-        modifier = modifier
-    )
+    Box(modifier) {
+        AndroidView(
+            factory = { mapView },
+            modifier = Modifier.fillMaxSize()
+        )
+        Text(
+            "© OpenStreetMap contributors",
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(6.dp)
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.80f))
+                .padding(horizontal = 4.dp, vertical = 2.dp)
+        )
+    }
 }
 
 @Composable

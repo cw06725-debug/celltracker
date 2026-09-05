@@ -1,3 +1,13 @@
+# CellTracker v0.3.3
+
+Fixes:
+- App title now reads BuildConfig.VERSION_NAME instead of a hard-coded old version.
+- OSM raster tiles use the canonical https://tile.openstreetmap.org/ endpoint.
+- App-specific User-Agent is initialized before MapView creation.
+- Visible OpenStreetMap attribution added.
+- Map sample list/effect keys are stabilized to stop repeated camera refits and UI jitter.
+- Initial bounds fit is non-animated.
+
 # CellTracker v0.3.1
 
 Fix release for the historical track map.
