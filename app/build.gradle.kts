@@ -11,12 +11,13 @@ android {
         applicationId = "com.example.celltracker"
         minSdk = 29
         targetSdk = 34
-        versionCode = 9
-        versionName = "0.3.3"
+        versionCode = 10
+        versionName = "0.3.4"
     }
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     composeOptions {
