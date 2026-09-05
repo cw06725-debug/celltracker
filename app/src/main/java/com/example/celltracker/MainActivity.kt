@@ -32,7 +32,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.osmdroid.config.Configuration
-import org.osmdroid.tileprovider.tilesource.XYTileSource
+import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.BoundingBox
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
@@ -352,10 +352,12 @@ private fun RecordingDetailScreen(
                         Tab(selected = selectedTab == tab, onClick = { selectedTab = tab }, text = { Text(tab.name.lowercase().replaceFirstChar { it.uppercase() }) })
                     }
                 }
-                when (selectedTab) {
-                    DetailTab.SUMMARY -> RecordingSummary(d.item, filtered)
-                    DetailTab.MAP -> RecordingMap(filtered)
-                    DetailTab.SAMPLES -> RecordingSamples(filtered)
+                Box(Modifier.fillMaxWidth().weight(1f)) {
+                    when (selectedTab) {
+                        DetailTab.SUMMARY -> RecordingSummary(d.item, filtered)
+                        DetailTab.MAP -> RecordingMap(filtered)
+                        DetailTab.SAMPLES -> RecordingSamples(filtered)
+                    }
                 }
             }
         }
@@ -413,9 +415,9 @@ private fun RecordingMap(samples: List<TrackSample>) {
     Column(Modifier.fillMaxSize()) {
         RatLegend(valid.map { normalizedRat(it) }.distinct())
         if (valid.isEmpty()) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("No valid GPS points in this recording") }
+            Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) { Text("No valid GPS points in this recording") }
         } else {
-            OsmTrackMap(valid, Modifier.fillMaxSize())
+            OsmTrackMap(valid, Modifier.fillMaxWidth().weight(1f))
         }
     }
 }
@@ -439,14 +441,12 @@ private fun OsmTrackMap(samples: List<TrackSample>, modifier: Modifier = Modifie
     val mapView = remember(context) {
         Configuration.getInstance().apply {
             load(context, PreferenceManager.getDefaultSharedPreferences(context))
-            userAgentValue = "${context.packageName}/0.3.1"
+            userAgentValue = "${context.packageName}/0.3.2"
         }
-        val osmHttps = XYTileSource(
-            "OpenStreetMap", 0, 19, 256, ".png",
-            arrayOf("https://tile.openstreetmap.org/")
-        )
         MapView(context).apply {
-            setTileSource(osmHttps)
+            // Use osmdroid's maintained MAPNIK source instead of a custom tile source.
+            // This keeps the correct URL pattern and source metadata in one place.
+            setTileSource(TileSourceFactory.MAPNIK)
             setUseDataConnection(true)
             setMultiTouchControls(true)
             minZoomLevel = 3.0

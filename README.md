@@ -29,3 +29,9 @@ V0.3 introduces recording history preview and the first in-app map workflow.
 
 ## Build
 Push this project to GitHub and use the included `Build Android APK` workflow, or build the Debug APK in Android Studio.
+
+
+## v0.3.2
+- Fixed map layout jitter by constraining the detail content and map to the remaining height with Compose weight.
+- Switched tile source to osmdroid TileSourceFactory.MAPNIK.
+- Kept map camera/overlay updates outside AndroidView.update.
