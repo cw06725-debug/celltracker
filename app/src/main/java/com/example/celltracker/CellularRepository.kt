@@ -119,6 +119,10 @@ class CellularRepository(private val context: Context) {
                 rsrp = intDbValue(s.rsrp),
                 rsrq = intDbValue(s.rsrq),
                 sinr = intDbValue(s.rssnr),
+                band = if (android.os.Build.VERSION.SDK_INT >= 30) bandValue(id.bands) else lteBandFromEarfcn(id.earfcn),
+                bandwidth = bandwidthValue(id.bandwidth),
+                rssi = intDbValue(s.rssi),
+                timingAdvance = intValue(s.timingAdvance),
                 registered = cell.isRegistered
             )
         }
@@ -141,6 +145,10 @@ class CellularRepository(private val context: Context) {
                 rsrp = intDbValue(s.ssRsrp),
                 rsrq = intDbValue(s.ssRsrq),
                 sinr = intDbValue(s.ssSinr),
+                band = if (android.os.Build.VERSION.SDK_INT >= 30) bandValue(id.bands, true) else nrBandFromArfcn(id.nrarfcn),
+                csiRsrp = intDbValue(s.csiRsrp),
+                csiRsrq = intDbValue(s.csiRsrq),
+                csiSinr = intDbValue(s.csiSinr),
                 registered = cell.isRegistered
             )
         }
@@ -150,4 +158,16 @@ class CellularRepository(private val context: Context) {
     private fun intValue(v: Int): String = if (v == CellInfo.UNAVAILABLE) "--" else v.toString()
     private fun longValue(v: Long): String = if (v == CellInfo.UNAVAILABLE.toLong()) "--" else v.toString()
     private fun intDbValue(v: Int): String = if (v == CellInfo.UNAVAILABLE) "--" else v.toString()
+    private fun bandValue(v: IntArray, nr: Boolean = false): String = if (v.isEmpty()) "--" else v.joinToString("/") { if (nr) "n$it" else "B$it" }
+    private fun lteBandFromEarfcn(a: Int): String = when (a) {
+        in 0..599 -> "B1"; in 600..1199 -> "B2"; in 1200..1949 -> "B3"; in 1950..2399 -> "B4"
+        in 2400..2649 -> "B5"; in 2750..3449 -> "B7"; in 3450..3799 -> "B8"; in 6150..6449 -> "B20"
+        in 9210..9659 -> "B28"; in 37750..38249 -> "B38"; in 38250..38649 -> "B39"; in 38650..39649 -> "B40"
+        in 39650..41589 -> "B41"; else -> "--"
+    }
+    private fun nrBandFromArfcn(a: Int): String = when (a) {
+        in 620000..653333 -> "n78"; in 499200..537999 -> "n41"; in 422000..434000 -> "n1"; else -> "--"
+    }
+    private fun bandwidthValue(khz: Int): String = if (khz == CellInfo.UNAVAILABLE || khz <= 0) "--" else String.format(java.util.Locale.US, "%.1f MHz", khz / 1000.0)
 }
+

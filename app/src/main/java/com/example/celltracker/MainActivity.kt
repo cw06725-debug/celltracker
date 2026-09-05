@@ -18,6 +18,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -94,7 +95,7 @@ class MainActivity : ComponentActivity() {
                 AnimatedContent(
                     targetState = rootDestination,
                     transitionSpec = {
-                        (fadeIn() + scaleIn(initialScale = 0.96f)).togetherWith(fadeOut() + scaleOut(targetScale = 1.02f))
+                        fadeIn(animationSpec = tween(120)).togetherWith(fadeOut(animationSpec = tween(90)) )
                     },
                     label = "rootNavigation"
                 ) { destination ->
@@ -209,12 +210,19 @@ private fun MainScreen(
                 Field("TAC", c.tac)
                 Field(if (c.rat == "NR") "NCI" else "Cell ID", c.cellId)
                 Field("PCI", c.pci)
+                Field("Band", c.band)
                 Field(if (c.rat == "NR") "NR-ARFCN" else "EARFCN", c.arfcn)
+                if (c.bandwidth != "--") Field("Bandwidth", c.bandwidth)
             }
             InfoCard("Signal") {
                 Field(if (c.rat == "NR") "SS-RSRP" else "RSRP", valueWithUnit(c.rsrp, "dBm"))
                 Field(if (c.rat == "NR") "SS-RSRQ" else "RSRQ", valueWithUnit(c.rsrq, "dB"))
                 Field(if (c.rat == "NR") "SS-SINR" else "SINR", valueWithUnit(c.sinr, "dB"))
+                if (c.rssi != "--") Field("RSSI", valueWithUnit(c.rssi, "dBm"))
+                if (c.timingAdvance != "--") Field("Timing Advance", c.timingAdvance)
+                if (c.csiRsrp != "--") Field("CSI-RSRP", valueWithUnit(c.csiRsrp, "dBm"))
+                if (c.csiRsrq != "--") Field("CSI-RSRQ", valueWithUnit(c.csiRsrq, "dB"))
+                if (c.csiSinr != "--") Field("CSI-SINR", valueWithUnit(c.csiSinr, "dB"))
             }
 
             Card(modifier = Modifier.fillMaxWidth()) {
@@ -421,6 +429,8 @@ private fun LiveMapScreen(
                 simSlot = selected.simSlotIndex + 1, subscriptionId = selected.subscriptionId, operator = c.operator,
                 rat = c.rat, displayRat = c.displayRat, mcc = c.mcc, mnc = c.mnc, tac = c.tac, cellId = c.cellId,
                 pci = c.pci, arfcn = c.arfcn, rsrp = c.rsrp, rsrq = c.rsrq, sinr = c.sinr,
+                band = c.band, bandwidth = c.bandwidth, rssi = c.rssi, timingAdvance = c.timingAdvance,
+                csiRsrp = c.csiRsrp, csiRsrq = c.csiRsrq, csiSinr = c.csiSinr,
                 latitude = currentLat, longitude = currentLon, altitude = state.location.altitude, accuracy = state.location.accuracy,
                 speedKmh = state.location.speedKmh, bearing = state.location.bearing, locationValid = true
             )
@@ -662,30 +672,13 @@ private fun OsmTrackMap(
 
     val livePointKey = currentPoint?.let { "${String.format(Locale.US, "%.6f", it.latitude)},${String.format(Locale.US, "%.6f", it.longitude)}" }
 
-    LaunchedEffect(mapView, trackKey, livePointKey, liveFollow, selectedSample) {
+    LaunchedEffect(mapView, trackKey, livePointKey, liveFollow) {
         mapView.overlays.clear()
         val allPoints = mutableListOf<GeoPoint>()
-        // A tap anywhere near the route snaps to the nearest recorded sample. This keeps
-        // thousands of samples off the visual layer while still making every point inspectable.
-        mapView.overlays.add(MapEventsOverlay(object : MapEventsReceiver {
-            override fun singleTapConfirmedHelper(p: GeoPoint): Boolean {
-                val nearest = samples.minByOrNull { sample ->
-                    val lat = sample.latitude ?: return@minByOrNull Double.MAX_VALUE
-                    val lon = sample.longitude ?: return@minByOrNull Double.MAX_VALUE
-                    val dx = (lon - p.longitude) * kotlin.math.cos(Math.toRadians(p.latitude))
-                    val dy = lat - p.latitude
-                    dx * dx + dy * dy
-                }
-                if (nearest != null) selectedSample = nearest
-                return nearest != null
-            }
-            override fun longPressHelper(p: GeoPoint): Boolean = false
-        }))
 
         samples.groupBy { it.simSlot }.values.forEach { simSamples ->
             var currentRat: String? = null
             var segment = mutableListOf<GeoPoint>()
-
             fun flush() {
                 if (segment.size >= 2 && currentRat != null) {
                     mapView.overlays.add(Polyline().apply {
@@ -696,22 +689,19 @@ private fun OsmTrackMap(
                 }
                 segment = mutableListOf()
             }
-
             simSamples.sortedBy { it.timestampMs }.forEach { sample ->
-                val point = GeoPoint(sample.latitude!!, sample.longitude!!)
+                val lat = sample.latitude ?: return@forEach
+                val lon = sample.longitude ?: return@forEach
+                val point = GeoPoint(lat, lon)
                 allPoints += point
                 val rat = normalizedRat(sample)
                 if (currentRat == null) currentRat = rat
-                if (rat != currentRat) {
-                    flush()
-                    currentRat = rat
-                }
+                if (rat != currentRat) { flush(); currentRat = rat }
                 segment += point
-
                 if (sample.isMarker) {
                     mapView.overlays.add(Marker(mapView).apply {
                         position = point
-                        title = if (sample.eventType.isNotBlank()) sample.eventType else "Marker"
+                        title = sample.eventType.ifBlank { "Marker" }
                         snippet = "${sample.operator} · ${normalizedRat(sample)} · RSRP ${sample.rsrp} dBm"
                         setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
                         setOnMarkerClickListener { _, _ -> selectedSample = sample; true }
@@ -721,51 +711,52 @@ private fun OsmTrackMap(
             flush()
         }
 
-        // Always show the first/last valid GPS fixes, even when the device was
-        // stationary and the polyline has effectively zero length.
         val ordered = samples.sortedBy { it.timestampMs }
         ordered.firstOrNull()?.let { sample ->
-            val point = GeoPoint(sample.latitude!!, sample.longitude!!)
             mapView.overlays.add(Marker(mapView).apply {
-                position = point
+                position = GeoPoint(sample.latitude!!, sample.longitude!!)
                 title = "Start"
-                snippet = "${sample.operator} · ${normalizedRat(sample)} · ${formatCoord(sample.latitude)}, ${formatCoord(sample.longitude)}"
                 setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                setOnMarkerClickListener { _, _ -> selectedSample = sample; true }
             })
         }
-        ordered.lastOrNull()?.let { sample ->
-            val point = GeoPoint(sample.latitude!!, sample.longitude!!)
+        ordered.lastOrNull()?.takeIf { it.timestampMs != ordered.firstOrNull()?.timestampMs }?.let { sample ->
             mapView.overlays.add(Marker(mapView).apply {
-                position = point
-                title = if (ordered.size == 1) "Location" else "End"
-                snippet = "${sample.operator} · ${normalizedRat(sample)} · ${formatCoord(sample.latitude)}, ${formatCoord(sample.longitude)}"
+                position = GeoPoint(sample.latitude!!, sample.longitude!!)
+                title = "End"
                 setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                setOnMarkerClickListener { _, _ -> selectedSample = sample; true }
             })
         }
 
         currentPoint?.let { point ->
-            if (allPoints.none { kotlin.math.abs(it.latitude - point.latitude) < 0.0000001 && kotlin.math.abs(it.longitude - point.longitude) < 0.0000001 }) {
-                allPoints += point
-            }
+            if (allPoints.none { it.distanceToAsDouble(point) < 0.5 }) allPoints += point
             mapView.overlays.add(Marker(mapView).apply {
                 position = point
                 title = "Current location"
                 snippet = currentLabel ?: "Live GPS"
                 setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
-                setOnMarkerClickListener { _, _ ->
-                    selectedSample = currentSample ?: samples.maxByOrNull { it.timestampMs }
-                    true
-                }
+                setOnMarkerClickListener { _, _ -> selectedSample = currentSample; true }
             })
         }
 
-        selectedSample?.takeIf { it.latitude != null && it.longitude != null }?.let { sample ->
-            mapView.overlays.add(Marker(mapView).apply {
-                position = GeoPoint(sample.latitude!!, sample.longitude!!)
-                title = "Selected point"
-                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
-            })
-        }
+        // One map-tap path for live and history: current location wins, then nearest sample.
+        // Tapping empty map dismisses the inspector instead of selecting a far-away point.
+        mapView.overlays.add(MapEventsOverlay(object : MapEventsReceiver {
+            override fun singleTapConfirmedHelper(p: GeoPoint): Boolean {
+                if (currentPoint != null && currentPoint.distanceToAsDouble(p) <= 45.0) {
+                    selectedSample = currentSample
+                    return true
+                }
+                val nearest = samples.filter { it.latitude != null && it.longitude != null }
+                    .minByOrNull { GeoPoint(it.latitude!!, it.longitude!!).distanceToAsDouble(p) }
+                val distance = nearest?.let { GeoPoint(it.latitude!!, it.longitude!!).distanceToAsDouble(p) } ?: Double.MAX_VALUE
+                selectedSample = if (distance <= 80.0) nearest else null
+                return true
+            }
+            override fun longPressHelper(p: GeoPoint): Boolean = false
+        }))
+
         mapView.invalidate()
         mapView.post {
             when {
@@ -773,14 +764,8 @@ private fun OsmTrackMap(
                     mapView.controller.setCenter(currentPoint)
                     if (mapView.zoomLevelDouble < 16.0) mapView.controller.setZoom(17.0)
                 }
-                allPoints.size == 1 -> {
-                    mapView.controller.setCenter(allPoints.first())
-                    mapView.controller.setZoom(18.0)
-                }
-                allPoints.size > 1 -> runCatching {
-                    // No animation here: animated fit can fight MapView layout during the first frame.
-                    mapView.zoomToBoundingBox(BoundingBox.fromGeoPoints(allPoints), false, 80)
-                }
+                allPoints.size == 1 -> { mapView.controller.setCenter(allPoints.first()); mapView.controller.setZoom(18.0) }
+                allPoints.size > 1 -> runCatching { mapView.zoomToBoundingBox(BoundingBox.fromGeoPoints(allPoints), false, 80) }
             }
         }
     }
@@ -880,7 +865,7 @@ private fun SettingsScreen(settings: AppSettings, onSave: (AppSettings) -> Unit,
     }) { padding ->
         AnimatedContent(
             targetState = page,
-            transitionSpec = { (fadeIn() + scaleIn(initialScale = 0.97f)).togetherWith(fadeOut() + scaleOut(targetScale = 1.02f)) },
+            transitionSpec = { fadeIn(animationSpec = tween(120)).togetherWith(fadeOut(animationSpec = tween(90)) ) },
             label = "settingsNavigation",
             modifier = Modifier.padding(padding).fillMaxSize()
         ) { currentPage ->
@@ -1000,7 +985,11 @@ private fun mapPointRows(sample: TrackSample, fields: Set<MapDetailField>): List
         MapDetailField.RSRP to ("RSRP" to valueWithUnit(sample.rsrp, "dBm")), MapDetailField.RSRQ to ("RSRQ" to valueWithUnit(sample.rsrq, "dB")),
         MapDetailField.SINR to ("SINR" to valueWithUnit(sample.sinr, "dB")), MapDetailField.PCI to ("PCI" to sample.pci),
         MapDetailField.ARFCN to ("ARFCN" to sample.arfcn), MapDetailField.TAC to ("TAC" to sample.tac),
-        MapDetailField.CELL_ID to ("Cell ID / NCI" to sample.cellId), MapDetailField.LATITUDE to ("Latitude" to formatCoord(sample.latitude)),
+        MapDetailField.CELL_ID to ("Cell ID / NCI" to sample.cellId), MapDetailField.BAND to ("Band" to sample.band),
+        MapDetailField.BANDWIDTH to ("Bandwidth" to sample.bandwidth), MapDetailField.RSSI to ("RSSI" to valueWithUnit(sample.rssi, "dBm")),
+        MapDetailField.TIMING_ADVANCE to ("Timing Advance" to sample.timingAdvance), MapDetailField.CSI_RSRP to ("CSI-RSRP" to valueWithUnit(sample.csiRsrp, "dBm")),
+        MapDetailField.CSI_RSRQ to ("CSI-RSRQ" to valueWithUnit(sample.csiRsrq, "dB")), MapDetailField.CSI_SINR to ("CSI-SINR" to valueWithUnit(sample.csiSinr, "dB")),
+        MapDetailField.MCC to ("MCC" to sample.mcc), MapDetailField.MNC to ("MNC" to sample.mnc), MapDetailField.LATITUDE to ("Latitude" to formatCoord(sample.latitude)),
         MapDetailField.LONGITUDE to ("Longitude" to formatCoord(sample.longitude)), MapDetailField.ACCURACY to ("Accuracy" to valueWithUnit(sample.accuracy, "m")),
         MapDetailField.SPEED to ("Speed" to valueWithUnit(sample.speedKmh, "km/h")), MapDetailField.BEARING to ("Bearing" to valueWithUnit(sample.bearing, "°"))
     )

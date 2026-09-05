@@ -72,9 +72,9 @@ class RecordingService : Service() {
     companion object {
         const val CHANNEL_ID="celltracker_recording"; const val NOTIFICATION_ID=1001
         const val EXTRA_SUBSCRIPTION_ID="subscription_id"; const val EXTRA_BOTH_SIMS="both_sims"
-        const val CSV_HEADER="timestamp,sim_slot,subscription_id,operator,rat,display_rat,mcc,mnc,tac,cell_id,pci,arfcn,rsrp,rsrq,sinr,latitude,longitude,altitude,accuracy,speed_kmh,bearing,location_valid,is_marker,event_type,event_note,screenshot"
+        const val CSV_HEADER="timestamp,sim_slot,subscription_id,operator,rat,display_rat,mcc,mnc,tac,cell_id,pci,arfcn,rsrp,rsrq,sinr,band,bandwidth,rssi,timing_advance,csi_rsrp,csi_rsrq,csi_sinr,latitude,longitude,altitude,accuracy,speed_kmh,bearing,location_valid,is_marker,event_type,event_note,screenshot"
         fun csvLine(timestamp:Long,c:CellData,l:LocationData,isMarker:Boolean,eventType:String,eventNote:String):String{
-            val time=SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS",Locale.US).format(Date(timestamp)); val v=listOf(time,(c.simSlotIndex+1).toString(),c.subscriptionId.toString(),c.operator,c.rat,c.displayRat,c.mcc,c.mnc,c.tac,c.cellId,c.pci,c.arfcn,c.rsrp,c.rsrq,c.sinr,l.latitude,l.longitude,l.altitude,l.accuracy,l.speedKmh,l.bearing,l.isValid.toString(),isMarker.toString(),eventType,eventNote,"")
+            val time=SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS",Locale.US).format(Date(timestamp)); val v=listOf(time,(c.simSlotIndex+1).toString(),c.subscriptionId.toString(),c.operator,c.rat,c.displayRat,c.mcc,c.mnc,c.tac,c.cellId,c.pci,c.arfcn,c.rsrp,c.rsrq,c.sinr,c.band,c.bandwidth,c.rssi,c.timingAdvance,c.csiRsrp,c.csiRsrq,c.csiSinr,l.latitude,l.longitude,l.altitude,l.accuracy,l.speedKmh,l.bearing,l.isValid.toString(),isMarker.toString(),eventType,eventNote,"")
             return v.joinToString(","){ escapeCsv(it) }
         }
         private fun escapeCsv(value:String):String{ val safe=value.replace("\"","\"\""); return if(safe.contains(',')||safe.contains('"')||safe.contains('\n')) "\"$safe\"" else safe }

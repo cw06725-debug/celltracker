@@ -16,6 +16,13 @@ data class CellData(
     val rsrp: String = "--",
     val rsrq: String = "--",
     val sinr: String = "--",
+    val band: String = "--",
+    val bandwidth: String = "--",
+    val rssi: String = "--",
+    val timingAdvance: String = "--",
+    val csiRsrp: String = "--",
+    val csiRsrq: String = "--",
+    val csiSinr: String = "--",
     val registered: Boolean = false
 )
 
@@ -51,6 +58,8 @@ enum class RecordScope { CURRENT_SIM, BOTH_SIMS }
 enum class MapDetailField(val label: String) {
     TIME("Time"), SIM("SIM"), OPERATOR("Operator"), RAT("RAT"), RSRP("RSRP"), RSRQ("RSRQ"), SINR("SINR"),
     PCI("PCI"), ARFCN("ARFCN"), TAC("TAC"), CELL_ID("Cell ID / NCI"), LATITUDE("Latitude"), LONGITUDE("Longitude"),
+    BAND("Band"), BANDWIDTH("Bandwidth"), RSSI("RSSI"), TIMING_ADVANCE("Timing Advance"),
+    CSI_RSRP("CSI-RSRP"), CSI_RSRQ("CSI-RSRQ"), CSI_SINR("CSI-SINR"), MCC("MCC"), MNC("MNC"),
     ACCURACY("Accuracy"), SPEED("Speed"), BEARING("Bearing")
 }
 
@@ -79,7 +88,7 @@ data class AppSettings(
     val toastOnMark: Boolean = true,
     val soundOnMark: Boolean = false,
     val recordScope: RecordScope = RecordScope.CURRENT_SIM,
-    val mapDetailFields: Set<MapDetailField> = setOf(MapDetailField.TIME, MapDetailField.RAT, MapDetailField.RSRP, MapDetailField.RSRQ, MapDetailField.SINR, MapDetailField.PCI, MapDetailField.ARFCN, MapDetailField.LATITUDE, MapDetailField.LONGITUDE),
+    val mapDetailFields: Set<MapDetailField> = setOf(MapDetailField.TIME, MapDetailField.RAT, MapDetailField.RSRP, MapDetailField.RSRQ, MapDetailField.SINR, MapDetailField.PCI, MapDetailField.ARFCN, MapDetailField.BAND, MapDetailField.LATITUDE, MapDetailField.LONGITUDE),
     val issueTypes: List<String> = listOf("Call Drop", "No Audio", "VoLTE Lost", "No Signal", "No Data", "Slow Data", "Video Stuck", "Handover Issue", "Poor Voice Quality", "Other")
 )
 
@@ -117,6 +126,13 @@ data class TrackSample(
     val rsrp: String,
     val rsrq: String,
     val sinr: String,
+    val band: String = "--",
+    val bandwidth: String = "--",
+    val rssi: String = "--",
+    val timingAdvance: String = "--",
+    val csiRsrp: String = "--",
+    val csiRsrq: String = "--",
+    val csiSinr: String = "--",
     val latitude: Double?,
     val longitude: Double?,
     val altitude: String,
