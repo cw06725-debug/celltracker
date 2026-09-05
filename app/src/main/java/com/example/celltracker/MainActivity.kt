@@ -15,8 +15,6 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -105,7 +103,15 @@ class MainActivity : ComponentActivity() {
                 AnimatedContent(
                     targetState = rootDestination,
                     transitionSpec = {
-                        fadeIn(animationSpec = tween(90)).togetherWith(fadeOut(animationSpec = tween(70)))
+                        when {
+                            targetState == RootDestination.Settings ->
+                                (slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(220)) + fadeIn(tween(180)))
+                                    .togetherWith(slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(220)) + fadeOut(tween(160)))
+                            initialState == RootDestination.Settings ->
+                                (slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Right, tween(220)) + fadeIn(tween(180)))
+                                    .togetherWith(slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Right, tween(220)) + fadeOut(tween(160)))
+                            else -> fadeIn(tween(120)).togetherWith(fadeOut(tween(100)))
+                        }
                     },
                     label = "rootNavigation"
                 ) { destination ->
@@ -119,7 +125,7 @@ class MainActivity : ComponentActivity() {
                     )
                     RootDestination.Settings -> SettingsScreen(
                         settings = state.settings,
-                        onSave = { vm.updateSettings(it); showSettings = false },
+                        onUpdate = vm::updateSettings,
                         onBack = { showSettings = false }
                     )
                     RootDestination.Main -> MainScreen(
@@ -173,10 +179,6 @@ private fun MainScreen(
     var showLiveMap by remember { mutableStateOf(false) }
 
     val selected = state.sims.firstOrNull { it.subscriptionId == state.selectedSubscriptionId } ?: state.sims.firstOrNull()
-    val c = selected?.servingCell ?: CellData()
-    val sortedNeighbors = selected?.neighbors.orEmpty().sortedByDescending { it.rsrp.toIntOrNull() ?: Int.MIN_VALUE }
-    val strongestNeighbor = sortedNeighbors.firstOrNull()
-
     BackHandler(enabled = showLiveMap) { showLiveMap = false }
 
     Scaffold(topBar = {
@@ -192,45 +194,75 @@ private fun MainScreen(
         AnimatedContent(
             targetState = showLiveMap,
             transitionSpec = {
-                (fadeIn() + scaleIn(initialScale = 0.97f)).togetherWith(fadeOut() + scaleOut(targetScale = 1.03f))
+                if (targetState) {
+                    (slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(220)) + fadeIn(tween(170)))
+                        .togetherWith(slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(220)) + fadeOut(tween(150)))
+                } else {
+                    (slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Right, tween(220)) + fadeIn(tween(170)))
+                        .togetherWith(slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Right, tween(220)) + fadeOut(tween(150)))
+                }
             },
             label = "mainLiveMap"
         ) { liveMapVisible ->
         if (liveMapVisible) {
             LiveMapScreen(state = state, onSelectSim = onSelectSim, modifier = Modifier.padding(padding).fillMaxSize())
         } else Column(
-            modifier = Modifier
-                .padding(padding)
-                .padding(16.dp)
-                .fillMaxSize()
-                .horizontalSwipe(
-                    enabled = state.sims.size > 1,
-                    onSwipeLeft = {
-                        val index = state.sims.indexOfFirst { it.subscriptionId == selected?.subscriptionId }
-                        if (index in 0 until state.sims.lastIndex) onSelectSim(state.sims[index + 1].subscriptionId)
-                    },
-                    onSwipeRight = {
-                        val index = state.sims.indexOfFirst { it.subscriptionId == selected?.subscriptionId }
-                        if (index > 0) onSelectSim(state.sims[index - 1].subscriptionId)
-                    }
-                )
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            modifier = Modifier.padding(padding).fillMaxSize()
         ) {
-            if (state.sims.size > 1) {
-                TabRow(selectedTabIndex = state.sims.indexOfFirst { it.subscriptionId == selected?.subscriptionId }.coerceAtLeast(0)) {
-                    state.sims.forEach { sim ->
-                        Tab(
-                            selected = sim.subscriptionId == selected?.subscriptionId,
-                            onClick = { onSelectSim(sim.subscriptionId) },
-                            text = { Text("SIM ${sim.simSlotIndex + 1}\n${sim.servingCell.operator}") }
-                        )
+            // Keep the SIM selector outside the scrollable content so it remains visible
+            // while the user scrolls through Network / Neighbor / Recording cards.
+            Surface(tonalElevation = 2.dp) {
+                if (state.sims.size > 1) {
+                    TabRow(selectedTabIndex = state.sims.indexOfFirst { it.subscriptionId == selected?.subscriptionId }.coerceAtLeast(0)) {
+                        state.sims.forEach { sim ->
+                            Tab(
+                                selected = sim.subscriptionId == selected?.subscriptionId,
+                                onClick = { onSelectSim(sim.subscriptionId) },
+                                text = { Text("SIM ${sim.simSlotIndex + 1}\n${sim.servingCell.operator}") }
+                            )
+                        }
                     }
+                } else if (selected != null) {
+                    Text(
+                        "SIM ${selected.simSlotIndex + 1} · ${selected.servingCell.operator}",
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)
+                    )
                 }
-            } else if (selected != null) {
-                Text("SIM ${selected.simSlotIndex + 1} · ${selected.servingCell.operator}", style = MaterialTheme.typography.titleMedium)
             }
 
+            val selectedIndex = state.sims.indexOfFirst { it.subscriptionId == selected?.subscriptionId }.coerceAtLeast(0)
+            AnimatedContent(
+                targetState = selected?.subscriptionId,
+                transitionSpec = {
+                    val from = state.sims.indexOfFirst { it.subscriptionId == initialState }
+                    val to = state.sims.indexOfFirst { it.subscriptionId == targetState }
+                    val direction = if (to >= from) AnimatedContentTransitionScope.SlideDirection.Left else AnimatedContentTransitionScope.SlideDirection.Right
+                    (slideIntoContainer(direction, tween(210)) + fadeIn(tween(150)))
+                        .togetherWith(slideOutOfContainer(direction, tween(210)) + fadeOut(tween(130)))
+                },
+                label = "mainSimPager",
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .horizontalSwipe(
+                        enabled = state.sims.size > 1,
+                        onSwipeLeft = {
+                            if (selectedIndex in 0 until state.sims.lastIndex) onSelectSim(state.sims[selectedIndex + 1].subscriptionId)
+                        },
+                        onSwipeRight = {
+                            if (selectedIndex > 0) onSelectSim(state.sims[selectedIndex - 1].subscriptionId)
+                        }
+                    )
+            ) { targetSubscriptionId ->
+                val pageSelected = state.sims.firstOrNull { it.subscriptionId == targetSubscriptionId } ?: selected
+                val c = pageSelected?.servingCell ?: CellData()
+                val sortedNeighbors = pageSelected?.neighbors.orEmpty().sortedByDescending { it.rsrp.toIntOrNull() ?: Int.MIN_VALUE }
+                val strongestNeighbor = sortedNeighbors.firstOrNull()
+                Column(
+                    modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
             InfoCard("Network") {
                 Field("Operator", c.operator)
                 Field("RAT", c.displayRat.ifBlank { c.rat })
@@ -312,7 +344,7 @@ private fun MainScreen(
                         Text("Both SIMs")
                     }
                 }
-                val active = state.sims.firstOrNull { it.subscriptionId == state.selectedSubscriptionId }
+                val active = pageSelected
                 if (state.isRecording) {
                     if (state.settings.recordScope == RecordScope.BOTH_SIMS) {
                         Field("Recording", state.sims.joinToString(" + ") { "SIM ${it.simSlotIndex + 1} ${it.servingCell.operator}" })
@@ -359,6 +391,8 @@ private fun MainScreen(
             state.exportMessage?.let { AssistChip(onClick = onDismissMessage, label = { Text(it) }) }
             state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             Text("Last cellular update: ${state.lastUpdated}", style = MaterialTheme.typography.bodySmall)
+                }
+            }
         }
         }
     }
@@ -465,14 +499,31 @@ private fun LiveMapScreen(
             }
         }
 
+        AnimatedContent(
+            targetState = selected?.subscriptionId,
+            transitionSpec = {
+                val from = state.sims.indexOfFirst { it.subscriptionId == initialState }
+                val to = state.sims.indexOfFirst { it.subscriptionId == targetState }
+                val direction = if (to >= from) AnimatedContentTransitionScope.SlideDirection.Left else AnimatedContentTransitionScope.SlideDirection.Right
+                (slideIntoContainer(direction, tween(210)) + fadeIn(tween(150)))
+                    .togetherWith(slideOutOfContainer(direction, tween(210)) + fadeOut(tween(130)))
+            },
+            label = "liveMapSimPager",
+            modifier = Modifier.fillMaxSize()
+        ) { targetSubscriptionId ->
+        val mapSelected = state.sims.firstOrNull { it.subscriptionId == targetSubscriptionId } ?: selected
+        val mapVisibleSamples = remember(liveSamples, state.settings.recordScope, mapSelected?.simSlotIndex) {
+            if (state.settings.recordScope == RecordScope.BOTH_SIMS || mapSelected == null) liveSamples
+            else liveSamples.filter { it.simSlot == mapSelected.simSlotIndex + 1 }
+        }
         val currentLat = state.location.latitude.toDoubleOrNull()
         val currentLon = state.location.longitude.toDoubleOrNull()
         val currentPoint = if (state.location.isValid && currentLat != null && currentLon != null) GeoPoint(currentLat, currentLon) else null
-        val currentSample = if (currentPoint != null && selected != null) {
-            val c = selected.servingCell
+        val currentSample = if (currentPoint != null && mapSelected != null) {
+            val c = mapSelected.servingCell
             TrackSample(
                 timestampMs = state.location.timestampMs.takeIf { it > 0 } ?: System.currentTimeMillis(),
-                simSlot = selected.simSlotIndex + 1, subscriptionId = selected.subscriptionId, operator = c.operator,
+                simSlot = mapSelected.simSlotIndex + 1, subscriptionId = mapSelected.subscriptionId, operator = c.operator,
                 rat = c.rat, displayRat = c.displayRat, mcc = c.mcc, mnc = c.mnc, tac = c.tac, cellId = c.cellId,
                 pci = c.pci, arfcn = c.arfcn, rsrp = c.rsrp, rsrq = c.rsrq, sinr = c.sinr,
                 band = c.band, bandwidth = c.bandwidth, rssi = c.rssi, timingAdvance = c.timingAdvance,
@@ -481,19 +532,19 @@ private fun LiveMapScreen(
                 speedKmh = state.location.speedKmh, bearing = state.location.bearing, locationValid = true
             )
         } else null
-        val valid = visibleSamples.filter { it.locationValid && it.latitude != null && it.longitude != null }
+        val valid = mapVisibleSamples.filter { it.locationValid && it.latitude != null && it.longitude != null }
         if (valid.isEmpty() && currentPoint == null) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(if (state.isRecording) "Waiting for GPS track..." else "Start recording to build a live track")
             }
         } else {
             Column(Modifier.fillMaxSize()) {
-                RatLegend((valid.map { normalizedRat(it) } + listOfNotNull(selected?.servingCell?.displayRat?.takeIf { it.isNotBlank() })).distinct())
+                RatLegend((valid.map { normalizedRat(it) } + listOfNotNull(mapSelected?.servingCell?.displayRat?.takeIf { it.isNotBlank() })).distinct())
                 OsmTrackMap(
                     samples = valid,
                     modifier = Modifier.fillMaxWidth().weight(1f),
                     currentPoint = currentPoint,
-                    currentLabel = selected?.servingCell?.let { "${it.operator} · ${it.displayRat.ifBlank { it.rat }} · ${valueWithUnit(it.rsrp, "dBm")}" },
+                    currentLabel = mapSelected?.servingCell?.let { "${it.operator} · ${it.displayRat.ifBlank { it.rat }} · ${valueWithUnit(it.rsrp, "dBm")}" },
                     currentSample = currentSample,
                     liveFollow = state.isRecording,
                     detailFields = state.settings.mapDetailFields
@@ -501,6 +552,8 @@ private fun LiveMapScreen(
             }
         }
     }
+        }
+
 }
 
 private enum class DetailTab { SUMMARY, MAP, SAMPLES }
@@ -932,66 +985,88 @@ private fun NeighborCellItem(index: Int, n: CellData) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SettingsScreen(settings: AppSettings, onSave: (AppSettings) -> Unit, onBack: () -> Unit) {
+private fun SettingsScreen(settings: AppSettings, onUpdate: (AppSettings) -> Unit, onBack: () -> Unit) {
     var draft by remember(settings) { mutableStateOf(settings) }
     var page by remember { mutableStateOf("root") }
     var newIssue by remember { mutableStateOf("") }
-    BackHandler(enabled = page != "root") { page = "root" }
+
+    fun applySetting(next: AppSettings) {
+        draft = next
+        onUpdate(next)
+    }
+
+    fun navigateTo(next: String) {
+        page = next
+    }
+
+    BackHandler(enabled = page != "root") {
+        page = "root"
+    }
     Scaffold(topBar = {
         TopAppBar(
             title = { Text(when (page) { "sampling" -> "Sampling"; "marker" -> "Marker Button"; "map" -> "Map Point Details"; "issues" -> "Issue Types"; else -> "Settings" }) },
-            navigationIcon = { TextButton(onClick = { if (page == "root") onBack() else page = "root" }) { Text("Back") } },
-            actions = { if (page == "root") TextButton(onClick = { onSave(draft) }) { Text("Save") } }
+            navigationIcon = { TextButton(onClick = { if (page == "root") onBack() else { page = "root" } }) { Text("Back") } }
         )
     }) { padding ->
         AnimatedContent(
             targetState = page,
-            transitionSpec = { fadeIn(animationSpec = tween(120)).togetherWith(fadeOut(animationSpec = tween(90)) ) },
+            transitionSpec = {
+                val enteringChild = targetState != "root"
+                val direction = if (enteringChild) AnimatedContentTransitionScope.SlideDirection.Left else AnimatedContentTransitionScope.SlideDirection.Right
+                (slideIntoContainer(direction, tween(210)) + fadeIn(tween(150)))
+                    .togetherWith(slideOutOfContainer(direction, tween(210)) + fadeOut(tween(130)))
+            },
             label = "settingsNavigation",
             modifier = Modifier.padding(padding).fillMaxSize()
         ) { currentPage ->
             when (currentPage) {
                 "sampling" -> Column(Modifier.padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    IntervalPicker("UI refresh interval", draft.uiRefreshMs) { draft = draft.copy(uiRefreshMs = it) }
-                    IntervalPicker("Recording interval", draft.recordIntervalMs) { draft = draft.copy(recordIntervalMs = it) }
+                    IntervalPicker("UI refresh interval", draft.uiRefreshMs) { applySetting(draft.copy(uiRefreshMs = it)) }
+                    IntervalPicker("Recording interval", draft.recordIntervalMs) { applySetting(draft.copy(recordIntervalMs = it)) }
                 }
                 "marker" -> Column(Modifier.padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    ActionPicker("Tap action", draft.tapAction) { draft = draft.copy(tapAction = it) }
-                    ActionPicker("Long press action", draft.longPressAction) { draft = draft.copy(longPressAction = it) }
+                    ActionPicker("Tap action", draft.tapAction) { applySetting(draft.copy(tapAction = it)) }
+                    ActionPicker("Long press action", draft.longPressAction) { applySetting(draft.copy(longPressAction = it)) }
                     HorizontalDivider(); Text("After mark", style = MaterialTheme.typography.titleMedium)
-                    SettingSwitch("Vibrate", draft.vibrateOnMark) { draft = draft.copy(vibrateOnMark = it) }
-                    SettingSwitch("Show toast", draft.toastOnMark) { draft = draft.copy(toastOnMark = it) }
-                    SettingSwitch("Play sound", draft.soundOnMark) { draft = draft.copy(soundOnMark = it) }
+                    SettingSwitch("Vibrate", draft.vibrateOnMark) { applySetting(draft.copy(vibrateOnMark = it)) }
+                    SettingSwitch("Show toast", draft.toastOnMark) { applySetting(draft.copy(toastOnMark = it)) }
+                    SettingSwitch("Play sound", draft.soundOnMark) { applySetting(draft.copy(soundOnMark = it)) }
                 }
                 "map" -> Column(Modifier.padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("Choose fields shown after tapping a track point or live-location pin.", style = MaterialTheme.typography.bodySmall)
+                    Text("Changes are saved immediately.", style = MaterialTheme.typography.bodySmall)
                     MapDetailField.entries.forEach { field ->
                         SettingSwitch(field.label, field in draft.mapDetailFields) { checked ->
-                            draft = draft.copy(mapDetailFields = if (checked) draft.mapDetailFields + field else draft.mapDetailFields - field)
+                            applySetting(draft.copy(mapDetailFields = if (checked) draft.mapDetailFields + field else draft.mapDetailFields - field))
                         }
                     }
                 }
                 "issues" -> Column(Modifier.padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("Issue choices used by the upcoming Mark workflow.", style = MaterialTheme.typography.bodySmall)
+                    Text("Issue choices used by the upcoming Mark workflow. Changes are saved immediately.", style = MaterialTheme.typography.bodySmall)
                     draft.issueTypes.forEach { issue ->
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text(issue); TextButton(onClick = { draft = draft.copy(issueTypes = draft.issueTypes - issue) }) { Text("Remove") }
+                            Text(issue); TextButton(onClick = { applySetting(draft.copy(issueTypes = draft.issueTypes - issue)) }) { Text("Remove") }
                         }
                     }
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         OutlinedTextField(newIssue, { newIssue = it }, label = { Text("Custom issue") }, modifier = Modifier.weight(1f), singleLine = true)
                         Spacer(Modifier.width(8.dp))
-                        Button(onClick = { val v = newIssue.trim(); if (v.isNotEmpty() && v !in draft.issueTypes) { draft = draft.copy(issueTypes = draft.issueTypes + v); newIssue = "" } }) { Text("Add") }
+                        Button(onClick = {
+                            val v = newIssue.trim()
+                            if (v.isNotEmpty() && v !in draft.issueTypes) {
+                                applySetting(draft.copy(issueTypes = draft.issueTypes + v))
+                                newIssue = ""
+                            }
+                        }) { Text("Add") }
                     }
                 }
                 else -> Column(Modifier.padding(12.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    SettingsMenuRow("Sampling", "UI refresh and recording intervals") { page = "sampling" }
+                    SettingsMenuRow("Sampling", "UI refresh and recording intervals") { navigateTo("sampling") }
                     HorizontalDivider()
-                    SettingsMenuRow("Marker Button", "Tap, long press and feedback") { page = "marker" }
+                    SettingsMenuRow("Marker Button", "Tap, long press and feedback") { navigateTo("marker") }
                     HorizontalDivider()
-                    SettingsMenuRow("Map Point Details", "Choose information shown for a map point") { page = "map" }
+                    SettingsMenuRow("Map Point Details", "Choose information shown for a map point") { navigateTo("map") }
                     HorizontalDivider()
-                    SettingsMenuRow("Issue Types", "Manage built-in and custom issue choices") { page = "issues" }
+                    SettingsMenuRow("Issue Types", "Manage built-in and custom issue choices") { navigateTo("issues") }
                 }
             }
         }

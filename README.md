@@ -1,8 +1,9 @@
-# CellTracker v0.4.5
+# CellTracker v0.4.6
 
-Changes:
-- Single-SIM devices no longer show or use the Both SIMs recording option. Recording service also guards against stale Both-SIM settings.
-- Added horizontal swipe gestures for SIM switching on the main screen and Live Map.
-- Added horizontal swipe navigation between Summary / Map / Samples in Recording Detail, with lightweight transition animation.
-- Removed the post-delete “Recording deleted” / “All recordings deleted” message chips. Confirmation dialog remains before deletion.
-- versionCode 15 / versionName 0.4.5.
+UX refinement release.
+
+- Settings changes save immediately inside secondary menus; root Save button removed.
+- SIM switching now uses horizontal slide + fade transitions on Main and Live Map.
+- Main SIM selector is pinned above the scrollable content.
+- Main → Settings and Main → Live Map use consistent horizontal navigation transitions.
+- versionCode 16 / versionName 0.4.6.
