@@ -39,6 +39,8 @@ import org.osmdroid.tileprovider.tilesource.XYTileSource
 import org.osmdroid.util.BoundingBox
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
+import org.osmdroid.events.MapEventsReceiver
+import org.osmdroid.views.overlay.MapEventsOverlay
 import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polyline
 import java.text.SimpleDateFormat
@@ -400,7 +402,8 @@ private fun LiveMapScreen(
                     modifier = Modifier.fillMaxWidth().weight(1f),
                     currentPoint = currentPoint,
                     currentLabel = selected?.servingCell?.let { "${it.displayRat.ifBlank { it.rat }} · ${valueWithUnit(it.rsrp, "dBm")}" },
-                    liveFollow = state.isRecording
+                    liveFollow = state.isRecording,
+                    detailFields = state.settings.mapDetailFields
                 )
             }
         }
@@ -547,7 +550,7 @@ private fun RecordingMap(samples: List<TrackSample>) {
                 Text("No valid GPS points in this recording")
             }
         } else {
-            OsmTrackMap(valid, Modifier.fillMaxWidth().weight(1f))
+            OsmTrackMap(valid, Modifier.fillMaxWidth().weight(1f), detailFields = SettingsRepository(LocalContext.current).load().mapDetailFields)
         }
     }
 }
@@ -571,9 +574,11 @@ private fun OsmTrackMap(
     modifier: Modifier = Modifier,
     currentPoint: GeoPoint? = null,
     currentLabel: String? = null,
-    liveFollow: Boolean = false
+    liveFollow: Boolean = false,
+    detailFields: Set<MapDetailField> = AppSettings().mapDetailFields
 ) {
     val context = LocalContext.current
+    var selectedSample by remember { mutableStateOf<TrackSample?>(null) }
 
     // OSM's current tile policy requires the canonical host (no a/b/c subdomains) and an
     // identifiable User-Agent. osmdroid's historical MAPNIK source can resolve through old
@@ -619,9 +624,25 @@ private fun OsmTrackMap(
 
     val livePointKey = currentPoint?.let { "${String.format(Locale.US, "%.6f", it.latitude)},${String.format(Locale.US, "%.6f", it.longitude)}" }
 
-    LaunchedEffect(mapView, trackKey, livePointKey, liveFollow) {
+    LaunchedEffect(mapView, trackKey, livePointKey, liveFollow, selectedSample) {
         mapView.overlays.clear()
         val allPoints = mutableListOf<GeoPoint>()
+        // A tap anywhere near the route snaps to the nearest recorded sample. This keeps
+        // thousands of samples off the visual layer while still making every point inspectable.
+        mapView.overlays.add(MapEventsOverlay(object : MapEventsReceiver {
+            override fun singleTapConfirmedHelper(p: GeoPoint): Boolean {
+                val nearest = samples.minByOrNull { sample ->
+                    val lat = sample.latitude ?: return@minByOrNull Double.MAX_VALUE
+                    val lon = sample.longitude ?: return@minByOrNull Double.MAX_VALUE
+                    val dx = (lon - p.longitude) * kotlin.math.cos(Math.toRadians(p.latitude))
+                    val dy = lat - p.latitude
+                    dx * dx + dy * dy
+                }
+                if (nearest != null) selectedSample = nearest
+                return nearest != null
+            }
+            override fun longPressHelper(p: GeoPoint): Boolean = false
+        }))
 
         samples.groupBy { it.simSlot }.values.forEach { simSamples ->
             var currentRat: String? = null
@@ -655,6 +676,7 @@ private fun OsmTrackMap(
                         title = if (sample.eventType.isNotBlank()) sample.eventType else "Marker"
                         snippet = "${sample.operator} · ${normalizedRat(sample)} · RSRP ${sample.rsrp} dBm"
                         setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                        setOnMarkerClickListener { _, _ -> selectedSample = sample; true }
                     })
                 }
             }
@@ -692,9 +714,20 @@ private fun OsmTrackMap(
                 title = "Current location"
                 snippet = currentLabel ?: "Live GPS"
                 setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+                setOnMarkerClickListener { _, _ ->
+                    selectedSample = samples.maxByOrNull { it.timestampMs }
+                    true
+                }
             })
         }
 
+        selectedSample?.takeIf { it.latitude != null && it.longitude != null }?.let { sample ->
+            mapView.overlays.add(Marker(mapView).apply {
+                position = GeoPoint(sample.latitude!!, sample.longitude!!)
+                title = "Selected point"
+                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+            })
+        }
         mapView.invalidate()
         mapView.post {
             when {
@@ -719,6 +752,26 @@ private fun OsmTrackMap(
             factory = { mapView },
             modifier = Modifier.fillMaxSize().clipToBounds()
         )
+        selectedSample?.let { sample ->
+            Card(
+                modifier = Modifier.align(Alignment.BottomCenter).padding(start = 8.dp, end = 8.dp, bottom = 28.dp).fillMaxWidth(),
+                elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
+            ) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(if (sample.isMarker) (sample.eventType.ifBlank { "Marker" }) else "Track point", style = MaterialTheme.typography.titleSmall)
+                        TextButton(onClick = { selectedSample = null }, contentPadding = PaddingValues(0.dp)) { Text("Close") }
+                    }
+                    mapPointRows(sample, detailFields).forEach { (label, value) ->
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(label, style = MaterialTheme.typography.bodySmall)
+                            Text(value, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                    if (sample.isMarker && sample.eventNote.isNotBlank()) Text("Note: ${sample.eventNote}", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
         Text(
             "© OpenStreetMap contributors",
             style = MaterialTheme.typography.labelSmall,
@@ -788,7 +841,27 @@ private fun SettingsScreen(settings: AppSettings, onSave: (AppSettings) -> Unit,
             HorizontalDivider(); Text("Marker Button", style = MaterialTheme.typography.titleLarge)
             ActionPicker("Tap action", draft.tapAction) { draft = draft.copy(tapAction = it) }
             ActionPicker("Long press action", draft.longPressAction) { draft = draft.copy(longPressAction = it) }
-            Text("Marker actions are saved and the data model is ready for map/overlay marking.", style = MaterialTheme.typography.bodySmall)
+            Text("Marker actions are saved and the TestEvent model is ready for manual and future automatic events.", style = MaterialTheme.typography.bodySmall)
+            HorizontalDivider(); Text("Map Point Details", style = MaterialTheme.typography.titleLarge)
+            Text("Choose fields shown after tapping a track point or marker.", style = MaterialTheme.typography.bodySmall)
+            MapDetailField.entries.forEach { field ->
+                SettingSwitch(field.label, field in draft.mapDetailFields) { checked ->
+                    draft = draft.copy(mapDetailFields = if (checked) draft.mapDetailFields + field else draft.mapDetailFields - field)
+                }
+            }
+            HorizontalDivider(); Text("Issue Types", style = MaterialTheme.typography.titleLarge)
+            Text("These options are reserved for Mark → issue selection and TestEvent logging.", style = MaterialTheme.typography.bodySmall)
+            var newIssue by remember { mutableStateOf("") }
+            draft.issueTypes.forEach { issue ->
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(issue); TextButton(onClick = { draft = draft.copy(issueTypes = draft.issueTypes - issue) }) { Text("Remove") }
+                }
+            }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(newIssue, { newIssue = it }, label = { Text("Custom issue") }, modifier = Modifier.weight(1f), singleLine = true)
+                Spacer(Modifier.width(8.dp))
+                Button(onClick = { val v = newIssue.trim(); if (v.isNotEmpty() && v !in draft.issueTypes) { draft = draft.copy(issueTypes = draft.issueTypes + v); newIssue = "" } }) { Text("Add") }
+            }
             HorizontalDivider(); Text("After mark", style = MaterialTheme.typography.titleMedium)
             SettingSwitch("Vibrate", draft.vibrateOnMark) { draft = draft.copy(vibrateOnMark = it) }
             SettingSwitch("Show toast", draft.toastOnMark) { draft = draft.copy(toastOnMark = it) }
@@ -843,6 +916,21 @@ private fun Field(name: String, value: String) {
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
         Text(name, style = MaterialTheme.typography.bodyMedium); Text(value, style = MaterialTheme.typography.bodyMedium)
     }
+}
+
+private fun mapPointRows(sample: TrackSample, fields: Set<MapDetailField>): List<Pair<String, String>> {
+    val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(sample.timestampMs))
+    val values = linkedMapOf(
+        MapDetailField.TIME to ("Time" to time), MapDetailField.SIM to ("SIM" to "SIM ${sample.simSlot}"),
+        MapDetailField.OPERATOR to ("Operator" to sample.operator), MapDetailField.RAT to ("RAT" to normalizedRat(sample)),
+        MapDetailField.RSRP to ("RSRP" to valueWithUnit(sample.rsrp, "dBm")), MapDetailField.RSRQ to ("RSRQ" to valueWithUnit(sample.rsrq, "dB")),
+        MapDetailField.SINR to ("SINR" to valueWithUnit(sample.sinr, "dB")), MapDetailField.PCI to ("PCI" to sample.pci),
+        MapDetailField.ARFCN to ("ARFCN" to sample.arfcn), MapDetailField.TAC to ("TAC" to sample.tac),
+        MapDetailField.CELL_ID to ("Cell ID / NCI" to sample.cellId), MapDetailField.LATITUDE to ("Latitude" to formatCoord(sample.latitude)),
+        MapDetailField.LONGITUDE to ("Longitude" to formatCoord(sample.longitude)), MapDetailField.ACCURACY to ("Accuracy" to valueWithUnit(sample.accuracy, "m")),
+        MapDetailField.SPEED to ("Speed" to valueWithUnit(sample.speedKmh, "km/h")), MapDetailField.BEARING to ("Bearing" to valueWithUnit(sample.bearing, "°"))
+    )
+    return MapDetailField.entries.filter { it in fields }.mapNotNull { values[it] }
 }
 
 private fun normalizedRat(s: TrackSample): String {

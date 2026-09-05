@@ -13,7 +13,10 @@ class SettingsRepository(context: Context) {
         vibrateOnMark = prefs.getBoolean("vibrate_on_mark", true),
         toastOnMark = prefs.getBoolean("toast_on_mark", true),
         soundOnMark = prefs.getBoolean("sound_on_mark", false),
-        recordScope = enumValueOrDefault(prefs.getString("record_scope", null), RecordScope.CURRENT_SIM)
+        recordScope = enumValueOrDefault(prefs.getString("record_scope", null), RecordScope.CURRENT_SIM),
+        mapDetailFields = prefs.getStringSet("map_detail_fields", null)?.mapNotNull { runCatching { MapDetailField.valueOf(it) }.getOrNull() }?.toSet()
+            ?: AppSettings().mapDetailFields,
+        issueTypes = prefs.getString("issue_types", null)?.split("\u001F")?.filter { it.isNotBlank() } ?: AppSettings().issueTypes
     )
 
     fun save(settings: AppSettings) {
@@ -26,6 +29,8 @@ class SettingsRepository(context: Context) {
             .putBoolean("toast_on_mark", settings.toastOnMark)
             .putBoolean("sound_on_mark", settings.soundOnMark)
             .putString("record_scope", settings.recordScope.name)
+            .putStringSet("map_detail_fields", settings.mapDetailFields.map { it.name }.toSet())
+            .putString("issue_types", settings.issueTypes.joinToString("\u001F"))
             .apply()
     }
 

@@ -48,6 +48,23 @@ enum class MarkerAction(val label: String) {
 
 enum class RecordScope { CURRENT_SIM, BOTH_SIMS }
 
+enum class MapDetailField(val label: String) {
+    TIME("Time"), SIM("SIM"), OPERATOR("Operator"), RAT("RAT"), RSRP("RSRP"), RSRQ("RSRQ"), SINR("SINR"),
+    PCI("PCI"), ARFCN("ARFCN"), TAC("TAC"), CELL_ID("Cell ID / NCI"), LATITUDE("Latitude"), LONGITUDE("Longitude"),
+    ACCURACY("Accuracy"), SPEED("Speed"), BEARING("Bearing")
+}
+
+data class TestEvent(
+    val markerId: String,
+    val timestampMs: Long,
+    val source: String = "MANUAL",
+    val issueCategory: String = "General",
+    val issueType: String = "GENERAL",
+    val issueLabel: String = "General",
+    val note: String = "",
+    val screenshotPath: String = ""
+)
+
 data class RecordingItem(
     val path: String, val name: String, val startedAt: Long, val durationMs: Long,
     val totalSamples: Long, val simSummary: String, val simCount: Int = 1
@@ -61,7 +78,9 @@ data class AppSettings(
     val vibrateOnMark: Boolean = true,
     val toastOnMark: Boolean = true,
     val soundOnMark: Boolean = false,
-    val recordScope: RecordScope = RecordScope.CURRENT_SIM
+    val recordScope: RecordScope = RecordScope.CURRENT_SIM,
+    val mapDetailFields: Set<MapDetailField> = setOf(MapDetailField.TIME, MapDetailField.RAT, MapDetailField.RSRP, MapDetailField.RSRQ, MapDetailField.SINR, MapDetailField.PCI, MapDetailField.ARFCN, MapDetailField.LATITUDE, MapDetailField.LONGITUDE),
+    val issueTypes: List<String> = listOf("Call Drop", "No Audio", "VoLTE Lost", "No Signal", "No Data", "Slow Data", "Video Stuck", "Handover Issue", "Poor Voice Quality", "Other")
 )
 
 data class AppState(
