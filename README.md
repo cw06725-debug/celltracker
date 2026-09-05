@@ -1,18 +1,22 @@
-# CellTracker v0.2.4
+# CellTracker v0.3.0
 
-Fix release before the map/track milestone.
+V0.3 introduces recording history preview and the first in-app map workflow.
 
-## Changes
-- Recording and UI now share the same latest-location snapshot through `LocationStore`.
-- Recording Service keeps location updates active in the background and writes the shared snapshot into every CSV sample.
-- Recording panel shows `GPS ready / Waiting for GPS` and last-fix age while recording.
-- Single-SIM history records export directly as one CSV.
-- Only true dual-SIM recordings show the Combined / Separate-by-SIM export dialog.
-- Settings system Back behavior remains fixed from v0.2.3.
+## New in 0.3.0
+- Tap a Recent recording card to open Recording Detail.
+- Detail tabs: Summary / Map / Samples.
+- Historical GPS track on an OpenStreetMap-based map.
+- Track segments are colored by RAT (LTE, 5G NSA, 5G NR, 3G, 2G).
+- Dual-SIM history can be filtered by Both / SIM 1 / SIM 2.
+- Samples tab shows timestamp, SIM, RAT, PCI, ARFCN, signal and coordinates.
+- Summary shows session duration, GPS coverage, RAT counts and RSRP statistics.
+- Existing CSV marker fields are parsed and reserved for the upcoming marker feature; marker rows will appear on the map when present.
+- Existing export/delete behavior remains available from both Home and Recording Detail.
 
-## Validation
-1. Wait until the home Location card shows latitude/longitude.
-2. Start a 10–20 second single-SIM recording.
-3. Confirm Recording shows `GPS ready`.
-4. Export the record and verify latitude, longitude and `location_valid=true`.
-5. Confirm single-SIM Export does not display the dual-SIM export dialog.
+## Map notes
+- Map tiles require an internet connection.
+- The map uses OpenStreetMap tiles through osmdroid and does not require a Google Maps API key.
+- Historical tracks remain stored in the app recording CSV files; the map reads those saved files directly.
+
+## Build
+Push this project to GitHub and use the included `Build Android APK` workflow, or build the Debug APK in Android Studio.

@@ -81,3 +81,39 @@ data class AppState(
     val error: String? = null,
     val lastUpdated: String = "--"
 )
+
+data class TrackSample(
+    val timestampMs: Long,
+    val simSlot: Int,
+    val subscriptionId: Int,
+    val operator: String,
+    val rat: String,
+    val displayRat: String,
+    val mcc: String,
+    val mnc: String,
+    val tac: String,
+    val cellId: String,
+    val pci: String,
+    val arfcn: String,
+    val rsrp: String,
+    val rsrq: String,
+    val sinr: String,
+    val latitude: Double?,
+    val longitude: Double?,
+    val altitude: String,
+    val accuracy: String,
+    val speedKmh: String,
+    val bearing: String,
+    val locationValid: Boolean,
+    val isMarker: Boolean = false,
+    val eventType: String = "",
+    val eventNote: String = "",
+    val screenshot: String = ""
+)
+
+data class RecordingDetail(
+    val item: RecordingItem,
+    val samples: List<TrackSample>
+) {
+    val simSlots: List<Int> get() = samples.map { it.simSlot }.distinct().sorted()
+}
