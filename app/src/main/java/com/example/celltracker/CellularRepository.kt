@@ -6,6 +6,8 @@ import android.content.pm.PackageManager
 import android.telephony.CellInfo
 import android.telephony.CellInfoLte
 import android.telephony.CellInfoNr
+import android.telephony.CellIdentityNr
+import android.telephony.CellSignalStrengthNr
 import android.telephony.TelephonyManager
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -64,8 +66,8 @@ class CellularRepository(private val context: Context) {
             )
         }
         is CellInfoNr -> {
-            val id = cell.cellIdentity
-            val s = cell.cellSignalStrength
+            val id = cell.cellIdentity as CellIdentityNr
+            val s = cell.cellSignalStrength as CellSignalStrengthNr
             CellData(
                 rat = "NR",
                 operator = tm.networkOperatorName.ifBlank { "--" },
