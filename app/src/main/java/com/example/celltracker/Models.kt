@@ -124,6 +124,42 @@ data class SignalTrendPoint(
     val rssi: Float?
 )
 
+
+
+data class PingTestConfig(
+    val host: String = "8.8.8.8",
+    val count: Int = 20,
+    val intervalMs: Long = 1000L,
+    val timeoutMs: Long = 2000L,
+    val highLatencyThresholdMs: Double = 300.0,
+    val autoRecord: Boolean = true
+)
+
+data class PingSample(
+    val sequence: Int,
+    val timestampMs: Long,
+    val latencyMs: Double? = null,
+    val success: Boolean = false,
+    val message: String = ""
+)
+
+data class PingTestState(
+    val isRunning: Boolean = false,
+    val config: PingTestConfig = PingTestConfig(),
+    val startedAt: Long = 0L,
+    val completed: Int = 0,
+    val successCount: Int = 0,
+    val failureCount: Int = 0,
+    val samples: List<PingSample> = emptyList(),
+    val statusMessage: String = "Ready",
+    val resultPath: String? = null
+) {
+    val successRate: Double get() = if (completed <= 0) 0.0 else successCount * 100.0 / completed
+    val packetLossRate: Double get() = if (completed <= 0) 0.0 else failureCount * 100.0 / completed
+    val averageLatencyMs: Double? get() = samples.mapNotNull { it.latencyMs }.takeIf { it.isNotEmpty() }?.average()
+    val minLatencyMs: Double? get() = samples.mapNotNull { it.latencyMs }.minOrNull()
+    val maxLatencyMs: Double? get() = samples.mapNotNull { it.latencyMs }.maxOrNull()
+}
 data class AppState(
     val sims: List<SimCellState> = emptyList(),
     val selectedSubscriptionId: Int? = null,
@@ -143,6 +179,7 @@ data class AppState(
     val recordings: List<RecordingItem> = emptyList(),
     val exportResult: ExportResult? = null,
     val signalTrendBySubscription: Map<Int, List<SignalTrendPoint>> = emptyMap(),
+    val pingTest: PingTestState = PingTestState(),
     val error: String? = null,
     val lastUpdated: String = "--"
 )

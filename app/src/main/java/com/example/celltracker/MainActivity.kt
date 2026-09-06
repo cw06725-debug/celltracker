@@ -2,6 +2,7 @@ package com.example.celltracker
 
 import android.Manifest
 import android.graphics.Color as AndroidColor
+import android.graphics.BitmapFactory
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
@@ -26,6 +27,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -44,12 +46,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
@@ -90,6 +94,7 @@ class MainActivity : ComponentActivity() {
                 val state by vm.state.collectAsStateWithLifecycle()
                 var showSettings by remember { mutableStateOf(false) }
                 var detailPath by remember { mutableStateOf<String?>(null) }
+                var showPingTest by remember { mutableStateOf(false) }
                 val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { vm.start() }
                 var overlayPermissionRequestedForRecording by remember { mutableStateOf(false) }
                 val overlayPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
@@ -145,9 +150,10 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                BackHandler(enabled = showSettings || detailPath != null) {
+                BackHandler(enabled = showSettings || detailPath != null || showPingTest) {
                     when {
                         detailPath != null -> detailPath = null
+                        showPingTest -> showPingTest = false
                         showSettings -> showSettings = false
                     }
                 }
@@ -158,6 +164,7 @@ class MainActivity : ComponentActivity() {
                 // back crash. Capturing the path here keeps the outgoing screen valid.
                 val rootDestination: RootDestination = when {
                     detailPath != null -> RootDestination.Detail(detailPath!!)
+                    showPingTest -> RootDestination.PingTest
                     showSettings -> RootDestination.Settings
                     else -> RootDestination.Main
                 }
@@ -184,6 +191,15 @@ class MainActivity : ComponentActivity() {
                         onExport = vm::exportRecording,
                         onDelete = { path -> vm.deleteRecording(path); detailPath = null }
                     )
+                    RootDestination.PingTest -> PingTestScreen(
+                        state = state.pingTest,
+                        selectedSim = state.sims.firstOrNull { it.subscriptionId == state.selectedSubscriptionId } ?: state.sims.firstOrNull(),
+                        dataNetwork = state.dataNetwork,
+                        onBack = { showPingTest = false },
+                        onStart = vm::startPingTest,
+                        onStop = vm::stopPingTest,
+                        onClear = vm::clearPingResults
+                    )
                     RootDestination.Settings -> SettingsScreen(
                         settings = state.settings,
                         onUpdate = vm::updateSettings,
@@ -203,6 +219,7 @@ class MainActivity : ComponentActivity() {
                         onDeleteAll = vm::deleteAllRecordings,
                         onOpenRecording = { detailPath = it },
                         onSettings = { showSettings = true },
+                        onPingTest = { showPingTest = true },
                         onDismissMessage = vm::clearMessage
                     )
                 }
@@ -221,6 +238,7 @@ class MainActivity : ComponentActivity() {
 private sealed interface RootDestination {
     data object Main : RootDestination
     data object Settings : RootDestination
+    data object PingTest : RootDestination
     data class Detail(val path: String) : RootDestination
 }
 
@@ -240,6 +258,7 @@ private fun MainScreen(
     onDeleteAll: () -> Unit,
     onOpenRecording: (String) -> Unit,
     onSettings: () -> Unit,
+    onPingTest: () -> Unit,
     onDismissMessage: () -> Unit
 ) {
     var neighborsExpanded by remember { mutableStateOf(false) }
@@ -422,6 +441,18 @@ private fun MainScreen(
                 Field("Accuracy", l.accuracy); Field("Speed", l.speedKmh); Field("Bearing", l.bearing)
             }
 
+            InfoCard("Automated Tests") {
+                Text("Ping Test", style = MaterialTheme.typography.titleSmall)
+                Text("Single-DUT latency, success rate and packet loss with automatic issue markers.", style = MaterialTheme.typography.bodySmall)
+                if (state.pingTest.completed > 0 || state.pingTest.isRunning) {
+                    Field("Status", state.pingTest.statusMessage)
+                    Field("Progress", "${state.pingTest.completed} / ${state.pingTest.config.count}")
+                    Field("Success", String.format(Locale.US, "%.1f%%", state.pingTest.successRate))
+                    Field("Avg latency", state.pingTest.averageLatencyMs?.let { String.format(Locale.US, "%.1f ms", it) } ?: "--")
+                }
+                Button(onClick = onPingTest) { Text(if (state.pingTest.isRunning) "Open Ping Test" else "Configure Ping Test") }
+            }
+
             InfoCard("Recording") {
                 Field("Status", if (state.isRecording) "Recording" else "Stopped")
                 Field("Elapsed", formatElapsed(state.recordingElapsedMs))
@@ -582,6 +613,175 @@ private fun MainScreen(
 
 
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PingTestScreen(
+    state: PingTestState,
+    selectedSim: SimCellState?,
+    dataNetwork: String,
+    onBack: () -> Unit,
+    onStart: (PingTestConfig) -> Unit,
+    onStop: () -> Unit,
+    onClear: () -> Unit
+) {
+    var host by remember(state.isRunning) { mutableStateOf(state.config.host) }
+    var count by remember(state.isRunning) { mutableStateOf(state.config.count.toString()) }
+    var interval by remember(state.isRunning) { mutableStateOf(state.config.intervalMs.toString()) }
+    var timeout by remember(state.isRunning) { mutableStateOf(state.config.timeoutMs.toString()) }
+    var threshold by remember(state.isRunning) { mutableStateOf(state.config.highLatencyThresholdMs.toInt().toString()) }
+    var autoRecord by remember(state.isRunning) { mutableStateOf(state.config.autoRecord) }
+
+    val latencies = state.samples.mapNotNull { it.latencyMs }.sorted()
+    fun percentile(p: Double): String {
+        if (latencies.isEmpty()) return "--"
+        val index = kotlin.math.ceil((latencies.size - 1) * p).toInt().coerceIn(0, latencies.lastIndex)
+        return String.format(Locale.US, "%.1f ms", latencies[index])
+    }
+    fun latencyText(v: Double?): String = v?.let { String.format(Locale.US, "%.1f ms", it) } ?: "--"
+    val context = LocalContext.current
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Ping Test") },
+                navigationIcon = { TextButton(onClick = onBack) { Text("Back") } },
+                actions = {
+                    if (!state.isRunning && state.samples.isNotEmpty()) {
+                        TextButton(onClick = onClear) { Text("Clear") }
+                    }
+                }
+            )
+        }
+    ) { padding ->
+        LazyColumn(
+            Modifier.padding(padding).fillMaxSize(),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            item {
+                InfoCard("Test target") {
+                    OutlinedTextField(
+                        value = host,
+                        onValueChange = { if (!state.isRunning && it.length <= 80) host = it },
+                        enabled = !state.isRunning,
+                        singleLine = true,
+                        label = { Text("Host / IP") },
+                        placeholder = { Text("8.8.8.8") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = count,
+                            onValueChange = { if (!state.isRunning) count = it.filter { ch -> ch.isDigit() }.take(5) },
+                            enabled = !state.isRunning,
+                            singleLine = true,
+                            label = { Text("Count") },
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedTextField(
+                            value = interval,
+                            onValueChange = { if (!state.isRunning) interval = it.filter { ch -> ch.isDigit() }.take(6) },
+                            enabled = !state.isRunning,
+                            singleLine = true,
+                            label = { Text("Interval ms") },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = timeout,
+                            onValueChange = { if (!state.isRunning) timeout = it.filter { ch -> ch.isDigit() }.take(5) },
+                            enabled = !state.isRunning,
+                            singleLine = true,
+                            label = { Text("Timeout ms") },
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedTextField(
+                            value = threshold,
+                            onValueChange = { if (!state.isRunning) threshold = it.filter { ch -> ch.isDigit() }.take(5) },
+                            enabled = !state.isRunning,
+                            singleLine = true,
+                            label = { Text("High ping ms") },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = autoRecord, enabled = !state.isRunning, onCheckedChange = { autoRecord = it })
+                        Column {
+                            Text("Auto record network data")
+                            Text("Creates a recording named Ping_<host> and stops it when the test ends.", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            }
+            item {
+                InfoCard("Current network") {
+                    val c = selectedSim?.servingCell
+                    Field("SIM", selectedSim?.let { "SIM ${it.simSlotIndex + 1} · ${c?.operator ?: "--"}" } ?: "--")
+                    Field("RAT", c?.displayRat?.ifBlank { c.rat } ?: "--")
+                    Field("RSRP", c?.rsrp?.let { valueWithUnit(it, "dBm") } ?: "--")
+                    Field("SINR", c?.sinr?.let { valueWithUnit(it, "dB") } ?: "--")
+                    Field("DataNet", dataNetwork)
+                }
+            }
+            item {
+                InfoCard("Result") {
+                    Field("Status", state.statusMessage)
+                    Field("Progress", "${state.completed} / ${state.config.count}")
+                    Field("Success rate", if (state.completed > 0) String.format(Locale.US, "%.1f%%", state.successRate) else "--")
+                    Field("Packet loss", if (state.completed > 0) String.format(Locale.US, "%.1f%%", state.packetLossRate) else "--")
+                    Field("Average", latencyText(state.averageLatencyMs))
+                    Field("Min / Max", if (state.samples.isEmpty()) "--" else "${latencyText(state.minLatencyMs)} / ${latencyText(state.maxLatencyMs)}")
+                    Field("P50 / P90 / P95", if (latencies.isEmpty()) "--" else "${percentile(0.50)} / ${percentile(0.90)} / ${percentile(0.95)}")
+                    if (state.isRunning) {
+                        Button(onClick = onStop) { Text("Stop Ping Test") }
+                    } else {
+                        Button(
+                            onClick = {
+                                onStart(
+                                    PingTestConfig(
+                                        host = host.trim().ifBlank { "8.8.8.8" },
+                                        count = count.toIntOrNull() ?: 20,
+                                        intervalMs = interval.toLongOrNull() ?: 1000L,
+                                        timeoutMs = timeout.toLongOrNull() ?: 2000L,
+                                        highLatencyThresholdMs = threshold.toDoubleOrNull() ?: 300.0,
+                                        autoRecord = autoRecord
+                                    )
+                                )
+                            }
+                        ) { Text("Start Ping Test") }
+                        if (!state.resultPath.isNullOrBlank() && state.samples.isNotEmpty()) {
+                            OutlinedButton(onClick = { shareLocalFile(context, state.resultPath, "text/csv", "Share Ping result") }) { Text("Share Ping CSV") }
+                        }
+                    }
+                    Text("High latency creates AUTO/HIGH_PING markers. Three consecutive failures create an AUTO/PING_TIMEOUT marker.", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            if (state.samples.isNotEmpty()) {
+                item { Text("Samples", style = MaterialTheme.typography.titleMedium) }
+                items(state.samples.asReversed().take(200), key = { it.sequence }) { sample ->
+                    Card(Modifier.fillMaxWidth()) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text("#${sample.sequence}", style = MaterialTheme.typography.labelLarge)
+                                Text(SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()).format(Date(sample.timestampMs)), style = MaterialTheme.typography.bodySmall)
+                            }
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text(if (sample.success) latencyText(sample.latencyMs) else "Timeout", style = MaterialTheme.typography.labelLarge)
+                                Text(if (sample.success) "Success" else "Failed", style = MaterialTheme.typography.bodySmall, color = if (sample.success) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun ExportSuccessDialog(
     result: ExportResult,
@@ -652,6 +852,53 @@ private fun openLocalScreenshot(context: android.content.Context, path: String) 
         }
         context.startActivity(intent)
     }.onFailure { Toast.makeText(context, "Unable to open screenshot", Toast.LENGTH_SHORT).show() }
+}
+
+private fun shareLocalFile(context: android.content.Context, path: String?, mimeType: String, title: String) {
+    if (path.isNullOrBlank()) return
+    val file = java.io.File(path)
+    if (!file.exists()) {
+        Toast.makeText(context, "File not found", Toast.LENGTH_SHORT).show()
+        return
+    }
+    runCatching {
+        val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = mimeType
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(Intent.createChooser(intent, title).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }.onFailure { Toast.makeText(context, "Unable to share file", Toast.LENGTH_SHORT).show() }
+}
+
+@Composable
+private fun ScreenshotThumbnail(path: String, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val bitmap = remember(path) {
+        runCatching {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(path, bounds)
+            var sample = 1
+            while (bounds.outWidth / sample > 900 || bounds.outHeight / sample > 900) sample *= 2
+            BitmapFactory.decodeFile(path, BitmapFactory.Options().apply { inSampleSize = sample })?.asImageBitmap()
+        }.getOrNull()
+    }
+    if (bitmap != null) {
+        Card(
+            modifier = modifier.fillMaxWidth().height(150.dp).clickable { openLocalScreenshot(context, path) },
+            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        ) {
+            Image(
+                bitmap = bitmap,
+                contentDescription = "Marker screenshot",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+    } else {
+        AssistChip(onClick = { openLocalScreenshot(context, path) }, label = { Text("Open screenshot") })
+    }
 }
 
 @Composable
@@ -1012,6 +1259,7 @@ private fun RecordingSummary(item: RecordingItem, samples: List<TrackSample>, on
             Field("Duration", formatElapsed(item.durationMs))
             Field("Samples", samples.size.toString())
             Field("GPS samples", "$validLocation / ${samples.size}")
+            Field("Screenshots", samples.count { it.isMarker && it.screenshot.isNotBlank() }.toString())
         }
         InfoCard("Track") {
             Field("Start", if (first?.locationValid == true) "${formatCoord(first.latitude)}, ${formatCoord(first.longitude)}" else "--")
@@ -1040,15 +1288,15 @@ private fun RecordingSummary(item: RecordingItem, samples: List<TrackSample>, on
                         verticalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text(marker.eventType.ifBlank { "Marker" }, style = MaterialTheme.typography.labelLarge)
+                            Text("${marker.eventSource.ifBlank { "MANUAL" }} · ${marker.eventType.ifBlank { "Marker" }}", style = MaterialTheme.typography.labelLarge)
                             Text(SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()).format(Date(marker.timestampMs)), style = MaterialTheme.typography.labelMedium)
                         }
                         Text("SIM ${marker.simSlot} · ${marker.operator} · ${normalizedRat(marker)}", style = MaterialTheme.typography.bodySmall)
                         Text("RSRP ${valueWithUnit(marker.rsrp, "dBm")} · PCI ${marker.pci} · ${marker.band}", style = MaterialTheme.typography.bodySmall)
                         Text("Tap to view on Map", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                         if (marker.screenshot.isNotBlank()) {
-                            val ctx = LocalContext.current
-                            AssistChip(onClick = { openLocalScreenshot(ctx, marker.screenshot) }, label = { Text("Open screenshot") })
+                            Text(java.io.File(marker.screenshot).name, style = MaterialTheme.typography.labelSmall)
+                            ScreenshotThumbnail(marker.screenshot)
                         }
                     }
                 }
@@ -1311,7 +1559,7 @@ private fun OsmTrackMap(
             ) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(if (sample.isMarker) (sample.eventType.ifBlank { "Marker" }) else "Track point", style = MaterialTheme.typography.titleSmall)
+                        Text(if (sample.isMarker) "${sample.eventSource.ifBlank { "MANUAL" }} · ${sample.eventType.ifBlank { "Marker" }}" else "Track point", style = MaterialTheme.typography.titleSmall)
                         TextButton(onClick = { selectedIsCurrent = false; selectedSample = null }, contentPadding = PaddingValues(0.dp)) { Text("Close") }
                     }
                     // Operator is essential context on dual-SIM maps, so keep it visible
@@ -1364,10 +1612,9 @@ private fun RecordingSamples(samples: List<TrackSample>, onMarkerClick: (TrackSa
                     Text(if (s.locationValid) "${formatCoord(s.latitude)}, ${formatCoord(s.longitude)}" else "Location --", style = MaterialTheme.typography.bodySmall)
                     if (s.isMarker) {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            AssistChip(onClick = { onMarkerClick(s) }, label = { Text("${if (s.eventType.isBlank()) "Marker" else s.eventType} · View on Map") })
+                            AssistChip(onClick = { onMarkerClick(s) }, label = { Text("${s.eventSource.ifBlank { "MANUAL" }} · ${if (s.eventType.isBlank()) "Marker" else s.eventType} · Map") })
                             if (s.screenshot.isNotBlank()) {
-                                val ctx = LocalContext.current
-                                AssistChip(onClick = { openLocalScreenshot(ctx, s.screenshot) }, label = { Text("Screenshot") })
+                                AssistChip(onClick = { openLocalScreenshot(LocalContext.current, s.screenshot) }, label = { Text("Open screenshot") })
                             }
                         }
                     }

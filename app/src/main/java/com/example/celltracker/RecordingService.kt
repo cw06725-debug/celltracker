@@ -43,7 +43,8 @@ class RecordingService : Service() {
             val eventType = intent.getStringExtra(EXTRA_EVENT_TYPE).orEmpty().ifBlank { "General" }
             val eventNote = intent.getStringExtra(EXTRA_EVENT_NOTE).orEmpty()
             val screenshotPath = intent.getStringExtra(EXTRA_SCREENSHOT_PATH).orEmpty()
-            scope.launch { appendMarker(subId, eventType, eventNote, screenshotPath) }
+            val eventSource = intent.getStringExtra(EXTRA_EVENT_SOURCE).orEmpty().ifBlank { "MANUAL" }
+            scope.launch { appendMarker(subId, eventType, eventNote, screenshotPath, eventSource) }
             return START_NOT_STICKY
         }
         if (recordingJob?.isActive != true) {
@@ -93,7 +94,7 @@ class RecordingService : Service() {
         }
     }
 
-    private suspend fun appendMarker(subscriptionId: Int, eventType: String, eventNote: String, screenshotPath: String = "") {
+    private suspend fun appendMarker(subscriptionId: Int, eventType: String, eventNote: String, screenshotPath: String = "", eventSource: String = "MANUAL") {
         val status = RecordingState.status.value
         val path = status.latestPath ?: return
         if (!status.isRecording) return
@@ -102,7 +103,7 @@ class RecordingService : Service() {
         val locationSnapshot = LocationStore.latest.value
         val markerId = "M" + SimpleDateFormat("yyyyMMddHHmmssSSS", Locale.US).format(Date())
         FileWriter(File(path), true).use { w ->
-            w.appendLine(csvLine(System.currentTimeMillis(), sim.servingCell, locationSnapshot, true, eventType, eventNote, markerId, "MANUAL", screenshotPath))
+            w.appendLine(csvLine(System.currentTimeMillis(), sim.servingCell, locationSnapshot, true, eventType, eventNote, markerId, eventSource, screenshotPath))
         }
     }
 
@@ -122,6 +123,7 @@ class RecordingService : Service() {
         const val EXTRA_MARK_SUBSCRIPTION_ID="mark_subscription_id"
         const val EXTRA_EVENT_TYPE="event_type"
         const val EXTRA_EVENT_NOTE="event_note"
+        const val EXTRA_EVENT_SOURCE="event_source"
         const val EXTRA_SCREENSHOT_PATH="screenshot_path"
         const val EXTRA_TASK_NAME="task_name"
         const val CSV_HEADER="timestamp,sim_slot,subscription_id,operator,rat,display_rat,mcc,mnc,tac,cell_id,pci,arfcn,rsrp,rsrq,sinr,band,bandwidth,rssi,timing_advance,csi_rsrp,csi_rsrq,csi_sinr,cqi,signal_level,asu_level,carrier_aggregation,data_rat,voice_rat,roaming,latitude,longitude,altitude,accuracy,speed_kmh,bearing,location_valid,is_marker,marker_id,event_source,event_type,event_note,screenshot,data_sim_subscription_id,data_network"

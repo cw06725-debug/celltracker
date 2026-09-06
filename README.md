@@ -26,3 +26,24 @@ Version: 0.7.1 (versionCode 33)
 - Default: ON. Marker screenshots keep the overlay and its live network values visible.
 - When OFF, the overlay is temporarily hidden during capture, preserving the v0.7.1 clean-screenshot behavior.
 - Existing task-name + foreground-app + timestamp screenshot naming is unchanged.
+
+
+## v0.7.2
+
+- History screenshot experience improved:
+  - Recording Summary shows screenshot count.
+  - Marker cards show screenshot filename and an in-app thumbnail; tap the thumbnail to open the original image.
+  - Marker source (MANUAL/AUTO) is shown in Summary, Map details and Samples.
+- Export screenshot association improved:
+  - HTML summary shows screenshot count and screenshot filename for each marked issue.
+  - Excel issue details now include Source and Screenshot columns.
+  - KML issue description includes event Source.
+- Added first automated test module: Ping Test (single DUT).
+  - Configure host/IP, count, interval, timeout and high-latency threshold.
+  - Live statistics: success rate, packet loss, average/min/max, P50/P90/P95.
+  - Optional Auto Record starts a CellTracker network recording named Ping_<host> and stops it automatically with the test.
+  - High latency creates AUTO / HIGH_PING markers in the recording.
+  - Three consecutive failures create an AUTO / PING_TIMEOUT marker.
+  - A dedicated Ping CSV is saved under the app's ping_results directory and can be shared from the Ping Test page.
+
+Version: 0.7.2 (versionCode 35)

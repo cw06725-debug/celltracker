@@ -191,9 +191,9 @@ object CsvExporter {
         if (issueCounts.isEmpty()) summary += listOf("No marked issues", "0") else issueCounts.forEach { summary += listOf(it.key, it.value.toString()) }
         summary += emptyList<String>()
         summary += listOf("Marked Issue Details")
-        val issueHeaders = listOf("Time","Issue","SIM","Operator","RAT","Band","CA / EN-DC","RSRP","RSRQ","SINR","RSSI","CQI","PCI","ARFCN","Data RAT","DataNet","Latitude","Longitude","Note","Screenshot")
+        val issueHeaders = listOf("Time","Source","Issue","SIM","Operator","RAT","Band","CA / EN-DC","RSRP","RSRQ","SINR","RSSI","CQI","PCI","ARFCN","Data RAT","DataNet","Latitude","Longitude","Note","Screenshot")
         summary += issueHeaders
-        events.forEach { r -> summary += listOf(f(r,"timestamp"),f(r,"event_type"),f(r,"sim_slot"),f(r,"operator"),f(r,"display_rat").ifBlank{f(r,"rat")},f(r,"band"),f(r,"carrier_aggregation"),f(r,"rsrp"),f(r,"rsrq"),f(r,"sinr"),f(r,"rssi"),f(r,"cqi"),f(r,"pci"),f(r,"arfcn"),f(r,"data_rat"),f(r,"data_network"),f(r,"latitude"),f(r,"longitude"),f(r,"event_note"),File(f(r,"screenshot")).name.takeIf { f(r,"screenshot").isNotBlank() }.orEmpty()) }
+        events.forEach { r -> summary += listOf(f(r,"timestamp"),f(r,"event_source"),f(r,"event_type"),f(r,"sim_slot"),f(r,"operator"),f(r,"display_rat").ifBlank{f(r,"rat")},f(r,"band"),f(r,"carrier_aggregation"),f(r,"rsrp"),f(r,"rsrq"),f(r,"sinr"),f(r,"rssi"),f(r,"cqi"),f(r,"pci"),f(r,"arfcn"),f(r,"data_rat"),f(r,"data_network"),f(r,"latitude"),f(r,"longitude"),f(r,"event_note"),File(f(r,"screenshot")).name.takeIf { f(r,"screenshot").isNotBlank() }.orEmpty()) }
 
         fun xml(v:String)=v.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace("\"","&quot;")
         fun colName(n:Int):String { var x=n+1; var out=""; while(x>0){ val r=(x-1)%26; out=('A'.code+r).toChar()+out; x=(x-1)/26 }; return out }
@@ -229,12 +229,14 @@ object CsvExporter {
         val latitude: String,
         val longitude: String,
         val issueType: String,
+        val eventSource: String,
         val note: String,
         val dataNetwork: String,
         val carrierAggregation: String,
         val rssi: String,
         val cqi: String,
-        val dataRat: String
+        val dataRat: String,
+        val screenshot: String
     )
 
     private fun buildSummaryHtml(source: File): String {
@@ -261,12 +263,14 @@ object CsvExporter {
                 latitude = field(f, "latitude"),
                 longitude = field(f, "longitude"),
                 issueType = field(f, "event_type"),
+                eventSource = field(f, "event_source").ifBlank { "MANUAL" },
                 note = field(f, "event_note"),
                 dataNetwork = field(f, "data_network"),
                 carrierAggregation = field(f, "carrier_aggregation"),
                 rssi = field(f, "rssi"),
                 cqi = field(f, "cqi"),
-                dataRat = field(f, "data_rat")
+                dataRat = field(f, "data_rat"),
+                screenshot = field(f, "screenshot")
             )
         }
         return basicSummaryHtml(source.name, rows)
@@ -277,6 +281,7 @@ object CsvExporter {
         val ended = rows.lastOrNull()?.timestamp.orEmpty()
         val events = rows.filter { it.issueType.isNotBlank() }
         val issueCounts = events.groupingBy { it.issueType }.eachCount().entries.sortedByDescending { it.value }
+        val screenshotCount = events.count { it.screenshot.isNotBlank() }
         val simGroups = rows.groupBy { it.simSlot.ifBlank { "?" } }.toSortedMap()
         val dataNets = rows.map { it.dataNetwork }.filter { it.isNotBlank() && it != "--" }
             .groupingBy { it }.eachCount().entries.sortedByDescending { it.value }
@@ -298,6 +303,7 @@ object CsvExporter {
             append("<div><div class='k'>Ended</div><div class='v'>${esc(ended.ifBlank { "--" })}</div></div>")
             append("<div><div class='k'>Samples</div><div class='v'>${rows.size}</div></div>")
             append("<div><div class='k'>Marked issues</div><div class='v'>${events.size}</div></div>")
+            append("<div><div class='k'>Screenshots</div><div class='v'>$screenshotCount</div></div>")
             append("</div>")
 
             append("<h2>Issue Summary</h2><div class='card'>")
@@ -320,10 +326,10 @@ object CsvExporter {
             else dataNets.forEach { append("<div>${esc(it.key)} × ${it.value}</div>") }
             append("</div>")
 
-            append("<h2>Marked Issue Details</h2><div class='card'><table><thead><tr><th>Time</th><th>Issue</th><th>SIM</th><th>Operator</th><th>RAT</th><th>Band</th><th>CA / EN-DC</th><th>RSRP</th><th>RSRQ</th><th>SINR</th><th>RSSI</th><th>CQI</th><th>PCI</th><th>ARFCN</th><th>Data RAT</th><th>Latitude</th><th>Longitude</th><th>Note</th></tr></thead><tbody>")
-            if (events.isEmpty()) append("<tr><td colspan='18' class='muted'>No marked issues</td></tr>")
+            append("<h2>Marked Issue Details</h2><div class='card'><table><thead><tr><th>Time</th><th>Source</th><th>Issue</th><th>SIM</th><th>Operator</th><th>RAT</th><th>Band</th><th>CA / EN-DC</th><th>RSRP</th><th>RSRQ</th><th>SINR</th><th>RSSI</th><th>CQI</th><th>PCI</th><th>ARFCN</th><th>Data RAT</th><th>Latitude</th><th>Longitude</th><th>Note</th><th>Screenshot</th></tr></thead><tbody>")
+            if (events.isEmpty()) append("<tr><td colspan='20' class='muted'>No marked issues</td></tr>")
             else events.forEach { e ->
-                append("<tr><td>${esc(e.timestamp)}</td><td class='issue'>${esc(e.issueType)}</td><td>SIM ${esc(e.simSlot)}</td><td>${esc(e.operator)}</td><td>${esc(e.rat)}</td><td>${esc(e.band)}</td><td>${esc(e.carrierAggregation)}</td><td>${esc(e.rsrp)}</td><td>${esc(e.rsrq)}</td><td>${esc(e.sinr)}</td><td>${esc(e.rssi)}</td><td>${esc(e.cqi)}</td><td>${esc(e.pci)}</td><td>${esc(e.arfcn)}</td><td>${esc(e.dataRat)}</td><td>${esc(e.latitude)}</td><td>${esc(e.longitude)}</td><td>${esc(e.note)}</td></tr>")
+                append("<tr><td>${esc(e.timestamp)}</td><td>${esc(e.eventSource)}</td><td class='issue'>${esc(e.issueType)}</td><td>SIM ${esc(e.simSlot)}</td><td>${esc(e.operator)}</td><td>${esc(e.rat)}</td><td>${esc(e.band)}</td><td>${esc(e.carrierAggregation)}</td><td>${esc(e.rsrp)}</td><td>${esc(e.rsrq)}</td><td>${esc(e.sinr)}</td><td>${esc(e.rssi)}</td><td>${esc(e.cqi)}</td><td>${esc(e.pci)}</td><td>${esc(e.arfcn)}</td><td>${esc(e.dataRat)}</td><td>${esc(e.latitude)}</td><td>${esc(e.longitude)}</td><td>${esc(e.note)}</td><td>${esc(File(e.screenshot).name.takeIf { e.screenshot.isNotBlank() }.orEmpty())}</td></tr>")
             }
             append("</tbody></table></div>")
             append("</body></html>")
@@ -359,6 +365,7 @@ object CsvExporter {
                 val issue = field(r.fields,"event_type").ifBlank { "Marker" }
                 val desc = listOf(
                     "Time: ${field(r.fields,"timestamp")}",
+                    "Source: ${field(r.fields,"event_source")}",
                     "SIM: ${field(r.fields,"sim_slot")}",
                     "Operator: ${field(r.fields,"operator")}",
                     "RAT: ${field(r.fields,"display_rat").ifBlank { field(r.fields,"rat") }}",

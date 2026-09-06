@@ -16,6 +16,9 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -37,6 +40,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var cellJob: Job? = null
     private var locationJob: Job? = null
     private var recordingStatusJob: Job? = null
+    private var pingJob: Job? = null
 
     fun start() {
         restartCellLoop()
@@ -239,6 +243,176 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             else -> "Other"
         }
     }
+
+    fun startPingTest(config: PingTestConfig) {
+        if (pingJob?.isActive == true) return
+        val host = config.host.trim().ifBlank { "8.8.8.8" }
+        val safeConfig = config.copy(
+            host = host,
+            count = config.count.coerceIn(1, 10_000),
+            intervalMs = config.intervalMs.coerceIn(500L, 60_000L),
+            timeoutMs = config.timeoutMs.coerceIn(500L, 10_000L),
+            highLatencyThresholdMs = config.highLatencyThresholdMs.coerceIn(1.0, 60_000.0)
+        )
+        val shouldAutoRecord = safeConfig.autoRecord && !_state.value.isRecording
+        val pingResultFile = createPingResultFile(host)
+        _state.value = _state.value.copy(
+            pingTest = PingTestState(
+                isRunning = true,
+                config = safeConfig,
+                startedAt = System.currentTimeMillis(),
+                statusMessage = if (shouldAutoRecord) "Starting recording…" else "Running",
+                resultPath = pingResultFile.absolutePath
+            )
+        )
+        pingJob = viewModelScope.launch {
+            if (shouldAutoRecord) {
+                val taskHost = host.replace(Regex("[^A-Za-z0-9._-]"), "_").take(28)
+                startRecording("Ping_$taskHost")
+                delay(700L)
+            }
+            var consecutiveFailures = 0
+            try {
+                for (seq in 1..safeConfig.count) {
+                    val startedAt = System.currentTimeMillis()
+                    val result = runSinglePing(host, safeConfig.timeoutMs)
+                    val sample = PingSample(
+                        sequence = seq,
+                        timestampMs = startedAt,
+                        latencyMs = result.first,
+                        success = result.first != null,
+                        message = result.second
+                    )
+                    consecutiveFailures = if (sample.success) 0 else consecutiveFailures + 1
+                    appendPingResult(pingResultFile, host, sample)
+                    val previous = _state.value.pingTest
+                    val nextSamples = (previous.samples + sample).takeLast(5000)
+                    val successCount = nextSamples.count { it.success }
+                    val failureCount = nextSamples.size - successCount
+                    _state.value = _state.value.copy(
+                        pingTest = previous.copy(
+                            isRunning = true,
+                            completed = nextSamples.size,
+                            successCount = successCount,
+                            failureCount = failureCount,
+                            samples = nextSamples,
+                            statusMessage = if (sample.success) "Reply ${formatPingLatency(sample.latencyMs)}" else "Timeout / failed"
+                        )
+                    )
+                    if (sample.latencyMs != null && sample.latencyMs >= safeConfig.highLatencyThresholdMs) {
+                        markAutoEvent(
+                            "HIGH_PING",
+                            "Target=$host, RTT=${formatPingLatency(sample.latencyMs)}, threshold=${String.format(Locale.US, "%.0f ms", safeConfig.highLatencyThresholdMs)}"
+                        )
+                    }
+                    if (!sample.success && consecutiveFailures == 3) {
+                        markAutoEvent("PING_TIMEOUT", "Target=$host, 3 consecutive ping failures")
+                    }
+                    if (seq < safeConfig.count) {
+                        val spent = System.currentTimeMillis() - startedAt
+                        delay((safeConfig.intervalMs - spent).coerceAtLeast(0L))
+                    }
+                }
+                val current = _state.value.pingTest
+                _state.value = _state.value.copy(
+                    pingTest = current.copy(
+                        isRunning = false,
+                        statusMessage = if (current.completed >= safeConfig.count) "Completed" else "Stopped"
+                    )
+                )
+            } catch (e: CancellationException) {
+                val current = _state.value.pingTest
+                _state.value = _state.value.copy(pingTest = current.copy(isRunning = false, statusMessage = "Stopped"))
+                throw e
+            } catch (e: Exception) {
+                val current = _state.value.pingTest
+                _state.value = _state.value.copy(
+                    pingTest = current.copy(isRunning = false, statusMessage = "Error: ${e.message ?: "Ping failed"}")
+                )
+            } finally {
+                if (shouldAutoRecord) stopRecording()
+            }
+        }
+    }
+
+    fun stopPingTest() {
+        pingJob?.cancel()
+        pingJob = null
+        val current = _state.value.pingTest
+        _state.value = _state.value.copy(pingTest = current.copy(isRunning = false, statusMessage = "Stopped"))
+    }
+
+    fun clearPingResults() {
+        if (_state.value.pingTest.isRunning) return
+        _state.value = _state.value.copy(pingTest = PingTestState(config = _state.value.pingTest.config))
+    }
+
+    private fun createPingResultFile(host: String): File {
+        val dir = File(getApplication<Application>().getExternalFilesDir(null), "ping_results").apply { mkdirs() }
+        val safeHost = host.replace(Regex("[^A-Za-z0-9._-]"), "_").take(32).ifBlank { "target" }
+        val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+        return File(dir, "Ping_${safeHost}_$stamp.csv").apply {
+            writeText("sequence,timestamp,host,success,latency_ms,message,data_network,sim_slot,operator,rat,rsrp,rsrq,sinr,band,pci\n")
+        }
+    }
+
+    private fun appendPingResult(file: File, host: String, sample: PingSample) {
+        runCatching {
+            val snapshot = _state.value
+            val sim = snapshot.sims.firstOrNull { it.subscriptionId == snapshot.selectedSubscriptionId } ?: snapshot.sims.firstOrNull()
+            val c = sim?.servingCell
+            val timestamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US).format(Date(sample.timestampMs))
+            val values = listOf(
+                sample.sequence.toString(), timestamp, host, sample.success.toString(), sample.latencyMs?.let { String.format(Locale.US, "%.3f", it) }.orEmpty(),
+                sample.message, snapshot.dataNetwork, sim?.let { (it.simSlotIndex + 1).toString() }.orEmpty(), c?.operator.orEmpty(),
+                c?.displayRat?.ifBlank { c.rat }.orEmpty(), c?.rsrp.orEmpty(), c?.rsrq.orEmpty(), c?.sinr.orEmpty(), c?.band.orEmpty(), c?.pci.orEmpty()
+            )
+            file.appendText(values.joinToString(",") { pingCsvEscape(it) } + "\n")
+        }
+    }
+
+    private fun pingCsvEscape(value: String): String {
+        val safe = value.replace("\"", "\"\"")
+        return if (safe.contains(',') || safe.contains('"') || safe.contains('\n')) "\"$safe\"" else safe
+    }
+
+    private suspend fun runSinglePing(host: String, timeoutMs: Long): Pair<Double?, String> = withContext(Dispatchers.IO) {
+        var process: Process? = null
+        try {
+            val timeoutSeconds = kotlin.math.ceil(timeoutMs / 1000.0).toInt().coerceAtLeast(1)
+            process = ProcessBuilder("/system/bin/ping", "-c", "1", "-W", timeoutSeconds.toString(), host)
+                .redirectErrorStream(true)
+                .start()
+            val output = process.inputStream.bufferedReader().use { it.readText() }
+            process.waitFor()
+            val latency = Regex("time[=<]([0-9.]+)\\s*ms", RegexOption.IGNORE_CASE)
+                .find(output)?.groupValues?.getOrNull(1)?.toDoubleOrNull()
+            latency to output.lineSequence().firstOrNull { it.contains("bytes from", true) || it.contains("timeout", true) || it.contains("unreachable", true) }.orEmpty()
+        } catch (e: Exception) {
+            null to (e.message ?: "Ping failed")
+        } finally {
+            runCatching { process?.destroy() }
+        }
+    }
+
+    private fun markAutoEvent(eventType: String, note: String) {
+        if (!_state.value.isRecording) return
+        val app = getApplication<Application>()
+        val subId = _state.value.recordingMarkTargetSubscriptionId
+            ?: _state.value.markTargetSubscriptionId
+            ?: _state.value.selectedSubscriptionId
+            ?: return
+        val intent = Intent(app, RecordingService::class.java).apply {
+            action = RecordingService.ACTION_MARK
+            putExtra(RecordingService.EXTRA_MARK_SUBSCRIPTION_ID, subId)
+            putExtra(RecordingService.EXTRA_EVENT_TYPE, eventType)
+            putExtra(RecordingService.EXTRA_EVENT_NOTE, note)
+            putExtra(RecordingService.EXTRA_EVENT_SOURCE, "AUTO")
+        }
+        ContextCompat.startForegroundService(app, intent)
+    }
+
+    private fun formatPingLatency(value: Double?): String = if (value == null) "--" else String.format(Locale.US, "%.1f ms", value)
 
     fun deleteRecording(path: String) {
         File(path).delete()
