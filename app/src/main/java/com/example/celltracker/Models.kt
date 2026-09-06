@@ -107,6 +107,7 @@ data class AppSettings(
     val floatingStartCompact: Boolean = false,
     val floatingRememberPosition: Boolean = true,
     val floatingCaptureScreenshotOnMark: Boolean = true,
+    val floatingIncludeWindowInScreenshot: Boolean = true,
     val floatingExpandedFields: Set<FloatingField> = setOf(FloatingField.MARK_TARGET, FloatingField.OPERATOR, FloatingField.RAT, FloatingField.RSRP, FloatingField.SINR, FloatingField.BAND, FloatingField.PCI, FloatingField.DATANET, FloatingField.RECORDING),
     val floatingCompactFields: Set<FloatingField> = setOf(FloatingField.MARK_TARGET, FloatingField.RSRP, FloatingField.RECORDING),
     val recordScope: RecordScope = RecordScope.CURRENT_SIM,

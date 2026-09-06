@@ -19,3 +19,10 @@ Changes in this build:
 - Excel issue details include the screenshot filename.
 
 Version: 0.7.1 (versionCode 33)
+
+
+## v0.7.1.1
+- Added `Include floating window in screenshot` under Settings > Floating Window.
+- Default: ON. Marker screenshots keep the overlay and its live network values visible.
+- When OFF, the overlay is temporarily hidden during capture, preserving the v0.7.1 clean-screenshot behavior.
+- Existing task-name + foreground-app + timestamp screenshot naming is unchanged.

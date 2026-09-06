@@ -296,7 +296,8 @@ class FloatingOverlayService : Service() {
         if (subId < 0) return
         val settings = settingsRepository.load()
         if (settings.floatingCaptureScreenshotOnMark && ScreenCaptureService.isReady) {
-            overlayView?.visibility = View.INVISIBLE
+            val hideOverlayForCapture = !settings.floatingIncludeWindowInScreenshot
+            if (hideOverlayForCapture) overlayView?.visibility = View.INVISIBLE
             val capture = Intent(this, ScreenCaptureService::class.java).apply {
                 action = ScreenCaptureService.ACTION_CAPTURE_MARK
                 putExtra(RecordingService.EXTRA_MARK_SUBSCRIPTION_ID, subId)
@@ -304,9 +305,11 @@ class FloatingOverlayService : Service() {
                 putExtra(RecordingService.EXTRA_EVENT_NOTE, "")
             }
             ContextCompat.startForegroundService(this, capture)
-            scope.launch {
-                delay(450)
-                withContext(Dispatchers.Main) { overlayView?.visibility = View.VISIBLE }
+            if (hideOverlayForCapture) {
+                scope.launch {
+                    delay(450)
+                    withContext(Dispatchers.Main) { overlayView?.visibility = View.VISIBLE }
+                }
             }
         } else {
             val intent = Intent(this, RecordingService::class.java).apply {

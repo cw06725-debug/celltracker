@@ -19,6 +19,7 @@ class SettingsRepository(context: Context) {
         floatingStartCompact = prefs.getBoolean("floating_start_compact", false),
         floatingRememberPosition = prefs.getBoolean("floating_remember_position", true),
         floatingCaptureScreenshotOnMark = prefs.getBoolean("floating_capture_screenshot", true),
+        floatingIncludeWindowInScreenshot = prefs.getBoolean("floating_include_window_in_screenshot", true),
         floatingExpandedFields = prefs.getStringSet("floating_expanded_fields", null)?.mapNotNull { runCatching { FloatingField.valueOf(it) }.getOrNull() }?.toSet() ?: AppSettings().floatingExpandedFields,
         floatingCompactFields = prefs.getStringSet("floating_compact_fields", null)?.mapNotNull { runCatching { FloatingField.valueOf(it) }.getOrNull() }?.toSet() ?: AppSettings().floatingCompactFields,
         recordScope = enumValueOrDefault(prefs.getString("record_scope", null), RecordScope.CURRENT_SIM),
@@ -42,6 +43,7 @@ class SettingsRepository(context: Context) {
             .putBoolean("floating_start_compact", settings.floatingStartCompact)
             .putBoolean("floating_remember_position", settings.floatingRememberPosition)
             .putBoolean("floating_capture_screenshot", settings.floatingCaptureScreenshotOnMark)
+            .putBoolean("floating_include_window_in_screenshot", settings.floatingIncludeWindowInScreenshot)
             .putStringSet("floating_expanded_fields", settings.floatingExpandedFields.map { it.name }.toSet())
             .putStringSet("floating_compact_fields", settings.floatingCompactFields.map { it.name }.toSet())
             .putString("record_scope", settings.recordScope.name)

@@ -1634,6 +1634,18 @@ private fun SettingsScreen(settings: AppSettings, onUpdate: (AppSettings) -> Uni
                     SettingSwitch("Start in compact mode", draft.floatingStartCompact) { applySetting(draft.copy(floatingStartCompact = it)) }
                     SettingSwitch("Remember position", draft.floatingRememberPosition) { applySetting(draft.copy(floatingRememberPosition = it)) }
                     SettingSwitch("Capture screenshot when marking", draft.floatingCaptureScreenshotOnMark) { applySetting(draft.copy(floatingCaptureScreenshotOnMark = it)) }
+                    if (draft.floatingCaptureScreenshotOnMark) {
+                        SettingSwitch("Include floating window in screenshot", draft.floatingIncludeWindowInScreenshot) {
+                            applySetting(draft.copy(floatingIncludeWindowInScreenshot = it))
+                        }
+                        Text(
+                            if (draft.floatingIncludeWindowInScreenshot)
+                                "The screenshot keeps the floating window visible, so the captured image also shows the live network information."
+                            else
+                                "The floating window is temporarily hidden before capture, producing a clean screenshot of the tested app.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
                     Text("Screenshots are captured only when a marker is created. Android will ask for screen-capture permission when recording starts.", style = MaterialTheme.typography.bodySmall)
                     HorizontalDivider()
                     Text("Expanded mode fields", style = MaterialTheme.typography.titleMedium)
