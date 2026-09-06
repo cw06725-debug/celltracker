@@ -325,7 +325,7 @@ class FloatingOverlayService : Service() {
             setText(prefs.getString(KEY_LAST_TASK, "").orEmpty())
             setTextColor(Color.WHITE)
             setHintTextColor(Color.LTGRAY)
-            singleLine = true
+            setSingleLine(true)
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
             setPadding(dp(8), dp(4), dp(8), dp(4))
         }
