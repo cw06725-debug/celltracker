@@ -2095,11 +2095,15 @@ private fun SettingsScreen(settings: AppSettings, visitId: Int, onUpdate: (AppSe
     var draft by remember(settings) { mutableStateOf(settings) }
     var page by remember { mutableStateOf("root") }
     var newIssue by remember { mutableStateOf("") }
-    // Settings is a fresh destination: every new visit starts at the top. Because this
-    // state lives for the lifetime of SettingsScreen, child -> Settings Back still keeps
-    // the current Settings position during that visit. The parent/home scroll is stored
-    // independently by UiScrollMemory and is restored when leaving Settings.
-    val rootScrollState = remember(visitId) { ScrollState(initial = 0) }
+    // Keep one root Settings scroll state for this composed Settings destination, but
+    // explicitly reset it whenever Main opens a NEW Settings visit.  visitId changes only
+    // on Main -> Settings, so Settings child -> Back keeps the in-visit position, while a
+    // later fresh entry always starts at the top.  Using rememberScrollState + scrollTo
+    // avoids relying on save/restore semantics or directly constructing ScrollState.
+    val rootScrollState = rememberScrollState(initial = 0)
+    LaunchedEffect(visitId) {
+        rootScrollState.scrollTo(0)
+    }
 
     fun applySetting(next: AppSettings) {
         draft = next
