@@ -53,6 +53,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         recordingElapsedMs = if (status.isRecording) System.currentTimeMillis() - status.startedAt else _state.value.recordingElapsedMs,
                         recordingSamples = status.totalSamples,
                         recordingSamplesBySubscription = status.samplesBySubscription,
+                        recordingMarkTargetSubscriptionId = status.markTargetSubscriptionId.takeIf { it >= 0 } ?: _state.value.recordingMarkTargetSubscriptionId,
                         latestRecordingPath = status.latestPath ?: latestPathFromPrefs(),
                         recordingLocationValid = status.locationValid,
                         recordingLocationAgeMs = status.locationAgeMs

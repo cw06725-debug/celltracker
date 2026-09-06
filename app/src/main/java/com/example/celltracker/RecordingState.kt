@@ -8,6 +8,7 @@ data class RecordingStatus(
     val totalSamples: Long = 0L,
     val samplesBySubscription: Map<Int, Long> = emptyMap(),
     val latestPath: String? = null,
+    val markTargetSubscriptionId: Int = -1,
     val locationValid: Boolean = false,
     val locationAgeMs: Long = Long.MAX_VALUE
 )

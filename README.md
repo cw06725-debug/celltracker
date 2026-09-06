@@ -1,13 +1,23 @@
-# CellTracker v0.6.3.1
+# CellTracker v0.7.0
 
-Signal Trend stability and inspection update.
+Floating Window phase 1.
 
-## Changes
-- Signal Trend samples are now stored in MainViewModel/AppState per subscription instead of inside the page Composable.
-- SIM1 and SIM2 each keep their own rolling 60-second RSRP/RSRQ/SINR/RSSI history.
-- Switching SIM pages, Map/History, or recomposing the cellular page no longer resets the trend.
-- Tap or horizontally drag on a trend chart to inspect the nearest sample.
-- Selected sample shows timestamp and metric value, with a vertical cursor and point marker.
-- Double tap the chart to clear the historical selection and return to live view.
+## New
+- Recording floating overlay via Android overlay permission.
+- Uses the locked Recording Mark Target SIM, not the currently viewed SIM.
+- Expanded overlay: SIM/operator/RAT, RSRP, RSRQ, SINR, Band, PCI, DataNet and recording state.
+- Compact overlay mode.
+- Drag and remember overlay position.
+- Background opacity setting (20%-100%); text/buttons remain opaque.
+- Auto-show overlay while recording.
+- MARK button opens configured Issue Types and writes a normal MANUAL TestEvent through RecordingService.
+- Overlay automatically closes when recording stops.
+- Settings > Floating Window page with permission shortcut.
 
-Version: 0.6.3.1 (31)
+## Signal Trend polish
+- Removed double-tap gesture dependency that delayed single-tap inspection.
+- Tap/drag point selection responds immediately.
+- A Live button returns to current-value mode.
+
+## Not in this build yet
+- MediaProjection screenshot capture and screenshot-to-marker binding are planned for v0.7.1.

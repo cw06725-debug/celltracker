@@ -13,6 +13,11 @@ class SettingsRepository(context: Context) {
         vibrateOnMark = prefs.getBoolean("vibrate_on_mark", true),
         toastOnMark = prefs.getBoolean("toast_on_mark", true),
         soundOnMark = prefs.getBoolean("sound_on_mark", false),
+        floatingWindowEnabled = prefs.getBoolean("floating_window_enabled", true),
+        floatingAutoShowDuringRecording = prefs.getBoolean("floating_auto_show", true),
+        floatingOpacity = prefs.getFloat("floating_opacity", 0.80f).coerceIn(0.20f, 1.00f),
+        floatingStartCompact = prefs.getBoolean("floating_start_compact", false),
+        floatingRememberPosition = prefs.getBoolean("floating_remember_position", true),
         recordScope = enumValueOrDefault(prefs.getString("record_scope", null), RecordScope.CURRENT_SIM),
         mapDetailFields = prefs.getStringSet("map_detail_fields", null)?.mapNotNull { runCatching { MapDetailField.valueOf(it) }.getOrNull() }?.toSet()
             ?: AppSettings().mapDetailFields,
@@ -28,6 +33,11 @@ class SettingsRepository(context: Context) {
             .putBoolean("vibrate_on_mark", settings.vibrateOnMark)
             .putBoolean("toast_on_mark", settings.toastOnMark)
             .putBoolean("sound_on_mark", settings.soundOnMark)
+            .putBoolean("floating_window_enabled", settings.floatingWindowEnabled)
+            .putBoolean("floating_auto_show", settings.floatingAutoShowDuringRecording)
+            .putFloat("floating_opacity", settings.floatingOpacity.coerceIn(0.20f, 1.00f))
+            .putBoolean("floating_start_compact", settings.floatingStartCompact)
+            .putBoolean("floating_remember_position", settings.floatingRememberPosition)
             .putString("record_scope", settings.recordScope.name)
             .putStringSet("map_detail_fields", settings.mapDetailFields.map { it.name }.toSet())
             .putString("issue_types", settings.issueTypes.joinToString("\u001F"))

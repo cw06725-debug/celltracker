@@ -72,8 +72,12 @@ class RecordingService : Service() {
             FileWriter(file, false).use { it.appendLine(CSV_HEADER) }
             val started = System.currentTimeMillis(); val perSim = mutableMapOf<Int, Long>()
             val initialLocation = LocationStore.latest.value
-            RecordingState.status.value = RecordingStatus(true, started, 0, emptyMap(), file.absolutePath, initialLocation.isValid, locationAge(initialLocation))
+            RecordingState.status.value = RecordingStatus(true, started, 0, emptyMap(), file.absolutePath, markTargetSubscriptionId, initialLocation.isValid, locationAge(initialLocation))
             getSharedPreferences("celltracker_recording", MODE_PRIVATE).edit().putString("latest_path", file.absolutePath).apply()
+            val overlaySettings = settingsRepository.load()
+            if (overlaySettings.floatingWindowEnabled && overlaySettings.floatingAutoShowDuringRecording && android.provider.Settings.canDrawOverlays(this@RecordingService)) {
+                runCatching { startService(Intent(this@RecordingService, FloatingOverlayService::class.java)) }
+            }
             while (isActive) {
                 val cycleStart = System.currentTimeMillis()
                 val all = cellular.readAllSims()
@@ -82,7 +86,7 @@ class RecordingService : Service() {
                 FileWriter(file, true).use { w -> sims.forEach { sim ->
                     val c=sim.servingCell; w.appendLine(csvLine(cycleStart,c,locationSnapshot,false,"","")); perSim[c.subscriptionId]=(perSim[c.subscriptionId]?:0)+1
                 }}
-                RecordingState.status.value = RecordingStatus(true, started, perSim.values.sum(), perSim.toMap(), file.absolutePath, locationSnapshot.isValid, locationAge(locationSnapshot))
+                RecordingState.status.value = RecordingStatus(true, started, perSim.values.sum(), perSim.toMap(), file.absolutePath, markTargetSubscriptionId, locationSnapshot.isValid, locationAge(locationSnapshot))
                 val spent=System.currentTimeMillis()-cycleStart; delay((settingsRepository.load().recordIntervalMs-spent).coerceAtLeast(0))
             }
         }
@@ -102,7 +106,12 @@ class RecordingService : Service() {
     }
 
     private fun locationAge(l: LocationData): Long = if (!l.isValid || l.timestampMs <= 0L) Long.MAX_VALUE else (System.currentTimeMillis() - l.timestampMs).coerceAtLeast(0L)
-    override fun onDestroy(){ RecordingState.status.value=RecordingState.status.value.copy(isRecording=false); scope.cancel(); super.onDestroy() }
+    override fun onDestroy(){
+        RecordingState.status.value=RecordingState.status.value.copy(isRecording=false)
+        runCatching { stopService(Intent(this, FloatingOverlayService::class.java)) }
+        scope.cancel()
+        super.onDestroy()
+    }
     override fun onBind(intent: Intent?)=null
     private fun createNotificationChannel(){ if(Build.VERSION.SDK_INT>=26)getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel(CHANNEL_ID,"CellTracker recording",NotificationManager.IMPORTANCE_LOW)) }
     companion object {

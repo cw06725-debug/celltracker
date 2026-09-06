@@ -95,6 +95,11 @@ data class AppSettings(
     val vibrateOnMark: Boolean = true,
     val toastOnMark: Boolean = true,
     val soundOnMark: Boolean = false,
+    val floatingWindowEnabled: Boolean = true,
+    val floatingAutoShowDuringRecording: Boolean = true,
+    val floatingOpacity: Float = 0.80f,
+    val floatingStartCompact: Boolean = false,
+    val floatingRememberPosition: Boolean = true,
     val recordScope: RecordScope = RecordScope.CURRENT_SIM,
     val mapDetailFields: Set<MapDetailField> = setOf(MapDetailField.TIME, MapDetailField.SIM, MapDetailField.OPERATOR, MapDetailField.RAT, MapDetailField.RSRP, MapDetailField.RSRQ, MapDetailField.SINR, MapDetailField.PCI, MapDetailField.ARFCN, MapDetailField.BAND, MapDetailField.CA, MapDetailField.CQI, MapDetailField.LATITUDE, MapDetailField.LONGITUDE),
     val issueTypes: List<String> = listOf("Call Drop", "No Audio", "VoLTE Lost", "No Signal", "No Data", "Slow Data", "Video Stuck", "Handover Issue", "Poor Voice Quality", "Other")

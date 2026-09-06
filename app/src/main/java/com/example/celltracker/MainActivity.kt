@@ -91,6 +91,12 @@ class MainActivity : ComponentActivity() {
                 var showSettings by remember { mutableStateOf(false) }
                 var detailPath by remember { mutableStateOf<String?>(null) }
                 val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { vm.start() }
+                var overlayPermissionRequestedForRecording by remember { mutableStateOf(false) }
+                val overlayPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+                    if (android.provider.Settings.canDrawOverlays(this@MainActivity) && state.isRecording && state.settings.floatingWindowEnabled) {
+                        runCatching { startService(Intent(this@MainActivity, FloatingOverlayService::class.java)) }
+                    }
+                }
 
                 LaunchedEffect(Unit) {
                     val permissions = mutableListOf(
@@ -100,6 +106,20 @@ class MainActivity : ComponentActivity() {
                     )
                     if (Build.VERSION.SDK_INT >= 33) permissions += Manifest.permission.POST_NOTIFICATIONS
                     launcher.launch(permissions.toTypedArray())
+                }
+
+                LaunchedEffect(state.isRecording, state.settings.floatingWindowEnabled, state.settings.floatingAutoShowDuringRecording) {
+                    if (!state.isRecording) {
+                        overlayPermissionRequestedForRecording = false
+                    } else if (state.settings.floatingWindowEnabled && state.settings.floatingAutoShowDuringRecording &&
+                        !android.provider.Settings.canDrawOverlays(this@MainActivity) && !overlayPermissionRequestedForRecording) {
+                        overlayPermissionRequestedForRecording = true
+                        val intent = Intent(
+                            android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            Uri.parse("package:$packageName")
+                        )
+                        overlayPermissionLauncher.launch(intent)
+                    }
                 }
 
                 BackHandler(enabled = showSettings || detailPath != null) {
@@ -1384,11 +1404,14 @@ private fun SignalTrendSection(cell: CellData, points: List<SignalTrendPoint>) {
                 shape = MaterialTheme.shapes.small,
                 color = MaterialTheme.colorScheme.surfaceVariant
             ) {
-                Text(
-                    "$timeText  ·  ${metric.label} ${String.format(Locale.US, "%.0f", selectedPoint.second)} ${metric.unit}",
-                    style = MaterialTheme.typography.labelMedium,
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "$timeText  ·  ${metric.label} ${String.format(Locale.US, "%.0f", selectedPoint.second)} ${metric.unit}",
+                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.padding(start = 10.dp, top = 6.dp, bottom = 6.dp)
+                    )
+                    TextButton(onClick = { selectedTimeMs = null }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) { Text("Live") }
+                }
             }
         }
 
@@ -1420,8 +1443,7 @@ private fun SignalTrendSection(cell: CellData, points: List<SignalTrendPoint>) {
                     .onSizeChanged { chartWidthPx = it.width.coerceAtLeast(1) }
                     .pointerInput(visibleValues, metric) {
                         detectTapGestures(
-                            onTap = { offset -> selectByX(offset.x) },
-                            onDoubleTap = { selectedTimeMs = null }
+                            onTap = { offset -> selectByX(offset.x) }
                         )
                     }
                     .pointerInput(visibleValues, metric) {
@@ -1463,7 +1485,7 @@ private fun SignalTrendSection(cell: CellData, points: List<SignalTrendPoint>) {
             Text("Now", style = MaterialTheme.typography.labelSmall)
         }
         Text(
-            if (selectedPoint == null) "${metric.label} · ${metric.unit} · Tap/drag chart to inspect" else "Double tap chart to return to live",
+            if (selectedPoint == null) "${metric.label} · ${metric.unit} · Tap/drag chart to inspect" else "Tap Live to return to current value",
             style = MaterialTheme.typography.labelSmall,
             modifier = Modifier.padding(start = 48.dp, top = 2.dp)
         )
@@ -1509,7 +1531,7 @@ private fun SettingsScreen(settings: AppSettings, onUpdate: (AppSettings) -> Uni
     }
     Scaffold(topBar = {
         TopAppBar(
-            title = { Text(when (page) { "sampling" -> "Sampling"; "marker" -> "Marker Button"; "map" -> "Map Point Details"; "issues" -> "Issue Types"; else -> "Settings" }) },
+            title = { Text(when (page) { "sampling" -> "Sampling"; "marker" -> "Marker Button"; "floating" -> "Floating Window"; "map" -> "Map Point Details"; "issues" -> "Issue Types"; else -> "Settings" }) },
             navigationIcon = { TextButton(onClick = { if (page == "root") onBack() else { page = "root" } }) { Text("Back") } }
         )
     }) { padding ->
@@ -1536,6 +1558,34 @@ private fun SettingsScreen(settings: AppSettings, onUpdate: (AppSettings) -> Uni
                     SettingSwitch("Vibrate", draft.vibrateOnMark) { applySetting(draft.copy(vibrateOnMark = it)) }
                     SettingSwitch("Show toast", draft.toastOnMark) { applySetting(draft.copy(toastOnMark = it)) }
                     SettingSwitch("Play sound", draft.soundOnMark) { applySetting(draft.copy(soundOnMark = it)) }
+                }
+                "floating" -> Column(Modifier.padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    val context = LocalContext.current
+                    var overlayGranted by remember { mutableStateOf(android.provider.Settings.canDrawOverlays(context)) }
+                    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+                        overlayGranted = android.provider.Settings.canDrawOverlays(context)
+                    }
+                    SettingSwitch("Enable floating window", draft.floatingWindowEnabled) { applySetting(draft.copy(floatingWindowEnabled = it)) }
+                    SettingSwitch("Auto show while recording", draft.floatingAutoShowDuringRecording) { applySetting(draft.copy(floatingAutoShowDuringRecording = it)) }
+                    HorizontalDivider()
+                    Text("Opacity  ${(draft.floatingOpacity * 100).toInt()}%", style = MaterialTheme.typography.titleMedium)
+                    Slider(
+                        value = draft.floatingOpacity,
+                        onValueChange = { applySetting(draft.copy(floatingOpacity = it.coerceIn(0.20f, 1.00f))) },
+                        valueRange = 0.20f..1.00f
+                    )
+                    Text("Only the background transparency changes; text and MARK stay clear.", style = MaterialTheme.typography.bodySmall)
+                    SettingSwitch("Start in compact mode", draft.floatingStartCompact) { applySetting(draft.copy(floatingStartCompact = it)) }
+                    SettingSwitch("Remember position", draft.floatingRememberPosition) { applySetting(draft.copy(floatingRememberPosition = it)) }
+                    HorizontalDivider()
+                    Text(if (overlayGranted) "Overlay permission: Granted" else "Overlay permission: Required", style = MaterialTheme.typography.bodyMedium)
+                    if (!overlayGranted) {
+                        Button(onClick = {
+                            val intent = Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
+                            permissionLauncher.launch(intent)
+                        }) { Text("Grant overlay permission") }
+                    }
+                    Text("The window uses the recording Mark Target SIM and can be dragged, collapsed and used to create issue markers while another app is on screen.", style = MaterialTheme.typography.bodySmall)
                 }
                 "map" -> Column(Modifier.padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("Changes are saved immediately.", style = MaterialTheme.typography.bodySmall)
@@ -1568,6 +1618,8 @@ private fun SettingsScreen(settings: AppSettings, onUpdate: (AppSettings) -> Uni
                     SettingsMenuRow("Sampling", "UI refresh and recording intervals") { navigateTo("sampling") }
                     HorizontalDivider()
                     SettingsMenuRow("Marker Button", "Tap, long press and feedback") { navigateTo("marker") }
+                    HorizontalDivider()
+                    SettingsMenuRow("Floating Window", "Overlay info, opacity, compact mode and permission") { navigateTo("floating") }
                     HorizontalDivider()
                     SettingsMenuRow("Map Point Details", "Choose information shown for a map point") { navigateTo("map") }
                     HorizontalDivider()
