@@ -1,3 +1,7 @@
+# CellTracker v0.9.0.10.1
+
+Hotfix for Settings root scroll behavior. Every new entry from the main screen creates a fresh Settings visit and starts the Settings root at scroll position 0, while Back still restores the main screen position. Dark mode and the existing v0.9.0.10 behavior are unchanged.
+
 # CellTracker v0.9.0.10
 
 Changes:

@@ -134,6 +134,7 @@ class MainActivity : ComponentActivity() {
                     onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
                 }
                 var showSettings by remember { mutableStateOf(false) }
+                var settingsVisitId by remember { mutableIntStateOf(0) }
                 var detailPath by remember { mutableStateOf<String?>(null) }
                 var showPingTest by remember { mutableStateOf(false) }
                 var showCallSetup by remember { mutableStateOf(false) }
@@ -277,6 +278,7 @@ class MainActivity : ComponentActivity() {
                     )
                     RootDestination.Settings -> SettingsScreen(
                         settings = state.settings,
+                        visitId = settingsVisitId,
                         onUpdate = vm::updateSettings,
                         onBack = { showSettings = false }
                     )
@@ -293,7 +295,10 @@ class MainActivity : ComponentActivity() {
                         onDeleteRecording = vm::deleteRecording,
                         onDeleteAll = vm::deleteAllRecordings,
                         onOpenRecording = { detailPath = it },
-                        onSettings = { showSettings = true },
+                        onSettings = {
+                            settingsVisitId += 1
+                            showSettings = true
+                        },
                         onPingTest = { showPingTest = true },
                         onCallSetup = { showCallSetup = true },
                         onDismissMessage = vm::clearMessage
@@ -2086,7 +2091,7 @@ private fun NeighborCellItem(index: Int, n: CellData) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SettingsScreen(settings: AppSettings, onUpdate: (AppSettings) -> Unit, onBack: () -> Unit) {
+private fun SettingsScreen(settings: AppSettings, visitId: Int, onUpdate: (AppSettings) -> Unit, onBack: () -> Unit) {
     var draft by remember(settings) { mutableStateOf(settings) }
     var page by remember { mutableStateOf("root") }
     var newIssue by remember { mutableStateOf("") }
@@ -2094,7 +2099,7 @@ private fun SettingsScreen(settings: AppSettings, onUpdate: (AppSettings) -> Uni
     // state lives for the lifetime of SettingsScreen, child -> Settings Back still keeps
     // the current Settings position during that visit. The parent/home scroll is stored
     // independently by UiScrollMemory and is restored when leaving Settings.
-    val rootScrollState = rememberScrollState(initial = 0)
+    val rootScrollState = remember(visitId) { ScrollState(initial = 0) }
 
     fun applySetting(next: AppSettings) {
         draft = next
