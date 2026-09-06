@@ -695,7 +695,27 @@ private fun LiveMapScreen(
     }
 
     Column(modifier.fillMaxSize()) {
-        Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 2.dp) {
+        var headerDrag by remember { mutableFloatStateOf(0f) }
+        Surface(
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 2.dp,
+            modifier = Modifier.pointerInput(state.sims.size, livePagerState.currentPage) {
+                detectHorizontalDragGestures(
+                    onDragStart = { headerDrag = 0f },
+                    onHorizontalDrag = { _, amount -> headerDrag += amount },
+                    onDragEnd = {
+                        val target = when {
+                            headerDrag < -70f -> (livePagerState.currentPage + 1).coerceAtMost(state.sims.lastIndex)
+                            headerDrag > 70f -> (livePagerState.currentPage - 1).coerceAtLeast(0)
+                            else -> livePagerState.currentPage
+                        }
+                        if (target != livePagerState.currentPage) livePagerScope.launch { livePagerState.animateScrollToPage(target, animationSpec = tween(420)) }
+                        headerDrag = 0f
+                    },
+                    onDragCancel = { headerDrag = 0f }
+                )
+            }
+        ) {
             Column(Modifier.fillMaxWidth()) {
                 if (state.sims.size > 1) {
                     TabRow(selectedTabIndex = livePagerState.currentPage.coerceIn(0, state.sims.lastIndex)) {
@@ -835,8 +855,25 @@ private fun RecordingDetailScreen(
                 // Keep all controls in an opaque Compose layer above the Android MapView.
                 // AndroidView interop can otherwise visually bleed over sibling composables
                 // on some devices/Compose versions.
+                var detailHeaderDrag by remember { mutableFloatStateOf(0f) }
                 Surface(
-                    modifier = Modifier.fillMaxWidth().zIndex(2f),
+                    modifier = Modifier.fillMaxWidth().zIndex(2f).pointerInput(selectedTab) {
+                        detectHorizontalDragGestures(
+                            onDragStart = { detailHeaderDrag = 0f },
+                            onHorizontalDrag = { _, amount -> detailHeaderDrag += amount },
+                            onDragEnd = {
+                                val current = selectedTab.ordinal
+                                val target = when {
+                                    detailHeaderDrag < -70f -> (current + 1).coerceAtMost(DetailTab.entries.lastIndex)
+                                    detailHeaderDrag > 70f -> (current - 1).coerceAtLeast(0)
+                                    else -> current
+                                }
+                                if (target != current) detailPagerScope.launch { detailPagerState.animateScrollToPage(target, animationSpec = tween(420)) }
+                                detailHeaderDrag = 0f
+                            },
+                            onDragCancel = { detailHeaderDrag = 0f }
+                        )
+                    },
                     color = MaterialTheme.colorScheme.surface
                 ) {
                     Column(Modifier.fillMaxWidth()) {
@@ -1333,45 +1370,67 @@ private fun SignalTrendSection(cell: CellData, tick: String) {
         value?.let { point.timeMs to it }
     }
     if (values.size < 2) {
-        Box(Modifier.fillMaxWidth().height(112.dp), contentAlignment = Alignment.Center) {
+        Box(Modifier.fillMaxWidth().height(150.dp), contentAlignment = Alignment.Center) {
             Text("Collecting ${metric.label} trend…", style = MaterialTheme.typography.bodySmall)
         }
     } else {
-        val min = values.minOf { it.second }
-        val max = values.maxOf { it.second }
-        val latest = values.last().second
+        val (axisMin, axisMax, axisStep) = when (metric) {
+            SignalMetric.RSRP -> Triple(-140f, -60f, 20f)
+            SignalMetric.RSRQ -> Triple(-30f, 0f, 10f)
+            SignalMetric.SINR -> Triple(-20f, 40f, 15f)
+            SignalMetric.RSSI -> Triple(-120f, -40f, 20f)
+        }
         val lineColor = MaterialTheme.colorScheme.primary
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("${String.format(Locale.US, "%.1f", min)} ${metric.unit}", style = MaterialTheme.typography.labelSmall)
-            Text("Now ${String.format(Locale.US, "%.1f", latest)} ${metric.unit}", style = MaterialTheme.typography.labelSmall)
-            Text("${String.format(Locale.US, "%.1f", max)} ${metric.unit}", style = MaterialTheme.typography.labelSmall)
+        val gridColor = lineColor.copy(alpha = 0.14f)
+        val now = System.currentTimeMillis()
+        val windowStart = now - 60_000L
+        val axisValues = generateSequence(axisMax) { previous ->
+            (previous - axisStep).takeIf { it >= axisMin }
+        }.toList().let { ticks -> if (ticks.lastOrNull() != axisMin) ticks + axisMin else ticks }
+
+        Row(Modifier.fillMaxWidth().height(158.dp).padding(top = 10.dp)) {
+            Column(
+                modifier = Modifier.width(48.dp).fillMaxHeight(),
+                verticalArrangement = Arrangement.SpaceBetween,
+                horizontalAlignment = Alignment.End
+            ) {
+                axisValues.forEach { tickValue ->
+                    Text(
+                        String.format(Locale.US, "%.0f", tickValue),
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.padding(end = 6.dp)
+                    )
+                }
+            }
+            Canvas(Modifier.weight(1f).fillMaxHeight()) {
+                axisValues.forEach { tickValue ->
+                    val y = size.height - ((tickValue - axisMin) / (axisMax - axisMin)) * size.height
+                    drawLine(gridColor, start = androidx.compose.ui.geometry.Offset(0f, y), end = androidx.compose.ui.geometry.Offset(size.width, y), strokeWidth = 1f)
+                }
+                repeat(4) { i ->
+                    val x = size.width * i / 3f
+                    drawLine(gridColor, start = androidx.compose.ui.geometry.Offset(x, 0f), end = androidx.compose.ui.geometry.Offset(x, size.height), strokeWidth = 1f)
+                }
+                val path = Path()
+                var started = false
+                values.filter { it.first >= windowStart }.forEach { (time, value) ->
+                    val x = ((time - windowStart).toFloat() / 60_000f).coerceIn(0f, 1f) * size.width
+                    val normalized = ((value.coerceIn(axisMin, axisMax) - axisMin) / (axisMax - axisMin)).coerceIn(0f, 1f)
+                    val y = size.height - normalized * size.height
+                    if (!started) { path.moveTo(x, y); started = true } else path.lineTo(x, y)
+                }
+                if (started) drawPath(path, lineColor, style = Stroke(width = 3f))
+            }
         }
-        Canvas(Modifier.fillMaxWidth().height(132.dp).padding(top = 8.dp)) {
-            val start = values.first().first
-            val end = values.last().first
-            val timeSpan = (end - start).coerceAtLeast(1L).toFloat()
-            val valueSpan = (max - min).coerceAtLeast(1f)
-            val gridColor = lineColor.copy(alpha = 0.16f)
-            repeat(4) { i ->
-                val y = size.height * i / 3f
-                drawLine(gridColor, start = androidx.compose.ui.geometry.Offset(0f, y), end = androidx.compose.ui.geometry.Offset(size.width, y), strokeWidth = 1f)
-            }
-            repeat(4) { i ->
-                val x = size.width * i / 3f
-                drawLine(gridColor, start = androidx.compose.ui.geometry.Offset(x, 0f), end = androidx.compose.ui.geometry.Offset(x, size.height), strokeWidth = 1f)
-            }
-            val path = Path()
-            values.forEachIndexed { index, (time, value) ->
-                val x = ((time - start).toFloat() / timeSpan) * size.width
-                val y = size.height - ((value - min) / valueSpan) * size.height
-                if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
-            }
-            drawPath(path, lineColor, style = Stroke(width = 3f))
-        }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Row(Modifier.fillMaxWidth().padding(start = 48.dp), horizontalArrangement = Arrangement.SpaceBetween) {
             Text("60 s ago", style = MaterialTheme.typography.labelSmall)
             Text("Now", style = MaterialTheme.typography.labelSmall)
         }
+        Text(
+            "${metric.label} · ${metric.unit}",
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier.padding(start = 48.dp, top = 2.dp)
+        )
     }
 }
 
