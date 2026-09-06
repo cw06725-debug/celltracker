@@ -109,7 +109,7 @@ data class AppState(
     val recordingLocationValid: Boolean = false,
     val recordingLocationAgeMs: Long = Long.MAX_VALUE,
     val recordings: List<RecordingItem> = emptyList(),
-    val exportMessage: String? = null,
+    val exportResult: ExportResult? = null,
     val error: String? = null,
     val lastUpdated: String = "--"
 )

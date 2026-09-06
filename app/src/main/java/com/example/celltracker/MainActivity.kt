@@ -5,6 +5,10 @@ import android.graphics.Color as AndroidColor
 import android.os.Build
 import android.os.Bundle
 import android.app.Activity
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.net.Uri
+import android.provider.DocumentsContract
 import android.widget.Toast
 import android.preference.PreferenceManager
 import androidx.activity.ComponentActivity
@@ -151,6 +155,12 @@ class MainActivity : ComponentActivity() {
                         onDismissMessage = vm::clearMessage
                     )
                 }
+                }
+                state.exportResult?.let { result ->
+                    ExportSuccessDialog(
+                        result = result,
+                        onDismiss = vm::clearMessage
+                    )
                 }
             }
         }
@@ -426,7 +436,6 @@ private fun MainScreen(
                     }
                 }
             }
-            state.exportMessage?.let { AssistChip(onClick = onDismissMessage, label = { Text(it) }) }
             state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             Text("Last cellular update: ${state.lastUpdated}", style = MaterialTheme.typography.bodySmall)
                 }
@@ -473,6 +482,83 @@ private fun MainScreen(
     }
 }
 
+
+
+@Composable
+private fun ExportSuccessDialog(
+    result: ExportResult,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Export successful") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(result.message)
+                Text("Saved to Downloads/CellTracker", style = MaterialTheme.typography.bodyMedium)
+                result.summaryName?.let {
+                    Text("Summary: $it", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                result.primaryFileUri?.let { openExportedFile(context, it, result.primaryMimeType) }
+            }) { Text("Open file") }
+        },
+        dismissButton = {
+            Row {
+                TextButton(onClick = { openExportFolder(context) }) { Text("Open folder") }
+                TextButton(onClick = onDismiss) { Text("Close") }
+            }
+        }
+    )
+}
+
+private fun openExportedFile(context: android.content.Context, uriString: String, mimeType: String) {
+    val uri = Uri.parse(uriString)
+    val intent = Intent(Intent.ACTION_VIEW).apply {
+        setDataAndType(uri, mimeType)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    try {
+        context.startActivity(intent)
+    } catch (_: ActivityNotFoundException) {
+        Toast.makeText(context, "No app can open this file", Toast.LENGTH_SHORT).show()
+    } catch (_: Exception) {
+        Toast.makeText(context, "Unable to open exported file", Toast.LENGTH_SHORT).show()
+    }
+}
+
+private fun openExportFolder(context: android.content.Context) {
+    val folderUri = runCatching {
+        DocumentsContract.buildDocumentUri(
+            "com.android.externalstorage.documents",
+            "primary:Download/CellTracker"
+        )
+    }.getOrNull()
+    val downloadsRoot = runCatching {
+        DocumentsContract.buildRootUri("com.android.externalstorage.documents", "primary")
+    }.getOrNull()
+
+    val candidates = listOfNotNull(folderUri, downloadsRoot)
+    for (uri in candidates) {
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            data = uri
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        try {
+            context.startActivity(intent)
+            return
+        } catch (_: Exception) {
+            // Try the next file-manager destination.
+        }
+    }
+    Toast.makeText(context, "Open Downloads/CellTracker in your file manager", Toast.LENGTH_LONG).show()
+}
 
 @Composable
 private fun MarkIssueDialog(

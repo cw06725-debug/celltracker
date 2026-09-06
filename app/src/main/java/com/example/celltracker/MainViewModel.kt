@@ -214,29 +214,29 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun deleteRecording(path: String) {
         File(path).delete()
         if (latestPathFromPrefs() == path) getApplication<Application>().getSharedPreferences("celltracker_recording", Application.MODE_PRIVATE).edit().remove("latest_path").apply()
-        _state.value = _state.value.copy(recordings = loadRecordings(), latestRecordingPath = latestPathFromPrefs(), exportMessage = null)
+        _state.value = _state.value.copy(recordings = loadRecordings(), latestRecordingPath = latestPathFromPrefs(), exportResult = null)
     }
 
     fun deleteAllRecordings() {
         recordingsDir().listFiles()?.forEach { it.delete() }
         getApplication<Application>().getSharedPreferences("celltracker_recording", Application.MODE_PRIVATE).edit().remove("latest_path").apply()
-        _state.value = _state.value.copy(recordings = emptyList(), latestRecordingPath = null, exportMessage = null)
+        _state.value = _state.value.copy(recordings = emptyList(), latestRecordingPath = null, exportResult = null)
     }
 
     fun exportRecording(path: String, mode: CsvExportMode) {
-        viewModelScope.launch { try { _state.value = _state.value.copy(exportMessage = CsvExporter.exportLatest(getApplication(), path, mode)) } catch(e:Exception){ _state.value=_state.value.copy(error=e.message?:"Export failed") } }
+        viewModelScope.launch { try { _state.value = _state.value.copy(exportResult = CsvExporter.exportLatest(getApplication(), path, mode), error = null) } catch(e:Exception){ _state.value=_state.value.copy(error=e.message?:"Export failed") } }
     }
 
     fun exportLatestCsv(mode: CsvExportMode) {
         val path = _state.value.latestRecordingPath ?: latestPathFromPrefs()
         if (path == null) {
-            _state.value = _state.value.copy(exportMessage = "No recording available")
+            _state.value = _state.value.copy(error = "No recording available")
             return
         }
         viewModelScope.launch {
             try {
                 val result = CsvExporter.exportLatest(getApplication(), path, mode)
-                _state.value = _state.value.copy(exportMessage = result, error = null)
+                _state.value = _state.value.copy(exportResult = result, error = null)
             } catch (e: Exception) {
                 _state.value = _state.value.copy(error = e.message ?: "Export failed")
             }
@@ -244,7 +244,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun clearMessage() {
-        _state.value = _state.value.copy(exportMessage = null)
+        _state.value = _state.value.copy(exportResult = null)
     }
 
     private fun recordingsDir() = File(getApplication<Application>().getExternalFilesDir(null), "recordings").apply { mkdirs() }
