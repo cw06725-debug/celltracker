@@ -292,6 +292,7 @@ class DeviceLinkService : Service() {
     }
 
     private fun prepareAgentTest(m: DeviceLinkMessage) {
+        sessionDir = null // Agent owns its network recording, not the Controller result directory.
         sessionConfig = configFrom(m.payload); repository.saveConfig(sessionConfig)
         val state=CallSetupTestState(isRunning=true,config=sessionConfig,sessionId=m.sessionId,startedAt=System.currentTimeMillis(),statusMessage="Prepared by Controller",automationCapability=automationCapability())
         DeviceLinkStore.callTest.value=state
@@ -357,10 +358,16 @@ class DeviceLinkService : Service() {
                 send("ATTEMPT_RESULT",session,result.attemptId,mapOf("result" to result.result,"event" to eventType,"detail" to result.failureDetail,"high" to high.toString(),"latency" to (result.setupLatencyMs?.toString()?:"")))
                 if(index<directions.lastIndex) delay(config.interCallIntervalMs)
             }
-        } catch(e:CancellationException){ status=if(DeviceLinkStore.link.value.status!=DeviceLinkStatus.CONNECTED)"Bluetooth link lost" else "Stopped" }
+        } catch(e:CancellationException){
+            status=if(DeviceLinkStore.link.value.status!=DeviceLinkStatus.CONNECTED)"Bluetooth link lost" else "Stopped by user"
+            sessionDir?.let { repository.appendEvent(it,System.currentTimeMillis(),"TEST_STOPPED",attemptId,DeviceLinkStore.callTest.value.currentDirection,status) }
+        }
         catch(e:Exception){status="Error: ${e.message}"}
         finally {
-            val end=System.currentTimeMillis(); repository.finish(sessionDir!!,config,a,b,started,end,status)
+            val end=System.currentTimeMillis()
+            val latestRecording=RecordingState.status.value.latestPath
+            if(!latestRecording.isNullOrBlank()) sessionDir?.let{repository.setRecordingPath(it,latestRecording)}
+            repository.finish(sessionDir!!,config,a,b,started,end,status)
             send("TEST_FINISHED",session,payload=mapOf("status" to status)); stopOwnedRecording()
             val s=DeviceLinkStore.callTest.value; DeviceLinkStore.callTest.value=s.copy(isRunning=false,endedAt=end,statusMessage=status)
             unregisterCallMonitor(); testJob=null; updateNotification("Device Link connected")
@@ -522,8 +529,25 @@ class DeviceLinkService : Service() {
     private fun saveProfile(number:String,slot:Int){repository.saveLocalIdentity(number,slot);scope.launch{val p=buildProfile(slot);DeviceLinkStore.link.value=DeviceLinkStore.link.value.copy(localProfile=p);send("DEVICE_STATUS",payload=profilePayload(p))}}
     private fun automationCapability()=when{ContextCompat.checkSelfPermission(this,Manifest.permission.CALL_PHONE)!=PackageManager.PERMISSION_GRANTED->"Semi-Auto: CALL_PHONE not granted";ContextCompat.checkSelfPermission(this,Manifest.permission.ANSWER_PHONE_CALLS)!=PackageManager.PERMISSION_GRANTED->"Semi-Auto: manual answer/hang-up required";else->"Auto answer/hang-up available (public API)"}
 
-    private fun startOwnedRecording(task:String,sub:Int){if(isRecordingActive()||sub<0)return;ownedRecordingPath="pending";ContextCompat.startForegroundService(this,Intent(this,RecordingService::class.java).putExtra(RecordingService.EXTRA_SUBSCRIPTION_ID,sub).putExtra(RecordingService.EXTRA_BOTH_SIMS,false).putExtra(RecordingService.EXTRA_MARK_SUBSCRIPTION_ID,sub).putExtra(RecordingService.EXTRA_TASK_NAME,task));scope.launch{delay(400);ownedRecordingPath=RecordingState.status.value.latestPath}}
-    private fun stopOwnedRecording(){val owned=ownedRecordingPath;if(owned!=null&&(owned=="pending"||RecordingState.status.value.latestPath==owned))stopService(Intent(this,RecordingService::class.java));ownedRecordingPath=null}
+    private fun startOwnedRecording(task:String,sub:Int){
+        if(isRecordingActive()||sub<0)return
+        ownedRecordingPath="pending"
+        getSharedPreferences("celltracker_automation",MODE_PRIVATE).edit().putBoolean("recording_owned",true).putString("owner","CALL_SETUP").apply()
+        ContextCompat.startForegroundService(this,Intent(this,RecordingService::class.java).putExtra(RecordingService.EXTRA_SUBSCRIPTION_ID,sub).putExtra(RecordingService.EXTRA_BOTH_SIMS,false).putExtra(RecordingService.EXTRA_MARK_SUBSCRIPTION_ID,sub).putExtra(RecordingService.EXTRA_TASK_NAME,task))
+        scope.launch{
+            repeat(10){
+                delay(200)
+                val path=RecordingState.status.value.latestPath
+                if(!path.isNullOrBlank()){ ownedRecordingPath=path; sessionDir?.let{repository.setRecordingPath(it,path)}; return@launch }
+            }
+        }
+    }
+    private fun stopOwnedRecording(){
+        val owned=ownedRecordingPath
+        if(owned!=null&&(owned=="pending"||RecordingState.status.value.latestPath==owned))stopService(Intent(this,RecordingService::class.java))
+        getSharedPreferences("celltracker_automation",MODE_PRIVATE).edit().putBoolean("recording_owned",false).remove("owner").apply()
+        ownedRecordingPath=null
+    }
     private fun isRecordingActive()=RecordingState.status.value.isRecording||getSharedPreferences("celltracker_recording",MODE_PRIVATE).getBoolean("active_recording",false)
     private fun recordAutoEvent(type:String,note:String){if(!isRecordingActive())return;val sub=activeSubscriptionId.takeIf{it>=0}?:return;ContextCompat.startForegroundService(this,Intent(this,RecordingService::class.java).apply{action=RecordingService.ACTION_MARK;putExtra(RecordingService.EXTRA_MARK_SUBSCRIPTION_ID,sub);putExtra(RecordingService.EXTRA_EVENT_TYPE,type);putExtra(RecordingService.EXTRA_EVENT_NOTE,note);putExtra(RecordingService.EXTRA_EVENT_SOURCE,"AUTO")})}
 
@@ -660,7 +684,7 @@ class DeviceLinkService : Service() {
     private fun snapshotFrom(p:Map<String,String>)=CallNetworkSnapshot(p["endpoint"]?:"B",p["moment"]?:"--",p["timestamp"]?.toLongOrNull()?:0,p["elapsed"]?.toLongOrNull()?:0,p["sub"]?.toIntOrNull()?:-1,p["slot"]?.toIntOrNull()?:-1,p["operator"]?:"--",p["rat"]?:"--",p["display_rat"]?:"--",p["voice_rat"]?:"--",p["mcc"]?:"--",p["mnc"]?:"--",p["tac"]?:"--",p["cell_id"]?:"--",p["pci"]?:"--",p["arfcn"]?:"--",p["band"]?:"--",p["bandwidth"]?:"--",p["rsrp"]?:"--",p["rsrq"]?:"--",p["sinr"]?:"--",p["rssi"]?:"--",p["ca"]?:"--",p["data_net"]?:"--",p["lat"]?.toDoubleOrNull(),p["lon"]?.toDoubleOrNull(),p["speed"]?:"--",p["accuracy"]?:"--")
     private fun readConfig(i:Intent)=CallSetupConfig(i.getStringExtra(EXTRA_TASK).orEmpty().ifBlank{"CallSetup"},runCatching{CallDirection.valueOf(i.getStringExtra(EXTRA_DIRECTION)!!)}.getOrDefault(CallDirection.A_TO_B),i.getIntExtra(EXTRA_COUNT,10).coerceIn(1,500),i.getLongExtra(EXTRA_TIMEOUT,30000).coerceIn(5000,120000),i.getLongExtra(EXTRA_HOLD,10000).coerceIn(1000,300000),i.getLongExtra(EXTRA_INTERVAL,10000).coerceIn(1000,300000),i.getLongExtra(EXTRA_THRESHOLD,8000).coerceIn(500,120000),i.getBooleanExtra(EXTRA_AUTO_RECORD,true),i.getIntExtra(EXTRA_A_SIM,0),i.getIntExtra(EXTRA_B_SIM,0),runCatching{AutomationMode.valueOf(i.getStringExtra(EXTRA_MODE)!!)}.getOrDefault(AutomationMode.AUTO_WHEN_AVAILABLE))
 
-    override fun onDestroy(){intentionallyDisconnected.set(true);if(DeviceLinkStore.callTest.value.isRunning)endCall();testJob?.cancel();scope.cancel();unregisterCallMonitor();runCatching{if(wakeLock?.isHeld==true)wakeLock?.release()};wakeLock=null;runCatching{unregisterReceiver(discoveryReceiver)};runCatching{socket?.close()};runCatching{serverSocket?.close()};super.onDestroy()}
+    override fun onDestroy(){intentionallyDisconnected.set(true);if(DeviceLinkStore.callTest.value.isRunning)endCall();getSharedPreferences("celltracker_automation",MODE_PRIVATE).edit().putBoolean("recording_owned",false).remove("owner").apply();testJob?.cancel();scope.cancel();unregisterCallMonitor();runCatching{if(wakeLock?.isHeld==true)wakeLock?.release()};wakeLock=null;runCatching{unregisterReceiver(discoveryReceiver)};runCatching{socket?.close()};runCatching{serverSocket?.close()};super.onDestroy()}
     override fun onBind(intent:Intent?)=null
     companion object { const val CHANNEL_ID="celltracker_device_link";const val NOTIFICATION_ID=1301;const val ACTION_DISCOVER="device_link.discover";const val ACTION_PAIR="device_link.pair";const val ACTION_AGENT="device_link.agent";const val ACTION_CONTROLLER="device_link.controller";const val ACTION_CONNECT="device_link.connect";const val ACTION_DISCONNECT="device_link.disconnect";const val ACTION_REFRESH="device_link.refresh";const val ACTION_SAVE_PROFILE="device_link.save_profile";const val ACTION_START_TEST="call_setup.start";const val ACTION_STOP_TEST="call_setup.stop";const val EXTRA_ADDRESS="address";const val EXTRA_PHONE="phone";const val EXTRA_SIM_SLOT="sim_slot";const val EXTRA_TASK="task";const val EXTRA_DIRECTION="direction";const val EXTRA_COUNT="count";const val EXTRA_TIMEOUT="timeout";const val EXTRA_HOLD="hold";const val EXTRA_INTERVAL="interval";const val EXTRA_THRESHOLD="threshold";const val EXTRA_AUTO_RECORD="auto_record";const val EXTRA_A_SIM="a_sim";const val EXTRA_B_SIM="b_sim";const val EXTRA_MODE="mode" }
 }

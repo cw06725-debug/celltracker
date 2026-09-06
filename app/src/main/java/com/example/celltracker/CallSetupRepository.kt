@@ -74,7 +74,9 @@ class CallSetupRepository(private val context: Context) {
         writeMeta(dir, config, a, b, startedAt, endedAt, status)
 
     private fun writeMeta(dir: File, c: CallSetupConfig, a: DeviceProfile, b: DeviceProfile, start: Long, end: Long, status: String) {
+        val metaFile = File(dir, "session.properties")
         Properties().apply {
+            if (metaFile.exists()) runCatching { metaFile.inputStream().use { load(it) } }
             setProperty("session_id", dir.name.substringAfterLast('_')); setProperty("task_name", c.taskName)
             setProperty("direction", c.direction.name); setProperty("started_at", start.toString()); setProperty("ended_at", end.toString())
             setProperty("status", status); setProperty("device_a", a.deviceName); setProperty("device_b", b.deviceName)
@@ -82,7 +84,15 @@ class CallSetupRepository(private val context: Context) {
             setProperty("operator_a", a.operator); setProperty("operator_b", b.operator)
             setProperty("phone_a", a.phoneNumber); setProperty("phone_b", b.phoneNumber)
             setProperty("threshold_ms", c.highLatencyThresholdMs.toString())
-        }.store(File(dir, "session.properties").outputStream(), "CellTracker Call Setup Session")
+        }.store(metaFile.outputStream(), "CellTracker Call Setup Session")
+    }
+
+    fun setRecordingPath(dir: File, path: String?) {
+        if (path.isNullOrBlank()) return
+        val metaFile = File(dir, "session.properties")
+        val p = Properties().apply { if (metaFile.exists()) runCatching { metaFile.inputStream().use { load(it) } } }
+        p.setProperty("recording_path", path)
+        p.store(metaFile.outputStream(), "CellTracker Call Setup Session")
     }
 
     fun loadHistory(): List<CallSetupHistoryItem> = root.listFiles { f -> f.isDirectory }?.mapNotNull { loadItem(it) }
@@ -98,13 +108,14 @@ class CallSetupRepository(private val context: Context) {
             p.getProperty("device_a", "DUT A"), p.getProperty("device_b", "DUT B"), p.getProperty("operator_a", "--"),
             p.getProperty("operator_b", "--"), p.getProperty("direction", "--"), p.getProperty("started_at", "0").toLong(),
             p.getProperty("ended_at", "0").toLong().takeIf { it > 0 } ?: dir.lastModified(), attempts.size, success,
-            lat.takeIf { it.isNotEmpty() }?.average(), pct(.9), pct(.95), p.getProperty("threshold_ms", "8000").toLong(), p.getProperty("status", "Unknown"))
+            lat.takeIf { it.isNotEmpty() }?.average(), pct(.9), pct(.95), p.getProperty("threshold_ms", "8000").toLong(), p.getProperty("status", "Unknown"), p.getProperty("recording_path", "").takeIf { it.isNotBlank() })
     }.getOrNull()
 
     fun loadDetail(path: String): CallSetupDetail? {
         val dir = File(path); val item = loadItem(dir) ?: return null
         val snapshots = readSnapshots(dir).groupBy { it.first }
-        return CallSetupDetail(item, readAttempts(dir).map { it.copy(snapshots = snapshots[it.attemptId].orEmpty().map { pair -> pair.second }) }, readEvents(dir))
+        val network = item.recordingPath?.let { runCatching { RecordingDetailRepository.loadSamples(it) }.getOrDefault(emptyList()) }.orEmpty()
+        return CallSetupDetail(item, readAttempts(dir).map { it.copy(snapshots = snapshots[it.attemptId].orEmpty().map { pair -> pair.second }) }, readEvents(dir), network)
     }
 
     private fun readAttempts(dir: File): List<CallAttemptResult> = File(dir, "attempts.csv").takeIf { it.exists() }?.readLines()?.drop(1)?.filter { it.isNotBlank() }?.mapNotNull { line ->

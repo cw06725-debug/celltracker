@@ -18,6 +18,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -29,11 +30,11 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.compose.ui.viewinterop.AndroidView
+import org.osmdroid.tileprovider.tilesource.XYTileSource
 import org.osmdroid.util.BoundingBox
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
-import org.osmdroid.views.overlay.Marker
-import org.osmdroid.views.overlay.Polyline
+import org.osmdroid.views.overlay.Overlay
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -56,6 +57,9 @@ fun CallSetupScreen(
     onCloseDetail:()->Unit,
     onExport:(String)->Unit
 ) {
+    // Keep the history scroll position while a detail page temporarily replaces this content.
+    // Returning from View Details now lands exactly where the user entered it.
+    val historyListState = rememberLazyListState()
     if(detail!=null){BackHandler{onCloseDetail()};CallSetupDetailView(detail,onCloseDetail){onExport(detail.item.path)};return}
     val context=LocalContext.current
     val focusManager=LocalFocusManager.current
@@ -97,7 +101,7 @@ fun CallSetupScreen(
         topBar={TopAppBar(title={Text("Device Link + Call Setup")},navigationIcon={TextButton(onClick=onBack){Text("Back")}})},
         snackbarHost={SnackbarHost(snackbar)}
     ){pad->
-        LazyColumn(Modifier.padding(pad).fillMaxSize(),contentPadding=PaddingValues(14.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
+        LazyColumn(Modifier.padding(pad).fillMaxSize(),state=historyListState,contentPadding=PaddingValues(14.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
             item{CCard("Local DUT"){
                 CField("Device",link.localProfile.deviceName);CField("Device ID",link.localProfile.deviceId.take(12));CField("CellTracker",link.localProfile.appVersion)
                 if(activeSlots.isEmpty()) Text("No active SIM detected. Check SIM/phone permissions.",style=MaterialTheme.typography.bodySmall)
@@ -188,7 +192,8 @@ fun CallSetupScreen(
                     SimSelector(aSim,{aSim=it},!test.isRunning,aSlots)
                     Text("B Call SIM", style=MaterialTheme.typography.labelLarge)
                     SimSelector(bSim,{bSim=it},!test.isRunning,bSlots)
-                    Row(verticalAlignment=Alignment.CenterVertically){Checkbox(autoRecord,{autoRecord=it},enabled=!test.isRunning);Text("Auto Record on both DUTs")}
+                    Row(verticalAlignment=Alignment.CenterVertically){Checkbox(true,{},enabled=false);Text("Network recording on both DUTs (automatic)")}
+                    Text("Call Setup automatically records the continuous radio/GPS trace for analysis and report export.",style=MaterialTheme.typography.bodySmall)
                     Row(verticalAlignment=Alignment.CenterVertically){Checkbox(mode==AutomationMode.SEMI_AUTO,{mode=if(it)AutomationMode.SEMI_AUTO else AutomationMode.AUTO_WHEN_AVAILABLE},enabled=!test.isRunning);Text("Force Semi-Auto mode")}
                     Text("Public Android call APIs are used. If auto answer/hang-up is unavailable, manually operate the Phone app; state detection and results continue automatically.",style=MaterialTheme.typography.bodySmall)
                     val selectedANumber=phoneBySlot[aSim].orEmpty()
@@ -275,7 +280,7 @@ private fun detectPhoneNumber(context:Context,simSlot:Int):String?{
                 }
                 1->AttemptList(d.attempts)
                 2->EventList(d.events)
-                3->CallMap(d.attempts)
+                3->CallMap(d)
                 else->CallTrend(d.attempts,d.item.highLatencyThresholdMs)
             }
         }
@@ -283,46 +288,81 @@ private fun detectPhoneNumber(context:Context,simSlot:Int):String?{
 }
 @Composable private fun AttemptList(a:List<CallAttemptResult>){LazyColumn(contentPadding=PaddingValues(12.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){items(a,key={it.attemptId}){x->var open by remember(x.attemptId){mutableStateOf(false)};Card(Modifier.fillMaxWidth().clickable{open=!open}){Column(Modifier.padding(10.dp)){Text("#${x.attemptNumber} ${x.direction} · ${x.result}",style=MaterialTheme.typography.titleSmall);Text("Setup ${x.setupLatencyMs?.let{"$it ms"}?:"--"} · ${x.confidence}",style=MaterialTheme.typography.bodySmall);Text("Dial ${x.dialAt?.let(::date)?:"--"} · MT Ring ${x.mtRingingAt?.let(::date)?:"--"}",style=MaterialTheme.typography.bodySmall);Text("MO Connected ${x.moConnectedAt?.let(::date)?:"--"} · MT Connected ${x.mtConnectedAt?.let(::date)?:"--"}",style=MaterialTheme.typography.bodySmall);Text("End ${x.callEndedAt?.let(::date)?:"--"}",style=MaterialTheme.typography.bodySmall);if(x.failureDetail.isNotBlank())Text(x.failureDetail,style=MaterialTheme.typography.bodySmall);if(open)x.snapshots.sortedBy{it.timestampMs}.forEach{s->Text("${s.endpoint} ${s.moment}: ${s.displayRat}/${s.voiceRat}, RSRP ${s.rsrp}, PCI ${s.pci}, ${date(s.timestampMs)}",style=MaterialTheme.typography.bodySmall)}}}}}}
 @Composable private fun EventList(events:List<CallSetupEvent>){LazyColumn(contentPadding=PaddingValues(12.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){items(events){e->Card(Modifier.fillMaxWidth()){Column(Modifier.padding(10.dp)){Text(e.type,style=MaterialTheme.typography.titleSmall);Text("${e.source} · ${e.direction} · ${e.attemptId}",style=MaterialTheme.typography.bodySmall);Text(date(e.timestampMs),style=MaterialTheme.typography.bodySmall);if(e.detail.isNotBlank())Text(e.detail,style=MaterialTheme.typography.bodySmall)}}}}}
-@Composable private fun CallMap(attempts:List<CallAttemptResult>){
-    // Building hundreds/thousands of OSM overlays on every recomposition can block the main thread.
-    // Pre-compute a bounded data set and populate the MapView only once for this detail session.
-    val located=remember(attempts){attempts.flatMap{a->a.snapshots.map{s->a to s}}.filter{it.second.latitude!=null&&it.second.longitude!=null}}
-    if(located.isEmpty()){Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){Text("No valid GPS snapshots")};return}
-    val trackA=remember(located){downsampleGeo(located.filter{it.second.endpoint=="A"}.map{GeoPoint(it.second.latitude!!,it.second.longitude!!)},600)}
-    val trackB=remember(located){downsampleGeo(located.filter{it.second.endpoint=="B"}.map{GeoPoint(it.second.latitude!!,it.second.longitude!!)},600)}
-    val markerData=remember(attempts){attempts.mapNotNull{a->
-        val s=a.snapshots.lastOrNull{it.moment=="FAILURE"&&it.latitude!=null&&it.longitude!=null}
-            ?:a.snapshots.lastOrNull{it.moment=="CONNECTED"&&it.latitude!=null&&it.longitude!=null}
-        s?.let{Triple(a,it,GeoPoint(it.latitude!!,it.longitude!!))}
-    }.takeLast(120)}
-    val boundsPoints=remember(trackA,trackB){(trackA+trackB).let{downsampleGeo(it,500)}}
+@Composable private fun CallMap(detail:CallSetupDetail){
+    // Prefer the continuous Recording trace that automation starts on this DUT.
+    // Older sessions fall back to the sparse call snapshots so existing history stays viewable.
+    val route=remember(detail){
+        detail.networkSamples.filter{it.locationValid&&it.latitude!=null&&it.longitude!=null}.sortedBy{it.timestampMs}
+    }
+    val fallback=remember(detail.attempts){
+        detail.attempts.flatMap{a->a.snapshots.map{s->a to s}}
+            .filter{it.second.latitude!=null&&it.second.longitude!=null}
+            .sortedBy{it.second.timestampMs}
+    }
+    val routePoints=remember(route,fallback){
+        if(route.isNotEmpty()) route.map{GeoPoint(it.latitude!!,it.longitude!!)}
+        else fallback.map{GeoPoint(it.second.latitude!!,it.second.longitude!!)}
+    }
+    if(routePoints.isEmpty()){
+        Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){
+            Text("No valid GPS track. Automated sessions will include the continuous Recording route when GPS is available.")
+        }
+        return
+    }
+    // A failed attempt is painted at the nearest continuous route sample. No large default
+    // osmdroid pin icons are used, so map controls remain unobstructed.
+    val failurePoints=remember(route,detail.attempts,fallback){
+        detail.attempts.filter{it.result!="SUCCESS"}.mapNotNull{a->
+            val t=(a.endedAt.takeIf{it>0}?:a.startedAt)
+            if(route.isNotEmpty()) route.minByOrNull{kotlin.math.abs(it.timestampMs-t)}?.let{GeoPoint(it.latitude!!,it.longitude!!)}
+            else a.snapshots.filter{it.latitude!=null&&it.longitude!=null}.minByOrNull{kotlin.math.abs(it.timestampMs-t)}?.let{GeoPoint(it.latitude!!,it.longitude!!)}
+        }
+    }
     val context=LocalContext.current
-    val map=remember{MapView(context).apply{setMultiTouchControls(true)}}
-    DisposableEffect(map){map.onResume();onDispose{map.onPause();map.onDetach()}}
-    AndroidView(
-        factory={
-            map.apply{
+    val osmTileSource=remember{
+        XYTileSource("OpenStreetMap",0,19,256,".png",arrayOf("https://tile.openstreetmap.org/"),"© OpenStreetMap contributors")
+    }
+    val map=remember(context){MapView(context).apply{
+        setTileSource(osmTileSource);setUseDataConnection(true);setMultiTouchControls(true);minZoomLevel=3.0;maxZoomLevel=19.0
+    }}
+    DisposableEffect(map){map.onResume();onDispose{map.onPause()}}
+    Column(Modifier.fillMaxSize()){
+        Row(Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=7.dp),horizontalArrangement=Arrangement.spacedBy(16.dp),verticalAlignment=Alignment.CenterVertically){
+            Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(5.dp)){Box(Modifier.size(10.dp).background(Color(0xFF1976D2),androidx.compose.foundation.shape.CircleShape));Text("Route (${routePoints.size})",style=MaterialTheme.typography.bodySmall)}
+            Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(5.dp)){Box(Modifier.size(10.dp).background(Color(0xFFD32F2F),androidx.compose.foundation.shape.CircleShape));Text("Call fail (${failurePoints.size})",style=MaterialTheme.typography.bodySmall)}
+        }
+        AndroidView(
+            factory={map.apply{
                 overlays.clear()
-                if(trackA.isNotEmpty())overlays.add(Polyline().apply{setPoints(trackA);outlinePaint.color=android.graphics.Color.BLUE;outlinePaint.strokeWidth=6f})
-                if(trackB.isNotEmpty())overlays.add(Polyline().apply{setPoints(trackB);outlinePaint.color=android.graphics.Color.MAGENTA;outlinePaint.strokeWidth=6f})
-                markerData.forEach{(a,s,p)->overlays.add(Marker(this).apply{position=p;title="${a.result} #${a.attemptNumber}";snippet="${s.endpoint} ${s.displayRat}/${s.voiceRat} RSRP ${s.rsrp}"})}
+                overlays.add(CallTrackDotsOverlay(routePoints,failurePoints))
                 post{
-                    if(boundsPoints.size==1){controller.setCenter(boundsPoints.first());controller.setZoom(17.0)}
-                    else if(boundsPoints.isNotEmpty())zoomToBoundingBox(BoundingBox.fromGeoPoints(boundsPoints),false,80)
+                    val bounds=BoundingBox.fromGeoPoints(routePoints)
+                    if(routePoints.size==1){controller.setCenter(routePoints.first());controller.setZoom(17.0)}
+                    else zoomToBoundingBox(bounds,false,80)
                     invalidate()
                 }
-            }
-        },
-        modifier=Modifier.fillMaxSize(),
-        update={}
-    )
+            }},
+            modifier=Modifier.fillMaxWidth().weight(1f),
+            update={}
+        )
+    }
 }
 
-private fun downsampleGeo(points:List<GeoPoint>,maxPoints:Int):List<GeoPoint>{
-    if(points.size<=maxPoints)return points
-    val step=(points.size-1).toDouble()/(maxPoints-1).coerceAtLeast(1)
-    return List(maxPoints){i->points[(i*step).toInt().coerceIn(0,points.lastIndex)]}
+private class CallTrackDotsOverlay(
+    private val route:List<GeoPoint>,
+    private val failures:List<GeoPoint>
+):Overlay(){
+    private val normalPaint=android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply{color=android.graphics.Color.rgb(25,118,210);style=android.graphics.Paint.Style.FILL}
+    private val failPaint=android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply{color=android.graphics.Color.rgb(211,47,47);style=android.graphics.Paint.Style.FILL}
+    private val p=android.graphics.Point()
+    override fun draw(canvas:android.graphics.Canvas,mapView:MapView,shadow:Boolean){
+        if(shadow)return
+        val projection=mapView.projection
+        route.forEach{g->projection.toPixels(g,p);canvas.drawCircle(p.x.toFloat(),p.y.toFloat(),4f,normalPaint)}
+        failures.forEach{g->projection.toPixels(g,p);canvas.drawCircle(p.x.toFloat(),p.y.toFloat(),9f,failPaint)}
+    }
 }
+
 @Composable private fun CallTrend(a:List<CallAttemptResult>,threshold:Long){val v=a.mapNotNull{it.setupLatencyMs?.toDouble()};if(a.isEmpty()){Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){Text("No attempts")};return};Column(Modifier.padding(16.dp)){Text("Setup latency by attempt",style=MaterialTheme.typography.titleMedium);Text("Blue: success · Red: failure · Orange: high latency threshold",style=MaterialTheme.typography.bodySmall);Canvas(Modifier.fillMaxWidth().height(280.dp).background(MaterialTheme.colorScheme.surfaceVariant)){val top=maxOf(v.maxOrNull()?:1.0,threshold.toDouble(),1.0)*1.15;val thresholdY=size.height-(threshold/top*size.height).toFloat();drawLine(Color(0xFFFF9800),androidx.compose.ui.geometry.Offset(0f,thresholdY),androidx.compose.ui.geometry.Offset(size.width,thresholdY),3f);val n=a.size.coerceAtLeast(2);a.forEachIndexed{i,x->val xx=if(a.size==1)size.width/2 else i.toFloat()/(n-1)*size.width;val y=x.setupLatencyMs?.let{size.height-(it/top*size.height).toFloat()};if(y==null)drawCircle(Color.Red,7f,androidx.compose.ui.geometry.Offset(xx,size.height-8))else drawCircle(if(x.result=="SUCCESS")Color.Blue else Color.Red,7f,androidx.compose.ui.geometry.Offset(xx,y))}}}}
 
 @Composable private fun CCard(title:String,content:@Composable ColumnScope.()->Unit){Card(Modifier.fillMaxWidth()){Column(Modifier.padding(14.dp),verticalArrangement=Arrangement.spacedBy(7.dp)){Text(title,style=MaterialTheme.typography.titleMedium);content()}}}

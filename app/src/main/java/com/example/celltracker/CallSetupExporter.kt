@@ -17,10 +17,11 @@ object CallSetupExporter {
         val base=dir.name
         val combinedCsv=buildCombinedCsv(detail)
         val csvName="${base}_attempts_and_snapshots.csv";val csv=save(context,csvName,"text/csv",combinedCsv.toByteArray()).toString()
+        val networkCsv=detail.item.recordingPath?.let{rp->File(rp).takeIf{it.exists()}?.let{f->save(context,"${base}_network_recording.csv","text/csv",f.readBytes()).toString()}}
         val htmlName="${base}_report.html";val html=save(context,htmlName,"text/html",buildHtml(detail).toByteArray()).toString()
         val xlsxName="${base}_report.xlsx";val xlsx=save(context,xlsxName,"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",buildXlsx(dir,detail)).toString()
         val kmlName="${base}_track.kml";val kml=save(context,kmlName,"application/vnd.google-earth.kml+xml",buildKml(detail).toByteArray()).toString()
-        return ExportResult("Call Setup report exported · HTML Report + Excel + CSV + KML",listOf(csv),html,htmlName,xlsx,xlsxName,kml,kmlName)
+        return ExportResult("Call Setup report exported · HTML Report + Excel + CSV + KML",listOfNotNull(csv,networkCsv),html,htmlName,xlsx,xlsxName,kml,kmlName)
     }
 
     private fun buildCombinedCsv(d:CallSetupDetail)=buildString {
@@ -82,6 +83,7 @@ object CallSetupExporter {
             append(metric("P50 / P90 / P95","${l(pct(.5))} / ${l(pct(.9))} / ${l(pct(.95))}"))
             append(metric("High Latency Events",d.events.count{it.type=="HIGH_CALL_SETUP_LATENCY"}.toString()))
             append(metric("Timeout Events",d.events.count{it.type=="CALL_SETUP_TIMEOUT"}.toString()))
+            append(metric("Network Recording",if(d.networkSamples.isNotEmpty())"${d.networkSamples.size} samples" else "Not available"))
             append("</div></div>")
 
             append("<div class='card'><div class='section'>Attempts</div><div class='tablewrap'><table><tr><th>#</th><th>Direction</th><th>Result</th><th>Setup</th><th>Confidence</th><th>Detail</th></tr>")
@@ -109,7 +111,10 @@ object CallSetupExporter {
             val isMo=(a.direction=="A_TO_B"&&s.endpoint=="A")||(a.direction=="B_TO_A"&&s.endpoint=="B")
             (if(isMo)mo else mt).add(snapshotRow(a.attemptId,s))
         } }
-        return PingExporter.simpleXlsx(listOf("Summary" to summary,"Attempts" to rows("attempts.csv"),"MO Snapshots" to mo,"MT Snapshots" to mt,"Events" to rows("events.csv")))
+        val networkRows=d.item.recordingPath?.let{rp->File(rp).takeIf{it.exists()}?.readLines()?.filter{it.isNotBlank()}?.map(CallSetupRepository::parseCsv)}?:emptyList()
+        val sheets=mutableListOf("Summary" to summary,"Attempts" to rows("attempts.csv"),"MO Snapshots" to mo,"MT Snapshots" to mt,"Events" to rows("events.csv"))
+        if(networkRows.isNotEmpty()) sheets.add("Network Recording" to networkRows)
+        return PingExporter.simpleXlsx(sheets)
     }
 
     private fun buildKml(d:CallSetupDetail):String {

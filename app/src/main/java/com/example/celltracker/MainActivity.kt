@@ -2140,6 +2140,8 @@ private fun SettingsScreen(settings: AppSettings, onUpdate: (AppSettings) -> Uni
                     SettingSwitch("Auto show while recording", draft.floatingAutoShowDuringRecording) { applySetting(draft.copy(floatingAutoShowDuringRecording = it)) }
                     SettingSwitch("Keep floating window when not recording", draft.floatingKeepWhenStopped) { applySetting(draft.copy(floatingKeepWhenStopped = it)) }
                     Text("When enabled, the overlay stays available after Stop so the next recording can be started without reopening CellTracker.", style = MaterialTheme.typography.bodySmall)
+                    SettingSwitch("Show MARK / STOP during automated tests", draft.floatingAutomationManualControls) { applySetting(draft.copy(floatingAutomationManualControls = it)) }
+                    Text("Off prevents accidental manual marks or stopping the network recording while Ping/Call Setup automation owns it. The live overlay remains visible.", style = MaterialTheme.typography.bodySmall)
                     HorizontalDivider()
                     Text("Opacity  ${(draft.floatingOpacity * 100).toInt()}%", style = MaterialTheme.typography.titleMedium)
                     Slider(

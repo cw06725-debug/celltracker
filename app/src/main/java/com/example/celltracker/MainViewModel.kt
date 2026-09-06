@@ -411,6 +411,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun startCallSetup(config: CallSetupConfig) {
+        // Automated Call Setup always owns a network recording on both DUTs.
+        // This gives the report a continuous 1 s (or configured interval) radio/GPS trace
+        // without requiring the tester to start Recording manually.
+        val config = config.copy(autoRecord = true)
         callRepository.saveConfig(config)
         val app = getApplication<Application>()
         ContextCompat.startForegroundService(app, Intent(app, DeviceLinkService::class.java).apply {

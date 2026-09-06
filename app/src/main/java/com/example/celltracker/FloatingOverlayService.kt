@@ -211,12 +211,15 @@ class FloatingOverlayService : Service() {
     }
 
     private fun updateControls(isRecording: Boolean) {
+        val settings = settingsRepository.load()
+        val automationActive = getSharedPreferences("celltracker_automation", MODE_PRIVATE).getBoolean("recording_owned", false)
+        val allowRecordingControls = !automationActive || settings.floatingAutomationManualControls
         if (compact) {
             controlsRow.visibility = View.GONE
             startButton.visibility = View.GONE
             return
         }
-        controlsRow.visibility = if (isRecording) View.VISIBLE else View.GONE
+        controlsRow.visibility = if (isRecording && allowRecordingControls) View.VISIBLE else View.GONE
         startButton.visibility = if (isRecording) View.GONE else View.VISIBLE
     }
 

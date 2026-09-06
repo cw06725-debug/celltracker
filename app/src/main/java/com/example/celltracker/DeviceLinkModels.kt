@@ -146,14 +146,15 @@ data class CallSetupHistoryItem(
     val p90Ms: Double?,
     val p95Ms: Double?,
     val highLatencyThresholdMs: Long,
-    val status: String
+    val status: String,
+    val recordingPath: String? = null
 ) {
     val failure: Int get() = (attempts - success).coerceAtLeast(0)
     val successRate: Double get() = if (attempts == 0) 0.0 else success * 100.0 / attempts
 }
 
 data class CallSetupEvent(val timestampMs:Long,val source:String,val type:String,val attemptId:String,val direction:String,val detail:String)
-data class CallSetupDetail(val item: CallSetupHistoryItem, val attempts: List<CallAttemptResult>, val events: List<CallSetupEvent> = emptyList())
+data class CallSetupDetail(val item: CallSetupHistoryItem, val attempts: List<CallAttemptResult>, val events: List<CallSetupEvent> = emptyList(), val networkSamples: List<TrackSample> = emptyList())
 
 data class CallSetupTestState(
     val isRunning: Boolean = false,
