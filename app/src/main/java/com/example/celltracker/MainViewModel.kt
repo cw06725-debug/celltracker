@@ -51,7 +51,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             pingHistory = pingRepository.loadHistory(),
             callSetup = DeviceLinkStore.callTest.value.let { if (it.isRunning || it.attempts.isNotEmpty()) it else CallSetupTestState(config = callRepository.loadConfig()) },
             deviceLink = initialDeviceLink,
-            callHistory = callRepository.loadHistory()
+            callHistory = emptyList()
         )
     )
     val state: StateFlow<AppState> = _state.asStateFlow()
@@ -118,15 +118,27 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             var wasRunning = DeviceLinkStore.callTest.value.isRunning
             DeviceLinkStore.callTest.collect { test ->
                 _state.value = _state.value.copy(callSetup = test)
-                if (wasRunning && !test.isRunning) { delay(150); _state.value = _state.value.copy(callHistory = callRepository.loadHistory()) }
+                if (wasRunning && !test.isRunning) {
+                    delay(150)
+                    val history = withContext(Dispatchers.IO) { callRepository.loadHistory() }
+                    _state.value = _state.value.copy(callHistory = history)
+                }
                 wasRunning = test.isRunning
             }
         }
-        _state.value = _state.value.copy(
-            latestRecordingPath = latestPathFromPrefs(),
-            recordings = loadRecordings(),
-            pingHistory = pingRepository.loadHistory()
-        )
+        viewModelScope.launch(Dispatchers.IO) {
+            val recordings = loadRecordings()
+            val pingHistory = pingRepository.loadHistory()
+            val callHistory = callRepository.loadHistory()
+            withContext(Dispatchers.Main) {
+                _state.value = _state.value.copy(
+                    latestRecordingPath = latestPathFromPrefs(),
+                    recordings = recordings,
+                    pingHistory = pingHistory,
+                    callHistory = callHistory
+                )
+            }
+        }
     }
 
     private fun restartCellLoop() {
@@ -459,12 +471,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun refreshRecordings() {
-        _state.value = _state.value.copy(
-            recordings = loadRecordings(),
-            latestRecordingPath = latestPathFromPrefs(),
-            pingHistory = pingRepository.loadHistory(),
-            callHistory = callRepository.loadHistory()
-        )
+        viewModelScope.launch {
+            val recordings = withContext(Dispatchers.IO) { loadRecordings() }
+            val pingHistory = withContext(Dispatchers.IO) { pingRepository.loadHistory() }
+            val callHistory = withContext(Dispatchers.IO) { callRepository.loadHistory() }
+            _state.value = _state.value.copy(
+                recordings = recordings,
+                latestRecordingPath = latestPathFromPrefs(),
+                pingHistory = pingHistory,
+                callHistory = callHistory
+            )
+        }
     }
 
     private fun recordingsDir() = File(getApplication<Application>().getExternalFilesDir(null), "recordings").apply { mkdirs() }

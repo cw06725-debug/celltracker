@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.Context
 import android.content.pm.PackageManager
 import android.telephony.SubscriptionManager
+import android.telephony.TelephonyManager
 import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -148,11 +149,23 @@ fun CallSetupScreen(
                         Button(onClick={onLinkAction(DeviceLinkService.ACTION_DISCOVER,"")},enabled=!test.isRunning&&link.status!=DeviceLinkStatus.CONNECTED){Text(if(link.discoveryActive)"Scan again" else "Scan")}
                     }
                 }else{
-                    Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
-                        Button(onClick={onLinkAction(DeviceLinkService.ACTION_CONTROLLER,"")},enabled=!test.isRunning){Text("Switch to Controller")}
-                        OutlinedButton(onClick={discoverableLauncher.launch(Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE).putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION,300))},enabled=!test.isRunning){Text("Make Discoverable")}
+                    Column(verticalArrangement=Arrangement.spacedBy(8.dp)){
+                        Button(
+                            onClick={onLinkAction(DeviceLinkService.ACTION_CONTROLLER,"")},
+                            enabled=!test.isRunning,
+                            modifier=Modifier.fillMaxWidth()
+                        ){Text("Switch to Controller")}
+                        OutlinedButton(
+                            onClick={discoverableLauncher.launch(Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE).putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION,300))},
+                            enabled=!test.isRunning,
+                            modifier=Modifier.fillMaxWidth()
+                        ){Text("Make Discoverable")}
                     }
-                    Text(if(link.discoverable)"Agent is discoverable and waiting for Controller." else "Agent RFCOMM server is waiting. Tap Make Discoverable so a new Controller can find this phone.",style=MaterialTheme.typography.bodySmall)
+                    Text(
+                        if(link.discoverable) "Agent is discoverable and waiting for Controller."
+                        else "Agent RFCOMM server is waiting. Tap Make Discoverable; Android will show a system confirmation dialog for discoverability.",
+                        style=MaterialTheme.typography.bodySmall
+                    )
                 }
                 if(link.status==DeviceLinkStatus.CONNECTED)Button(onClick={onLinkAction(DeviceLinkService.ACTION_DISCONNECT,"")},enabled=!test.isRunning){Text("Disconnect")}
             }}
@@ -208,11 +221,18 @@ private fun detectPhoneNumber(context:Context,simSlot:Int):String?{
     if(!readGranted)return null
     return runCatching{
         val sm=context.getSystemService(SubscriptionManager::class.java)
+        @Suppress("MissingPermission")
         val info=sm.activeSubscriptionInfoList?.firstOrNull{it.simSlotIndex==simSlot}?:return@runCatching null
-        val value=if(Build.VERSION.SDK_INT>=33)sm.getPhoneNumber(info.subscriptionId) else info.number
-        value?.trim()?.takeIf{it.isNotBlank()}
+        val tm=context.getSystemService(TelephonyManager::class.java).createForSubscriptionId(info.subscriptionId)
+        val candidates=buildList<String?>{
+            if(Build.VERSION.SDK_INT>=33) add(runCatching{sm.getPhoneNumber(info.subscriptionId)}.getOrNull())
+            @Suppress("DEPRECATION") add(runCatching{info.number}.getOrNull())
+            @Suppress("DEPRECATION") add(runCatching{tm.line1Number}.getOrNull())
+        }
+        candidates.asSequence().mapNotNull{it?.trim()}.firstOrNull{it.isNotBlank()}
     }.getOrNull()
 }
+
 
 @Composable private fun DeviceRow(d:BluetoothPeer,onConnect:()->Unit,onPair:(()->Unit)?,enabled:Boolean){Card(Modifier.fillMaxWidth()){Row(Modifier.padding(12.dp).fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text(d.name);Text(d.address,style=MaterialTheme.typography.bodySmall)};if(onPair!=null)OutlinedButton(onClick=onPair,enabled=enabled){Text("Pair")};Spacer(Modifier.width(6.dp));Button(onClick=onConnect,enabled=enabled&&d.bonded){Text("Connect")}}}}
 @Composable private fun AgentPanel(link:DeviceLinkState,test:CallSetupTestState,onStop:()->Unit){CCard("Agent status"){CField("Controller",link.peerProfile?.deviceName?:"--");CField("Session",test.sessionId.ifBlank{"--"});CField("Direction",test.currentDirection);CField("Role",test.localRole);CField("Attempt",test.currentAttempt.toString());CField("Call State",test.localCallState);CField("RAT / Voice RAT",test.localSnapshot?.let{"${it.displayRat} / ${it.voiceRat}"}?:"--");CField("Signal",test.localSnapshot?.rsrp?:"--");if(test.isRunning)Button(onClick=onStop,colors=ButtonDefaults.buttonColors(containerColor=MaterialTheme.colorScheme.error)){Text("EMERGENCY STOP TEST")}}}

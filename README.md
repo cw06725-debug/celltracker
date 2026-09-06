@@ -105,3 +105,9 @@ Version: 0.9.0.1 (versionCode 44)
 - Agent RFCOMM listener + discoverability flow; Controller paired/nearby device UI and explicit Scan/Pair/Connect flow.
 - Expanded Device Link states and permission/Bluetooth/discovery/discoverability diagnostics.
 - Android 13+ discovery receiver exported for Bluetooth framework broadcasts.
+
+## v0.9.0.3
+- Device Link Agent controls use full-width buttons so labels do not wrap/crowd around the Android discoverability confirmation dialog.
+- Phone number Auto Detect now tries SubscriptionManager.getPhoneNumber, SubscriptionInfo.number, and per-subscription TelephonyManager.line1Number. Manual entry remains the fallback when the OEM/carrier does not expose a line number through public APIs.
+- MT auto-answer retries TelecomManager.acceptRingingCall over a short bounded window because some OEM dialers announce RINGING before Telecom is ready. The UI reports when the public API is blocked and manual answer is required.
+- Call Setup history loading moved off the main/UI thread, including initial load, refresh, and post-test refresh, to avoid ANR on sessions with larger CSV files.

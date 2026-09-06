@@ -439,7 +439,9 @@ class DeviceLinkService : Service() {
         when(state){
             TelephonyManager.CALL_STATE_RINGING->{
                 ringingSeen=true;scope.launch{captureAndSend("MT_RINGING")};send("RINGING",payload=mapOf("elapsed" to SystemClock.elapsedRealtime().toString()))
-                if(endpointRole=="MT"&&sessionConfig.automationMode==AutomationMode.AUTO_WHEN_AVAILABLE&&!answerCall())DeviceLinkStore.callTest.value=DeviceLinkStore.callTest.value.copy(statusMessage="Ringing · please answer manually")
+                if(endpointRole=="MT"&&sessionConfig.automationMode==AutomationMode.AUTO_WHEN_AVAILABLE){
+                    scope.launch { attemptAutoAnswer() }
+                }
             }
             TelephonyManager.CALL_STATE_OFFHOOK->{
                 hadActiveCall=true
@@ -473,7 +475,34 @@ class DeviceLinkService : Service() {
         }.getOrDefault(false)
     }
 
-    @Suppress("DEPRECATION") private fun answerCall():Boolean=if(ContextCompat.checkSelfPermission(this,Manifest.permission.ANSWER_PHONE_CALLS)==PackageManager.PERMISSION_GRANTED)runCatching{getSystemService(TelecomManager::class.java).acceptRingingCall();true}.getOrDefault(false)else false
+    @Suppress("DEPRECATION")
+    private fun answerCall():Boolean = if(ContextCompat.checkSelfPermission(this,Manifest.permission.ANSWER_PHONE_CALLS)==PackageManager.PERMISSION_GRANTED){
+        runCatching{ getSystemService(TelecomManager::class.java).acceptRingingCall(); true }.getOrDefault(false)
+    } else false
+
+    private suspend fun attemptAutoAnswer(){
+        if(ContextCompat.checkSelfPermission(this,Manifest.permission.ANSWER_PHONE_CALLS)!=PackageManager.PERMISSION_GRANTED){
+            DeviceLinkStore.callTest.value=DeviceLinkStore.callTest.value.copy(statusMessage="Ringing · ANSWER_PHONE_CALLS permission missing")
+            return
+        }
+        // Some OEM dialers report RINGING slightly before Telecom is ready to accept the call.
+        // Retry the public Telecom API for a short bounded window instead of failing on the first callback.
+        val delays=listOf(0L,250L,500L,900L,1400L)
+        for(waitMs in delays){
+            if(waitMs>0) delay(waitMs)
+            if(localCallState!="RINGING") return
+            val requested=answerCall()
+            if(requested){
+                DeviceLinkStore.callTest.value=DeviceLinkStore.callTest.value.copy(statusMessage="Ringing · auto-answer requested")
+                val connected=withTimeoutOrNull(1200L){ while(localCallState=="RINGING") delay(100L); localCallState=="OFFHOOK" } == true
+                if(connected) return
+            }
+        }
+        if(localCallState=="RINGING") DeviceLinkStore.callTest.value=DeviceLinkStore.callTest.value.copy(
+            statusMessage="Ringing · public auto-answer blocked by phone app/OEM; answer manually"
+        )
+    }
+
     @Suppress("DEPRECATION") private fun endCall():Boolean=if(ContextCompat.checkSelfPermission(this,Manifest.permission.ANSWER_PHONE_CALLS)==PackageManager.PERMISSION_GRANTED)runCatching{getSystemService(TelecomManager::class.java).endCall()}.getOrDefault(false)else false
 
     private suspend fun captureSnapshot(endpoint:String,moment:String,subscriptionId:Int):CallNetworkSnapshot {
