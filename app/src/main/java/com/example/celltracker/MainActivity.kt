@@ -1593,6 +1593,7 @@ private fun OsmTrackMap(
 
 @Composable
 private fun RecordingSamples(samples: List<TrackSample>, onMarkerClick: (TrackSample) -> Unit) {
+    val context = LocalContext.current
     if (samples.isEmpty()) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("No samples") }
         return
@@ -1614,7 +1615,7 @@ private fun RecordingSamples(samples: List<TrackSample>, onMarkerClick: (TrackSa
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             AssistChip(onClick = { onMarkerClick(s) }, label = { Text("${s.eventSource.ifBlank { "MANUAL" }} · ${if (s.eventType.isBlank()) "Marker" else s.eventType} · Map") })
                             if (s.screenshot.isNotBlank()) {
-                                AssistChip(onClick = { openLocalScreenshot(LocalContext.current, s.screenshot) }, label = { Text("Open screenshot") })
+                                AssistChip(onClick = { openLocalScreenshot(context, s.screenshot) }, label = { Text("Open screenshot") })
                             }
                         }
                     }
