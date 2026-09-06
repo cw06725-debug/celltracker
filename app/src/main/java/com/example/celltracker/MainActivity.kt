@@ -36,6 +36,7 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -198,7 +199,8 @@ class MainActivity : ComponentActivity() {
                         onBack = { showPingTest = false },
                         onStart = vm::startPingTest,
                         onStop = vm::stopPingTest,
-                        onClear = vm::clearPingResults
+                        onClear = vm::clearPingResults,
+                        onExport = { vm.exportLatestCsv(CsvExportMode.COMBINED) }
                     )
                     RootDestination.Settings -> SettingsScreen(
                         settings = state.settings,
@@ -442,15 +444,20 @@ private fun MainScreen(
             }
 
             InfoCard("Automated Tests") {
-                Text("Ping Test", style = MaterialTheme.typography.titleSmall)
-                Text("Single-DUT latency, success rate and packet loss with automatic issue markers.", style = MaterialTheme.typography.bodySmall)
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    item { FilterChip(selected = true, onClick = onPingTest, label = { Text("Ping") }) }
+                    item { FilterChip(selected = false, onClick = {}, enabled = false, label = { Text("VoLTE Setup") }) }
+                    item { FilterChip(selected = false, onClick = {}, enabled = false, label = { Text("VoLTE Long Call") }) }
+                    item { FilterChip(selected = false, onClick = {}, enabled = false, label = { Text("Video") }) }
+                    item { FilterChip(selected = false, onClick = {}, enabled = false, label = { Text("WhatsApp") }) }
+                }
+                Text("Ping is available now. Other automated test modules are reserved for the next stages.", style = MaterialTheme.typography.bodySmall)
                 if (state.pingTest.completed > 0 || state.pingTest.isRunning) {
                     Field("Status", state.pingTest.statusMessage)
                     Field("Progress", "${state.pingTest.completed} / ${state.pingTest.config.count}")
                     Field("Success", String.format(Locale.US, "%.1f%%", state.pingTest.successRate))
                     Field("Avg latency", state.pingTest.averageLatencyMs?.let { String.format(Locale.US, "%.1f ms", it) } ?: "--")
                 }
-                Button(onClick = onPingTest) { Text(if (state.pingTest.isRunning) "Open Ping Test" else "Configure Ping Test") }
             }
 
             InfoCard("Recording") {
@@ -622,7 +629,8 @@ private fun PingTestScreen(
     onBack: () -> Unit,
     onStart: (PingTestConfig) -> Unit,
     onStop: () -> Unit,
-    onClear: () -> Unit
+    onClear: () -> Unit,
+    onExport: () -> Unit
 ) {
     var host by remember(state.isRunning) { mutableStateOf(state.config.host) }
     var count by remember(state.isRunning) { mutableStateOf(state.config.count.toString()) }
@@ -751,7 +759,10 @@ private fun PingTestScreen(
                             }
                         ) { Text("Start Ping Test") }
                         if (!state.resultPath.isNullOrBlank() && state.samples.isNotEmpty()) {
-                            OutlinedButton(onClick = { shareLocalFile(context, state.resultPath, "text/csv", "Share Ping result") }) { Text("Share Ping CSV") }
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(onClick = onExport) { Text("Export Session") }
+                                OutlinedButton(onClick = { shareLocalFile(context, state.resultPath, "text/csv", "Share Ping result") }) { Text("Share Ping CSV") }
+                            }
                         }
                     }
                     Text("High latency creates AUTO/HIGH_PING markers. Three consecutive failures create an AUTO/PING_TIMEOUT marker.", style = MaterialTheme.typography.bodySmall)
@@ -797,6 +808,7 @@ private fun ExportSuccessDialog(
                 Text("Saved to Downloads/CellTracker", style = MaterialTheme.typography.bodyMedium)
                 result.excelName?.let { Text("Excel: $it", style = MaterialTheme.typography.bodySmall) }
                 result.kmlName?.let { Text("KML: $it", style = MaterialTheme.typography.bodySmall) }
+                result.pingName?.let { Text("Ping: $it", style = MaterialTheme.typography.bodySmall) }
                 if (result.screenshotNames.isNotEmpty()) Text("Screenshots: ${result.screenshotNames.size}", style = MaterialTheme.typography.bodySmall)
             }
         },
@@ -827,7 +839,7 @@ private fun openExportedFile(context: android.content.Context, uriString: String
 }
 
 private fun shareExportedFiles(context: android.content.Context, result: ExportResult) {
-    val uris = (result.exportedFileUris + listOfNotNull(result.summaryUri, result.excelUri, result.kmlUri) + result.screenshotUris).distinct().map { Uri.parse(it) }
+    val uris = (result.exportedFileUris + listOfNotNull(result.summaryUri, result.excelUri, result.kmlUri, result.pingUri) + result.screenshotUris).distinct().map { Uri.parse(it) }
     if (uris.isEmpty()) return
     val intent = if (uris.size == 1) {
         Intent(Intent.ACTION_SEND).apply { type = "*/*"; putExtra(Intent.EXTRA_STREAM, uris.first()) }
@@ -1260,6 +1272,23 @@ private fun RecordingSummary(item: RecordingItem, samples: List<TrackSample>, on
             Field("Samples", samples.size.toString())
             Field("GPS samples", "$validLocation / ${samples.size}")
             Field("Screenshots", samples.count { it.isMarker && it.screenshot.isNotBlank() }.toString())
+        }
+        val pingFile = remember(item.path) { File(File(item.path).parentFile, File(item.path).nameWithoutExtension + "_ping.csv") }
+        if (pingFile.exists()) {
+            val pingRows = remember(item.path, pingFile.lastModified()) { pingFile.readLines().drop(1).filter { it.isNotBlank() }.map { parseUiCsvLine(it) } }
+            if (pingRows.isNotEmpty()) {
+                val success = pingRows.count { it.getOrNull(3).equals("true", true) }
+                val latencies = pingRows.mapNotNull { it.getOrNull(4)?.toDoubleOrNull() }.sorted()
+                fun pct(p: Double): String = if (latencies.isEmpty()) "--" else String.format(Locale.US, "%.1f ms", latencies[kotlin.math.ceil((latencies.size - 1) * p).toInt().coerceIn(0, latencies.lastIndex)])
+                InfoCard("Ping Test Summary") {
+                    Field("Target", pingRows.firstOrNull()?.getOrNull(2).orEmpty())
+                    Field("Attempts", pingRows.size.toString())
+                    Field("Success", "$success / ${pingRows.size}")
+                    Field("Packet loss", String.format(Locale.US, "%.1f%%", (pingRows.size - success) * 100.0 / pingRows.size))
+                    Field("Average", if (latencies.isEmpty()) "--" else String.format(Locale.US, "%.1f ms", latencies.average()))
+                    Field("P50 / P90 / P95", "${pct(.50)} / ${pct(.90)} / ${pct(.95)}")
+                }
+            }
         }
         InfoCard("Track") {
             Field("Start", if (first?.locationValid == true) "${formatCoord(first.latitude)}, ${formatCoord(first.longitude)}" else "--")
@@ -2115,4 +2144,23 @@ private fun valueWithUnit(value: String, unit: String): String = if (value == "-
 private fun formatElapsed(ms: Long): String {
     val total = ms / 1000; val h = total / 3600; val m = (total % 3600) / 60; val s = total % 60
     return String.format(Locale.US, "%02d:%02d:%02d", h, m, s)
+}
+
+private fun parseUiCsvLine(line: String): List<String> {
+    val out = mutableListOf<String>()
+    val cur = StringBuilder()
+    var quoted = false
+    var i = 0
+    while (i < line.length) {
+        val ch = line[i]
+        when {
+            ch == '"' && quoted && i + 1 < line.length && line[i + 1] == '"' -> { cur.append('"'); i++ }
+            ch == '"' -> quoted = !quoted
+            ch == ',' && !quoted -> { out += cur.toString(); cur.clear() }
+            else -> cur.append(ch)
+        }
+        i++
+    }
+    out += cur.toString()
+    return out
 }

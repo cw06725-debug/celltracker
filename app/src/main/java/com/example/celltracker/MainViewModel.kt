@@ -255,7 +255,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             highLatencyThresholdMs = config.highLatencyThresholdMs.coerceIn(1.0, 60_000.0)
         )
         val shouldAutoRecord = safeConfig.autoRecord && !_state.value.isRecording
-        val pingResultFile = createPingResultFile(host)
+        var pingResultFile = createPingResultFile(host)
         _state.value = _state.value.copy(
             pingTest = PingTestState(
                 isRunning = true,
@@ -269,7 +269,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             if (shouldAutoRecord) {
                 val taskHost = host.replace(Regex("[^A-Za-z0-9._-]"), "_").take(28)
                 startRecording("Ping_$taskHost")
-                delay(700L)
+                // Wait for RecordingService to publish the session path, then bind Ping results
+                // to that recording using a deterministic sidecar name.
+                repeat(20) {
+                    if (_state.value.latestRecordingPath != null && _state.value.isRecording) return@repeat
+                    delay(100L)
+                }
+            }
+            val recordingPath = _state.value.latestRecordingPath?.takeIf { _state.value.isRecording }
+            if (recordingPath != null) {
+                val recordingFile = File(recordingPath)
+                val sidecar = File(recordingFile.parentFile, recordingFile.nameWithoutExtension + "_ping.csv")
+                initializePingResultFile(sidecar)
+                pingResultFile = sidecar
+                val currentPing = _state.value.pingTest
+                _state.value = _state.value.copy(pingTest = currentPing.copy(resultPath = sidecar.absolutePath))
             }
             var consecutiveFailures = 0
             try {
@@ -351,9 +365,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val dir = File(getApplication<Application>().getExternalFilesDir(null), "ping_results").apply { mkdirs() }
         val safeHost = host.replace(Regex("[^A-Za-z0-9._-]"), "_").take(32).ifBlank { "target" }
         val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-        return File(dir, "Ping_${safeHost}_$stamp.csv").apply {
-            writeText("sequence,timestamp,host,success,latency_ms,message,data_network,sim_slot,operator,rat,rsrp,rsrq,sinr,band,pci\n")
-        }
+        return File(dir, "Ping_${safeHost}_$stamp.csv").apply { initializePingResultFile(this) }
+    }
+
+    private fun initializePingResultFile(file: File) {
+        file.parentFile?.mkdirs()
+        file.writeText("sequence,timestamp,host,success,latency_ms,message,data_network,sim_slot,operator,rat,rsrp,rsrq,sinr,band,pci\n")
     }
 
     private fun appendPingResult(file: File, host: String, sample: PingSample) {
@@ -415,7 +432,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun formatPingLatency(value: Double?): String = if (value == null) "--" else String.format(Locale.US, "%.1f ms", value)
 
     fun deleteRecording(path: String) {
-        File(path).delete()
+        val recordingFile = File(path)
+        File(recordingFile.parentFile, recordingFile.nameWithoutExtension + "_ping.csv").delete()
+        recordingFile.delete()
         if (latestPathFromPrefs() == path) getApplication<Application>().getSharedPreferences("celltracker_recording", Application.MODE_PRIVATE).edit().remove("latest_path").apply()
         _state.value = _state.value.copy(recordings = loadRecordings(), latestRecordingPath = latestPathFromPrefs(), exportResult = null)
     }
@@ -452,7 +471,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun recordingsDir() = File(getApplication<Application>().getExternalFilesDir(null), "recordings").apply { mkdirs() }
 
-    private fun loadRecordings(): List<RecordingItem> = recordingsDir().listFiles { f -> f.extension.equals("csv", true) }?.mapNotNull { f ->
+    private fun loadRecordings(): List<RecordingItem> = recordingsDir().listFiles { f -> f.extension.equals("csv", true) && !f.name.endsWith("_ping.csv", true) }?.mapNotNull { f ->
         try {
             val lines=f.readLines().filter { it.isNotBlank() }; if(lines.size<2) return@mapNotNull null
             val rows=lines.drop(1); val first=rows.first().split(','); val last=rows.last().split(',')
