@@ -8,7 +8,6 @@ import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
-import android.provider.DocumentsContract
 import android.widget.Toast
 import android.preference.PreferenceManager
 import androidx.activity.ComponentActivity
@@ -497,19 +496,18 @@ private fun ExportSuccessDialog(
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(result.message)
                 Text("Saved to Downloads/CellTracker", style = MaterialTheme.typography.bodyMedium)
-                result.summaryName?.let {
-                    Text("Summary: $it", style = MaterialTheme.typography.bodySmall)
-                }
+                result.excelName?.let { Text("Excel: $it", style = MaterialTheme.typography.bodySmall) }
             }
         },
         confirmButton = {
-            TextButton(onClick = {
-                result.primaryFileUri?.let { openExportedFile(context, it, result.primaryMimeType) }
-            }) { Text("Open file") }
+            Row {
+                TextButton(onClick = { result.summaryUri?.let { openExportedFile(context, it, "text/html") } }) { Text("Open Summary") }
+                TextButton(onClick = { result.excelUri?.let { openExportedFile(context, it, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") } }) { Text("Open Excel") }
+            }
         },
         dismissButton = {
             Row {
-                TextButton(onClick = { openExportFolder(context) }) { Text("Open folder") }
+                TextButton(onClick = { shareExportedFiles(context, result) }) { Text("Share") }
                 TextButton(onClick = onDismiss) { Text("Close") }
             }
         }
@@ -520,44 +518,23 @@ private fun openExportedFile(context: android.content.Context, uriString: String
     val uri = Uri.parse(uriString)
     val intent = Intent(Intent.ACTION_VIEW).apply {
         setDataAndType(uri, mimeType)
-        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
     }
-    try {
-        context.startActivity(intent)
-    } catch (_: ActivityNotFoundException) {
-        Toast.makeText(context, "No app can open this file", Toast.LENGTH_SHORT).show()
-    } catch (_: Exception) {
-        Toast.makeText(context, "Unable to open exported file", Toast.LENGTH_SHORT).show()
-    }
+    try { context.startActivity(intent) }
+    catch (_: ActivityNotFoundException) { Toast.makeText(context, "No app can open this file", Toast.LENGTH_SHORT).show() }
+    catch (_: Exception) { Toast.makeText(context, "Unable to open exported file", Toast.LENGTH_SHORT).show() }
 }
 
-private fun openExportFolder(context: android.content.Context) {
-    val folderUri = runCatching {
-        DocumentsContract.buildDocumentUri(
-            "com.android.externalstorage.documents",
-            "primary:Download/CellTracker"
-        )
-    }.getOrNull()
-    val downloadsRoot = runCatching {
-        DocumentsContract.buildRootUri("com.android.externalstorage.documents", "primary")
-    }.getOrNull()
-
-    val candidates = listOfNotNull(folderUri, downloadsRoot)
-    for (uri in candidates) {
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-            data = uri
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        try {
-            context.startActivity(intent)
-            return
-        } catch (_: Exception) {
-            // Try the next file-manager destination.
-        }
-    }
-    Toast.makeText(context, "Open Downloads/CellTracker in your file manager", Toast.LENGTH_LONG).show()
+private fun shareExportedFiles(context: android.content.Context, result: ExportResult) {
+    val uris = (result.exportedFileUris + listOfNotNull(result.summaryUri, result.excelUri)).distinct().map { Uri.parse(it) }
+    if (uris.isEmpty()) return
+    val intent = if (uris.size == 1) {
+        Intent(Intent.ACTION_SEND).apply { type = "*/*"; putExtra(Intent.EXTRA_STREAM, uris.first()) }
+    } else {
+        Intent(Intent.ACTION_SEND_MULTIPLE).apply { type = "*/*"; putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(uris)) }
+    }.apply { addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK) }
+    runCatching { context.startActivity(Intent.createChooser(intent, "Share CellTracker export").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+        .onFailure { Toast.makeText(context, "Unable to share exported files", Toast.LENGTH_SHORT).show() }
 }
 
 @Composable
