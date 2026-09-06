@@ -464,39 +464,55 @@ private fun MarkIssueDialog(
     onDismiss: () -> Unit,
     onSave: (String, String) -> Unit
 ) {
-    val options = issueTypes.ifEmpty { listOf("General") }
+    // AlertDialog may measure its text slot with loose/intrinsic constraints on
+    // some Compose/device combinations. A verticallyScroll() Column here could
+    // therefore crash as soon as the dialog was shown. Keep the dialog content
+    // inside a bounded LazyColumn instead.
+    val options = remember(issueTypes) {
+        issueTypes.map { it.trim() }.filter { it.isNotEmpty() }.distinct().ifEmpty { listOf("General") }
+    }
     var selected by remember(options) { mutableStateOf(options.first()) }
     var note by remember { mutableStateOf("") }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Mark issue") },
         text = {
-            Column(
-                modifier = Modifier.fillMaxWidth().heightIn(max = 430.dp).verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 420.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                Text("Issue type", style = MaterialTheme.typography.labelLarge)
-                options.forEach { issue ->
+                item { Text("Issue type", style = MaterialTheme.typography.labelLarge) }
+                items(options, key = { it }) { issue ->
                     Row(
-                        modifier = Modifier.fillMaxWidth().clickable { selected = issue }.padding(vertical = 2.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { selected = issue }
+                            .padding(vertical = 2.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         RadioButton(selected = selected == issue, onClick = { selected = issue })
                         Text(issue)
                     }
                 }
-                Spacer(Modifier.height(6.dp))
-                OutlinedTextField(
-                    value = note,
-                    onValueChange = { note = it },
-                    label = { Text("Problem description / note (optional)") },
-                    modifier = Modifier.fillMaxWidth(),
-                    minLines = 2,
-                    maxLines = 4
-                )
+                item {
+                    Spacer(Modifier.height(4.dp))
+                    OutlinedTextField(
+                        value = note,
+                        onValueChange = { note = it },
+                        label = { Text("Problem description / note (optional)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 2,
+                        maxLines = 4
+                    )
+                }
             }
         },
-        confirmButton = { TextButton(onClick = { onSave(selected, note.trim()) }) { Text("Mark") } },
+        confirmButton = {
+            TextButton(onClick = { onSave(selected, note.trim()) }) { Text("Mark") }
+        },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }

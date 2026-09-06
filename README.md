@@ -1,3 +1,7 @@
+# CellTracker v0.4.9.1
+
+Hotfix for Mark issue dialog crash. Replaces the scrollable AlertDialog content with a bounded LazyColumn while keeping the same issue-type and note workflow.
+
 # CellTracker v0.4.9
 
 Manual TestEvent / issue marking is now wired into recordings.
