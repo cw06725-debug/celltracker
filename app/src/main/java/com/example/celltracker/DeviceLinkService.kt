@@ -469,7 +469,7 @@ class DeviceLinkService : Service() {
                         callEndedAtActual = System.currentTimeMillis()
                         failure = "Peer call dropped after ${actualHoldMs / 1000.0} s (target ${c.holdTimeMs / 1000.0} s)"
                     }
-                    "SNAPSHOT" -> decodeSnapshot(holdMsg.payload)?.let { remoteSnapshots[attemptId]?.add(it) }
+                    "SNAPSHOT" -> remoteSnapshots[attemptId]?.add(snapshotFrom(holdMsg.payload))
                 }
                 if (droppedDuringHold) break
                 actualHoldMs = SystemClock.elapsedRealtime() - holdStartedElapsed
