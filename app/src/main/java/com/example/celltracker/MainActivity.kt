@@ -436,7 +436,7 @@ private fun MainScreen(
                 val sortedNeighbors = pageSelected?.neighbors.orEmpty().sortedByDescending { it.rsrp.toIntOrNull() ?: Int.MIN_VALUE }
                 val strongestNeighbor = sortedNeighbors.firstOrNull()
                 Column(
-                    modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberSaveable(page, saver = androidx.compose.foundation.ScrollState.Saver) { androidx.compose.foundation.ScrollState(0) }),
+                    modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberRetainedScrollState("main.sim.${page}")),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
             InfoCard("Network") {
@@ -711,7 +711,7 @@ private fun PingTestScreen(
     onCloseDetail: () -> Unit,
     onExport: (String) -> Unit
 ) {
-    val pingListState = rememberSaveable(saver = androidx.compose.foundation.lazy.LazyListState.Saver) { androidx.compose.foundation.lazy.LazyListState() }
+    val pingListState = rememberRetainedLazyListState("ping.root")
     if (detail != null) {
         BackHandler { onCloseDetail() }
         PingDetailScreen(detail = detail, onBack = onCloseDetail, onExport = { onExport(detail.item.path) })
@@ -1519,7 +1519,7 @@ private fun RecordingSummary(item: RecordingItem, samples: List<TrackSample>, on
     val ratCounts = samples.groupingBy { normalizedRat(it) }.eachCount().toList().sortedByDescending { it.second }
     val rsrp = samples.mapNotNull { it.rsrp.toIntOrNull() }
     val first = samples.firstOrNull(); val last = samples.lastOrNull()
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberRetainedScrollState("recording.summary.${item.path}")).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         InfoCard("Session") {
             Field("Started", SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(item.startedAt)))
             Field("Duration", formatElapsed(item.durationMs))
@@ -2086,7 +2086,7 @@ private fun SettingsScreen(settings: AppSettings, onUpdate: (AppSettings) -> Uni
     var draft by remember(settings) { mutableStateOf(settings) }
     var page by remember { mutableStateOf("root") }
     var newIssue by remember { mutableStateOf("") }
-    val rootScrollState = rememberSaveable(saver = androidx.compose.foundation.ScrollState.Saver) { androidx.compose.foundation.ScrollState(0) }
+    val rootScrollState = rememberRetainedScrollState("settings.root")
 
     fun applySetting(next: AppSettings) {
         draft = next
@@ -2118,11 +2118,11 @@ private fun SettingsScreen(settings: AppSettings, onUpdate: (AppSettings) -> Uni
             modifier = Modifier.padding(padding).fillMaxSize()
         ) { currentPage ->
             when (currentPage) {
-                "sampling" -> Column(Modifier.padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                "sampling" -> Column(Modifier.padding(16.dp).verticalScroll(rememberRetainedScrollState("settings.sampling")), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     IntervalPicker("UI refresh interval", draft.uiRefreshMs) { applySetting(draft.copy(uiRefreshMs = it)) }
                     IntervalPicker("Recording interval", draft.recordIntervalMs) { applySetting(draft.copy(recordIntervalMs = it)) }
                 }
-                "marker" -> Column(Modifier.padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                "marker" -> Column(Modifier.padding(16.dp).verticalScroll(rememberRetainedScrollState("settings.marker")), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     ActionPicker("Tap action", draft.tapAction) { applySetting(draft.copy(tapAction = it)) }
                     ActionPicker("Long press action", draft.longPressAction) { applySetting(draft.copy(longPressAction = it)) }
                     HorizontalDivider(); Text("After mark", style = MaterialTheme.typography.titleMedium)
@@ -2130,7 +2130,7 @@ private fun SettingsScreen(settings: AppSettings, onUpdate: (AppSettings) -> Uni
                     SettingSwitch("Show toast", draft.toastOnMark) { applySetting(draft.copy(toastOnMark = it)) }
                     SettingSwitch("Play sound", draft.soundOnMark) { applySetting(draft.copy(soundOnMark = it)) }
                 }
-                "floating" -> Column(Modifier.padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                "floating" -> Column(Modifier.padding(16.dp).verticalScroll(rememberRetainedScrollState("settings.floating")), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     val context = LocalContext.current
                     var overlayGranted by remember { mutableStateOf(android.provider.Settings.canDrawOverlays(context)) }
                     var usageAccessGranted by remember { mutableStateOf(ScreenCaptureService.hasUsageAccess(context)) }
@@ -2203,7 +2203,7 @@ private fun SettingsScreen(settings: AppSettings, onUpdate: (AppSettings) -> Uni
                     Text("When usage access is available, screenshot names use the most recent foreground app. If its display label cannot be read, CellTracker keeps a recognizable package-name suffix instead of using 'Screen'.", style = MaterialTheme.typography.bodySmall)
                     Text("The window uses the recording Mark Target SIM and can be dragged, collapsed and used to create issue markers while another app is on screen.", style = MaterialTheme.typography.bodySmall)
                 }
-                "map" -> Column(Modifier.padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                "map" -> Column(Modifier.padding(16.dp).verticalScroll(rememberRetainedScrollState("settings.map")), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("Changes are saved immediately.", style = MaterialTheme.typography.bodySmall)
                     MapDetailField.entries.forEach { field ->
                         SettingSwitch(field.label, field in draft.mapDetailFields) { checked ->
@@ -2211,7 +2211,7 @@ private fun SettingsScreen(settings: AppSettings, onUpdate: (AppSettings) -> Uni
                         }
                     }
                 }
-                "issues" -> Column(Modifier.padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                "issues" -> Column(Modifier.padding(16.dp).verticalScroll(rememberRetainedScrollState("settings.issues")), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Issue choices used by the upcoming Mark workflow. Changes are saved immediately.", style = MaterialTheme.typography.bodySmall)
                     draft.issueTypes.forEach { issue ->
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
@@ -2308,8 +2308,17 @@ private fun ActionPicker(title: String, selected: MarkerAction, onSelected: (Mar
 
 @Composable
 private fun SettingSwitch(title: String, checked: Boolean, onChecked: (Boolean) -> Unit) {
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-        Text(title); Switch(checked = checked, onCheckedChange = onChecked)
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text(
+            text = title,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyLarge
+        )
+        Switch(checked = checked, onCheckedChange = onChecked)
     }
 }
 

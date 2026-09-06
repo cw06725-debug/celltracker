@@ -62,7 +62,7 @@ fun CallSetupScreen(
 ) {
     // Keep the history scroll position while a detail page temporarily replaces this content.
     // Returning from View Details now lands exactly where the user entered it.
-    val historyListState = rememberSaveable(saver=androidx.compose.foundation.lazy.LazyListState.Saver) { androidx.compose.foundation.lazy.LazyListState() }
+    val historyListState = rememberRetainedLazyListState("callsetup.root")
     if(detail!=null){BackHandler{onCloseDetail()};CallSetupDetailView(detail,onCloseDetail){onExport(detail.item.path)};return}
     val context=LocalContext.current
     val focusManager=LocalFocusManager.current
@@ -271,7 +271,7 @@ private fun detectPhoneNumber(context:Context,simSlot:Int):String?{
             }
             Box(Modifier.fillMaxWidth().weight(1f).clipToBounds()){
             when(tab){
-                0->LazyColumn(contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
+                0->LazyColumn(state=rememberRetainedLazyListState("callsetup.detail.summary.${d.item.path}"),contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
                     item{CCard("Summary"){
                         CField("DUT A / B","${d.item.deviceA} / ${d.item.deviceB}")
                         CField("Operator A / B","${d.item.operatorA} / ${d.item.operatorB}")
@@ -293,8 +293,8 @@ private fun detectPhoneNumber(context:Context,simSlot:Int):String?{
         }
     }
 }
-@Composable private fun AttemptList(a:List<CallAttemptResult>){LazyColumn(contentPadding=PaddingValues(12.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){items(a,key={it.attemptId}){x->var open by remember(x.attemptId){mutableStateOf(false)};Card(Modifier.fillMaxWidth().clickable{open=!open}){Column(Modifier.padding(10.dp)){Text("#${x.attemptNumber} ${x.direction} · ${x.result}",style=MaterialTheme.typography.titleSmall);Text("Setup ${x.setupLatencyMs?.let{"$it ms"}?:"--"} · ${x.confidence}",style=MaterialTheme.typography.bodySmall);Text("Dial ${x.dialAt?.let(::date)?:"--"} · MT Ring ${x.mtRingingAt?.let(::date)?:"--"}",style=MaterialTheme.typography.bodySmall);Text("MO Connected ${x.moConnectedAt?.let(::date)?:"--"} · MT Connected ${x.mtConnectedAt?.let(::date)?:"--"}",style=MaterialTheme.typography.bodySmall);Text("End ${x.callEndedAt?.let(::date)?:"--"}",style=MaterialTheme.typography.bodySmall);if(x.failureDetail.isNotBlank())Text(x.failureDetail,style=MaterialTheme.typography.bodySmall);if(open)x.snapshots.sortedBy{it.timestampMs}.forEach{s->Text("${s.endpoint} ${s.moment}: ${s.displayRat}/${s.voiceRat}, RSRP ${s.rsrp}, PCI ${s.pci}, ${date(s.timestampMs)}",style=MaterialTheme.typography.bodySmall)}}}}}}
-@Composable private fun EventList(events:List<CallSetupEvent>){LazyColumn(contentPadding=PaddingValues(12.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){items(events){e->Card(Modifier.fillMaxWidth()){Column(Modifier.padding(10.dp)){Text(e.type,style=MaterialTheme.typography.titleSmall);Text("${e.source} · ${e.direction} · ${e.attemptId}",style=MaterialTheme.typography.bodySmall);Text(date(e.timestampMs),style=MaterialTheme.typography.bodySmall);if(e.detail.isNotBlank())Text(e.detail,style=MaterialTheme.typography.bodySmall)}}}}}
+@Composable private fun AttemptList(a:List<CallAttemptResult>){LazyColumn(state=rememberRetainedLazyListState("callsetup.detail.attempts"),contentPadding=PaddingValues(12.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){items(a,key={it.attemptId}){x->var open by remember(x.attemptId){mutableStateOf(false)};Card(Modifier.fillMaxWidth().clickable{open=!open}){Column(Modifier.padding(10.dp)){Text("#${x.attemptNumber} ${x.direction} · ${x.result}",style=MaterialTheme.typography.titleSmall);Text("Setup ${x.setupLatencyMs?.let{"$it ms"}?:"--"} · ${x.confidence}",style=MaterialTheme.typography.bodySmall);Text("Dial ${x.dialAt?.let(::date)?:"--"} · MT Ring ${x.mtRingingAt?.let(::date)?:"--"}",style=MaterialTheme.typography.bodySmall);Text("MO Connected ${x.moConnectedAt?.let(::date)?:"--"} · MT Connected ${x.mtConnectedAt?.let(::date)?:"--"}",style=MaterialTheme.typography.bodySmall);Text("End ${x.callEndedAt?.let(::date)?:"--"}",style=MaterialTheme.typography.bodySmall);if(x.failureDetail.isNotBlank())Text(x.failureDetail,style=MaterialTheme.typography.bodySmall);if(open)x.snapshots.sortedBy{it.timestampMs}.forEach{s->Text("${s.endpoint} ${s.moment}: ${s.displayRat}/${s.voiceRat}, RSRP ${s.rsrp}, PCI ${s.pci}, ${date(s.timestampMs)}",style=MaterialTheme.typography.bodySmall)}}}}}}
+@Composable private fun EventList(events:List<CallSetupEvent>){LazyColumn(state=rememberRetainedLazyListState("callsetup.detail.events"),contentPadding=PaddingValues(12.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){items(events){e->Card(Modifier.fillMaxWidth()){Column(Modifier.padding(10.dp)){Text(e.type,style=MaterialTheme.typography.titleSmall);Text("${e.source} · ${e.direction} · ${e.attemptId}",style=MaterialTheme.typography.bodySmall);Text(date(e.timestampMs),style=MaterialTheme.typography.bodySmall);if(e.detail.isNotBlank())Text(e.detail,style=MaterialTheme.typography.bodySmall)}}}}}
 @Composable private fun CallMap(detail:CallSetupDetail){
     // Prefer the continuous Recording trace that automation starts on this DUT.
     // Older sessions fall back to the sparse call snapshots so existing history stays viewable.
