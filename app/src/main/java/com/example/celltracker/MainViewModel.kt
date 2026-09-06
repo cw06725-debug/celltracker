@@ -57,6 +57,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         cellJob?.cancel()
         cellJob = viewModelScope.launch {
             while (true) {
+                val loopStartedAt = System.currentTimeMillis()
                 try {
                     val sims = cellular.readAllSims()
                     val selected = _state.value.selectedSubscriptionId
@@ -74,11 +75,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 } catch (e: Exception) {
                     _state.value = _state.value.copy(error = e.message ?: "Unable to read cellular info")
                 }
-                delay(_state.value.settings.uiRefreshMs)
                 if (_state.value.isRecording) {
                     val st = RecordingState.status.value
                     _state.value = _state.value.copy(recordingElapsedMs = System.currentTimeMillis() - st.startedAt)
                 }
+                // Treat uiRefreshMs as the target cadence. Slow modem callbacks are bounded
+                // in CellularRepository, and their elapsed time is subtracted here.
+                val elapsed = System.currentTimeMillis() - loopStartedAt
+                delay((_state.value.settings.uiRefreshMs - elapsed).coerceAtLeast(50L))
             }
         }
     }

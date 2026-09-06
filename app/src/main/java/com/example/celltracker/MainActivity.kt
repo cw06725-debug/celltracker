@@ -4,6 +4,8 @@ import android.Manifest
 import android.graphics.Color as AndroidColor
 import android.os.Build
 import android.os.Bundle
+import android.app.Activity
+import android.widget.Toast
 import android.preference.PreferenceManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -20,6 +22,9 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -42,6 +47,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.XYTileSource
 import org.osmdroid.util.BoundingBox
@@ -155,7 +161,7 @@ private sealed interface RootDestination {
     data class Detail(val path: String) : RootDestination
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 private fun MainScreen(
     state: AppState,
@@ -179,7 +185,32 @@ private fun MainScreen(
     var showLiveMap by remember { mutableStateOf(false) }
 
     val selected = state.sims.firstOrNull { it.subscriptionId == state.selectedSubscriptionId } ?: state.sims.firstOrNull()
+    val context = LocalContext.current
+    var lastExitBackAt by remember { mutableLongStateOf(0L) }
     BackHandler(enabled = showLiveMap) { showLiveMap = false }
+    BackHandler(enabled = !showLiveMap) {
+        val now = System.currentTimeMillis()
+        if (now - lastExitBackAt <= 2000L) {
+            (context as? Activity)?.finish()
+        } else {
+            lastExitBackAt = now
+            Toast.makeText(context, "Swipe back again to exit", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    val selectedIndexForPager = state.sims.indexOfFirst { it.subscriptionId == selected?.subscriptionId }.coerceAtLeast(0)
+    val simPagerState = rememberPagerState(initialPage = selectedIndexForPager) { state.sims.size.coerceAtLeast(1) }
+    val simPagerScope = rememberCoroutineScope()
+    LaunchedEffect(selectedIndexForPager, state.sims.size) {
+        if (state.sims.isNotEmpty() && !simPagerState.isScrollInProgress && simPagerState.currentPage != selectedIndexForPager) {
+            simPagerState.animateScrollToPage(selectedIndexForPager)
+        }
+    }
+    LaunchedEffect(simPagerState.currentPage, state.sims) {
+        state.sims.getOrNull(simPagerState.currentPage)?.let { sim ->
+            if (sim.subscriptionId != state.selectedSubscriptionId) onSelectSim(sim.subscriptionId)
+        }
+    }
 
     Scaffold(topBar = {
         TopAppBar(
@@ -217,7 +248,10 @@ private fun MainScreen(
                         state.sims.forEach { sim ->
                             Tab(
                                 selected = sim.subscriptionId == selected?.subscriptionId,
-                                onClick = { onSelectSim(sim.subscriptionId) },
+                                onClick = {
+                                    val index = state.sims.indexOf(sim)
+                                    if (index >= 0) simPagerScope.launch { simPagerState.animateScrollToPage(index) }
+                                },
                                 text = { Text("SIM ${sim.simSlotIndex + 1}\n${sim.servingCell.operator}") }
                             )
                         }
@@ -231,31 +265,12 @@ private fun MainScreen(
                 }
             }
 
-            val selectedIndex = state.sims.indexOfFirst { it.subscriptionId == selected?.subscriptionId }.coerceAtLeast(0)
-            AnimatedContent(
-                targetState = selected?.subscriptionId,
-                transitionSpec = {
-                    val from = state.sims.indexOfFirst { it.subscriptionId == initialState }
-                    val to = state.sims.indexOfFirst { it.subscriptionId == targetState }
-                    val direction = if (to >= from) AnimatedContentTransitionScope.SlideDirection.Left else AnimatedContentTransitionScope.SlideDirection.Right
-                    (slideIntoContainer(direction, tween(210)) + fadeIn(tween(150)))
-                        .togetherWith(slideOutOfContainer(direction, tween(210)) + fadeOut(tween(130)))
-                },
-                label = "mainSimPager",
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .horizontalSwipe(
-                        enabled = state.sims.size > 1,
-                        onSwipeLeft = {
-                            if (selectedIndex in 0 until state.sims.lastIndex) onSelectSim(state.sims[selectedIndex + 1].subscriptionId)
-                        },
-                        onSwipeRight = {
-                            if (selectedIndex > 0) onSelectSim(state.sims[selectedIndex - 1].subscriptionId)
-                        }
-                    )
-            ) { targetSubscriptionId ->
-                val pageSelected = state.sims.firstOrNull { it.subscriptionId == targetSubscriptionId } ?: selected
+            HorizontalPager(
+                state = simPagerState,
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                beyondViewportPageCount = 1
+            ) { page ->
+                val pageSelected = state.sims.getOrNull(page) ?: selected
                 val c = pageSelected?.servingCell ?: CellData()
                 val sortedNeighbors = pageSelected?.neighbors.orEmpty().sortedByDescending { it.rsrp.toIntOrNull() ?: Int.MIN_VALUE }
                 val strongestNeighbor = sortedNeighbors.firstOrNull()
@@ -522,7 +537,7 @@ private fun LiveMapScreen(
         val currentSample = if (currentPoint != null && mapSelected != null) {
             val c = mapSelected.servingCell
             TrackSample(
-                timestampMs = state.location.timestampMs.takeIf { it > 0 } ?: System.currentTimeMillis(),
+                timestampMs = System.currentTimeMillis(),
                 simSlot = mapSelected.simSlotIndex + 1, subscriptionId = mapSelected.subscriptionId, operator = c.operator,
                 rat = c.rat, displayRat = c.displayRat, mcc = c.mcc, mnc = c.mnc, tac = c.tac, cellId = c.cellId,
                 pci = c.pci, arfcn = c.arfcn, rsrp = c.rsrp, rsrq = c.rsrq, sinr = c.sinr,
@@ -558,7 +573,7 @@ private fun LiveMapScreen(
 
 private enum class DetailTab { SUMMARY, MAP, SAMPLES }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 private fun RecordingDetailScreen(
     path: String,
@@ -568,6 +583,14 @@ private fun RecordingDetailScreen(
     onDelete: (String) -> Unit
 ) {
     var selectedTab by remember { mutableStateOf(DetailTab.SUMMARY) }
+    val detailPagerState = rememberPagerState(initialPage = DetailTab.SUMMARY.ordinal) { DetailTab.entries.size }
+    val detailPagerScope = rememberCoroutineScope()
+    LaunchedEffect(detailPagerState.currentPage) { selectedTab = DetailTab.entries[detailPagerState.currentPage] }
+    LaunchedEffect(selectedTab) {
+        if (!detailPagerState.isScrollInProgress && detailPagerState.currentPage != selectedTab.ordinal) {
+            detailPagerState.animateScrollToPage(selectedTab.ordinal)
+        }
+    }
     var selectedSimSlot by remember { mutableStateOf<Int?>(null) }
     var showDelete by remember { mutableStateOf(false) }
     var showExport by remember { mutableStateOf(false) }
@@ -616,40 +639,22 @@ private fun RecordingDetailScreen(
                             DetailTab.entries.forEach { tab ->
                                 Tab(
                                     selected = selectedTab == tab,
-                                    onClick = { selectedTab = tab },
+                                    onClick = { detailPagerScope.launch { detailPagerState.animateScrollToPage(tab.ordinal) } },
                                     text = { Text(tab.name.lowercase().replaceFirstChar { it.uppercase() }) }
                                 )
                             }
                         }
                     }
                 }
-                Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                        .clipToBounds()
-                        .zIndex(0f)
-                        .horizontalSwipe(
-                            onSwipeLeft = {
-                                val next = (selectedTab.ordinal + 1).coerceAtMost(DetailTab.entries.lastIndex)
-                                selectedTab = DetailTab.entries[next]
-                            },
-                            onSwipeRight = {
-                                val previous = (selectedTab.ordinal - 1).coerceAtLeast(0)
-                                selectedTab = DetailTab.entries[previous]
-                            }
-                        )
-                ) {
-                    AnimatedContent(
-                        targetState = selectedTab,
-                        transitionSpec = { fadeIn(animationSpec = tween(120)).togetherWith(fadeOut(animationSpec = tween(90))) },
-                        label = "detailTabSwipe"
-                    ) { tab ->
-                    when (tab) {
+                HorizontalPager(
+                    state = detailPagerState,
+                    modifier = Modifier.fillMaxWidth().weight(1f).clipToBounds().zIndex(0f),
+                    beyondViewportPageCount = 1
+                ) { page ->
+                    when (DetailTab.entries[page]) {
                         DetailTab.SUMMARY -> RecordingSummary(d.item, filtered)
                         DetailTab.MAP -> RecordingMap(filtered)
                         DetailTab.SAMPLES -> RecordingSamples(filtered)
-                    }
                     }
                 }
             }

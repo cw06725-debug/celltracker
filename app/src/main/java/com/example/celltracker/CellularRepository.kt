@@ -13,6 +13,10 @@ import android.telephony.SubscriptionManager
 import android.telephony.TelephonyManager
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.resume
 
 class CellularRepository(private val context: Context) {
@@ -36,10 +40,14 @@ class CellularRepository(private val context: Context) {
             val single = readForTelephonyManager(baseTm, -1, -1, "SIM")
             return listOf(single)
         }
-        return subscriptions.map { sub ->
-            val tm = baseTm.createForSubscriptionId(sub.subscriptionId)
-            val label = sub.displayName?.toString()?.takeIf { it.isNotBlank() } ?: "SIM ${sub.simSlotIndex + 1}"
-            readForTelephonyManager(tm, sub.subscriptionId, sub.simSlotIndex, label)
+        return coroutineScope {
+            subscriptions.map { sub ->
+                async {
+                    val tm = baseTm.createForSubscriptionId(sub.subscriptionId)
+                    val label = sub.displayName?.toString()?.takeIf { it.isNotBlank() } ?: "SIM ${sub.simSlotIndex + 1}"
+                    readForTelephonyManager(tm, sub.subscriptionId, sub.simSlotIndex, label)
+                }
+            }.awaitAll()
         }
     }
 
@@ -53,7 +61,11 @@ class CellularRepository(private val context: Context) {
             return SimCellState(subscriptionId, simSlotIndex, simLabel)
         }
 
-        val cells = requestFreshCells(tm)
+        // Some vendor RILs delay requestCellInfoUpdate callbacks for many seconds.
+        // Do not let one slow callback stall the whole UI refresh loop; fall back to
+        // the framework's cached allCellInfo snapshot after a short timeout.
+        val cells = withTimeoutOrNull(900L) { requestFreshCells(tm) }
+            ?: runCatching { tm.allCellInfo ?: emptyList() }.getOrDefault(emptyList())
         val parsed = cells.mapNotNull { parseCell(it, tm, subscriptionId, simSlotIndex, simLabel) }
         val registered = parsed.filter { it.registered }
         val nrVisible = parsed.any { it.rat == "NR" }
@@ -144,7 +156,7 @@ class CellularRepository(private val context: Context) {
                 arfcn = intValue(id.nrarfcn),
                 rsrp = intDbValue(s.ssRsrp),
                 rsrq = intDbValue(s.ssRsrq),
-                sinr = intDbValue(s.ssSinr),
+                sinr = intDbValue(s.ssSinr).takeIf { it != "--" } ?: intDbValue(s.csiSinr),
                 band = if (android.os.Build.VERSION.SDK_INT >= 30) bandValue(id.bands, true) else nrBandFromArfcn(id.nrarfcn),
                 csiRsrp = intDbValue(s.csiRsrp),
                 csiRsrq = intDbValue(s.csiRsrq),
