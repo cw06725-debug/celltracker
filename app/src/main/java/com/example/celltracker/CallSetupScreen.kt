@@ -144,7 +144,6 @@ fun CallSetupScreen(
                     Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
                         Button(onClick={
                             onLinkAction(DeviceLinkService.ACTION_AGENT,"")
-                            discoverableLauncher.launch(Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE).putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION,300))
                         },enabled=!test.isRunning){Text("Switch to Agent")}
                         Button(onClick={onLinkAction(DeviceLinkService.ACTION_DISCOVER,"")},enabled=!test.isRunning&&link.status!=DeviceLinkStatus.CONNECTED){Text(if(link.discoveryActive)"Scan again" else "Scan")}
                     }
@@ -185,7 +184,10 @@ fun CallSetupScreen(
                     OutlinedTextField(threshold,{threshold=digits(it,3)},label={Text("High Setup Latency (s)")},singleLine=true,enabled=!test.isRunning,modifier=Modifier.fillMaxWidth())
                     val aSlots=activeSlots.ifEmpty{listOf(localSim)}
                     val bSlots=listOf(0,1).filter{!link.peerProfile?.phoneForSlot(it).isNullOrBlank()}.ifEmpty{listOf(link.peerProfile?.simSlot?:0)}
-                    Row(verticalAlignment=Alignment.CenterVertically){Text("A Call SIM");SimChips(aSim,{aSim=it},!test.isRunning,aSlots);Spacer(Modifier.width(12.dp));Text("B Call SIM");SimChips(bSim,{bSim=it},!test.isRunning,bSlots)}
+                    Text("A Call SIM", style=MaterialTheme.typography.labelLarge)
+                    SimSelector(aSim,{aSim=it},!test.isRunning,aSlots)
+                    Text("B Call SIM", style=MaterialTheme.typography.labelLarge)
+                    SimSelector(bSim,{bSim=it},!test.isRunning,bSlots)
                     Row(verticalAlignment=Alignment.CenterVertically){Checkbox(autoRecord,{autoRecord=it},enabled=!test.isRunning);Text("Auto Record on both DUTs")}
                     Row(verticalAlignment=Alignment.CenterVertically){Checkbox(mode==AutomationMode.SEMI_AUTO,{mode=if(it)AutomationMode.SEMI_AUTO else AutomationMode.AUTO_WHEN_AVAILABLE},enabled=!test.isRunning);Text("Force Semi-Auto mode")}
                     Text("Public Android call APIs are used. If auto answer/hang-up is unavailable, manually operate the Phone app; state detection and results continue automatically.",style=MaterialTheme.typography.bodySmall)
@@ -198,7 +200,7 @@ fun CallSetupScreen(
                 item{LiveTestPanel(link,test)}
             }
             item{Text("Call Setup History",style=MaterialTheme.typography.titleMedium)}
-            if(history.isEmpty())item{Text("No saved Call Setup sessions",style=MaterialTheme.typography.bodySmall)}else items(history,key={it.path}){h->Card(Modifier.fillMaxWidth().clickable{onOpenDetail(h.path)}){Column(Modifier.padding(12.dp)){Text(h.taskName,style=MaterialTheme.typography.titleSmall);Text("${h.deviceA} ↔ ${h.deviceB} · ${h.direction}",style=MaterialTheme.typography.bodySmall);Text("${h.attempts} attempts · Success ${String.format(Locale.US,"%.1f%%",h.successRate)} · Avg ${ms(h.averageMs)}",style=MaterialTheme.typography.bodySmall)}}}
+            if(history.isEmpty())item{Text("No saved Call Setup sessions",style=MaterialTheme.typography.bodySmall)}else items(history,key={it.path}){h->Card(Modifier.fillMaxWidth()){Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){Column(Modifier.fillMaxWidth().clickable{onOpenDetail(h.path)}){Text(h.taskName,style=MaterialTheme.typography.titleSmall);Text("${h.deviceA} ↔ ${h.deviceB} · ${h.direction}",style=MaterialTheme.typography.bodySmall);Text("${h.attempts} attempts · Success ${String.format(Locale.US,"%.1f%%",h.successRate)} · Avg ${ms(h.averageMs)}",style=MaterialTheme.typography.bodySmall)};OutlinedButton(onClick={onExport(h.path)},modifier=Modifier.fillMaxWidth()){Text("Export Report")}}}}
         }
     }
 }
@@ -239,16 +241,89 @@ private fun detectPhoneNumber(context:Context,simSlot:Int):String?{
 @Composable private fun LiveTestPanel(link:DeviceLinkState,s:CallSetupTestState){CCard("Live Controller result"){CField("Status",s.statusMessage);CField("Attempt","${s.currentAttempt} / ${expectedAttempts(s.config)}");CField("Direction",s.currentDirection);CField("DUT A / ${s.localRole}","${s.localSnapshot?.operator?:link.localProfile.operator} · ${s.localSnapshot?.displayRat?:link.localProfile.rat} · ${s.localSnapshot?.voiceRat?:link.localProfile.voiceRat} · ${s.localCallState}");CField("DUT B / ${s.peerRole}","${s.peerSnapshot?.operator?:link.peerProfile?.operator?:"--"} · ${s.peerSnapshot?.displayRat?:link.peerProfile?.rat?:"--"} · ${s.peerSnapshot?.voiceRat?:link.peerProfile?.voiceRat?:"--"} · ${s.peerCallState}");CField("Success / Failure","${s.success} / ${s.failure}");CField("Success Rate",String.format(Locale.US,"%.1f%%",s.successRate));CField("Current / Avg", "${s.currentSetupLatencyMs?.let{"$it ms"}?:"--"} / ${ms(s.averageMs)}");CField("Min / Max","${ms(s.minMs)} / ${ms(s.maxMs)}");CField("P50 / P90 / P95","${ms(s.p50Ms)} / ${ms(s.p90Ms)} / ${ms(s.p95Ms)}");CField("Consecutive failures",s.consecutiveFailures.toString());CField("Bluetooth",link.status.name);CField("Automation",s.automationCapability)}}
 
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable private fun CallSetupDetailView(d:CallSetupDetail,onBack:()->Unit,onExport:()->Unit){var tab by remember{mutableIntStateOf(0)};val tabs=listOf("Summary","Attempts","Events","Map","Trend");Scaffold(topBar={TopAppBar(title={Text(d.item.taskName)},navigationIcon={TextButton(onClick=onBack){Text("Back")}},actions={TextButton(onClick=onExport){Text("Export")}})}){p->Column(Modifier.padding(p).fillMaxSize()){ScrollableTabRow(tab){tabs.forEachIndexed{i,t->Tab(tab==i,{tab=i},text={Text(t)})}};when(tab){0->LazyColumn(contentPadding=PaddingValues(16.dp)){item{CCard("Summary"){CField("DUT A / B","${d.item.deviceA} / ${d.item.deviceB}");CField("Operator A / B","${d.item.operatorA} / ${d.item.operatorB}");CField("Direction",d.item.direction);CField("Attempts","${d.item.attempts} · Success ${d.item.success} · Failure ${d.item.failure}");CField("Success Rate",String.format(Locale.US,"%.1f%%",d.item.successRate));CField("Avg / P90 / P95","${ms(d.item.averageMs)} / ${ms(d.item.p90Ms)} / ${ms(d.item.p95Ms)}");CField("Start / End","${date(d.item.startedAt)} / ${date(d.item.endedAt)}");CField("Status",d.item.status)}}};1->AttemptList(d.attempts);2->EventList(d.events);3->CallMap(d.attempts);else->CallTrend(d.attempts,d.item.highLatencyThresholdMs)}}}}
+@Composable private fun CallSetupDetailView(d:CallSetupDetail,onBack:()->Unit,onExport:()->Unit){
+    var tab by remember{mutableIntStateOf(0)}
+    val tabs=listOf("Summary","Attempts","Events","Map","Trend")
+    Scaffold(topBar={TopAppBar(title={Text(d.item.taskName)},navigationIcon={TextButton(onClick=onBack){Text("Back")}},actions={TextButton(onClick=onExport){Text("Export")}})}){p->
+        Column(Modifier.padding(p).fillMaxSize()){
+            ScrollableTabRow(tab){tabs.forEachIndexed{i,t->Tab(tab==i,{tab=i},text={Text(t)})}}
+            when(tab){
+                0->LazyColumn(contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
+                    item{CCard("Summary"){
+                        CField("DUT A / B","${d.item.deviceA} / ${d.item.deviceB}")
+                        CField("Operator A / B","${d.item.operatorA} / ${d.item.operatorB}")
+                        CField("Direction",d.item.direction)
+                        CField("Attempts","${d.item.attempts} · Success ${d.item.success} · Failure ${d.item.failure}")
+                        CField("Success Rate",String.format(Locale.US,"%.1f%%",d.item.successRate))
+                        CField("Avg / P90 / P95","${ms(d.item.averageMs)} / ${ms(d.item.p90Ms)} / ${ms(d.item.p95Ms)}")
+                        CField("Start / End","${date(d.item.startedAt)} / ${date(d.item.endedAt)}")
+                        CField("Status",d.item.status)
+                        Button(onClick=onExport,modifier=Modifier.fillMaxWidth()){Text("Export Call Setup Report")}
+                    }}
+                }
+                1->AttemptList(d.attempts)
+                2->EventList(d.events)
+                3->CallMap(d.attempts)
+                else->CallTrend(d.attempts,d.item.highLatencyThresholdMs)
+            }
+        }
+    }
+}
 @Composable private fun AttemptList(a:List<CallAttemptResult>){LazyColumn(contentPadding=PaddingValues(12.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){items(a,key={it.attemptId}){x->var open by remember(x.attemptId){mutableStateOf(false)};Card(Modifier.fillMaxWidth().clickable{open=!open}){Column(Modifier.padding(10.dp)){Text("#${x.attemptNumber} ${x.direction} · ${x.result}",style=MaterialTheme.typography.titleSmall);Text("Setup ${x.setupLatencyMs?.let{"$it ms"}?:"--"} · ${x.confidence}",style=MaterialTheme.typography.bodySmall);Text("Dial ${x.dialAt?.let(::date)?:"--"} · MT Ring ${x.mtRingingAt?.let(::date)?:"--"}",style=MaterialTheme.typography.bodySmall);Text("MO Connected ${x.moConnectedAt?.let(::date)?:"--"} · MT Connected ${x.mtConnectedAt?.let(::date)?:"--"}",style=MaterialTheme.typography.bodySmall);Text("End ${x.callEndedAt?.let(::date)?:"--"}",style=MaterialTheme.typography.bodySmall);if(x.failureDetail.isNotBlank())Text(x.failureDetail,style=MaterialTheme.typography.bodySmall);if(open)x.snapshots.sortedBy{it.timestampMs}.forEach{s->Text("${s.endpoint} ${s.moment}: ${s.displayRat}/${s.voiceRat}, RSRP ${s.rsrp}, PCI ${s.pci}, ${date(s.timestampMs)}",style=MaterialTheme.typography.bodySmall)}}}}}}
 @Composable private fun EventList(events:List<CallSetupEvent>){LazyColumn(contentPadding=PaddingValues(12.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){items(events){e->Card(Modifier.fillMaxWidth()){Column(Modifier.padding(10.dp)){Text(e.type,style=MaterialTheme.typography.titleSmall);Text("${e.source} · ${e.direction} · ${e.attemptId}",style=MaterialTheme.typography.bodySmall);Text(date(e.timestampMs),style=MaterialTheme.typography.bodySmall);if(e.detail.isNotBlank())Text(e.detail,style=MaterialTheme.typography.bodySmall)}}}}}
-@Composable private fun CallMap(attempts:List<CallAttemptResult>){val located=attempts.flatMap{a->a.snapshots.map{s->a to s}}.filter{it.second.latitude!=null&&it.second.longitude!=null};if(located.isEmpty()){Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){Text("No valid GPS snapshots")};return};val context=LocalContext.current;val map=remember{MapView(context).apply{setMultiTouchControls(true)}};DisposableEffect(map){map.onResume();onDispose{map.onPause();map.onDetach()}};AndroidView({map},Modifier.fillMaxSize()){m->m.overlays.clear();listOf("A","B").forEach{ep->val p=located.filter{it.second.endpoint==ep}.map{GeoPoint(it.second.latitude!!,it.second.longitude!!)};if(p.isNotEmpty())m.overlays.add(Polyline().apply{setPoints(p);outlinePaint.color=if(ep=="A")android.graphics.Color.BLUE else android.graphics.Color.MAGENTA;outlinePaint.strokeWidth=6f})};located.filter{it.first.result!="SUCCESS"||it.second.moment=="CONNECTED"}.forEach{(a,s)->m.overlays.add(Marker(m).apply{position=GeoPoint(s.latitude!!,s.longitude!!);title="${a.result} #${a.attemptNumber}";snippet="${s.endpoint} ${s.displayRat}/${s.voiceRat} RSRP ${s.rsrp}"})};val p=located.map{GeoPoint(it.second.latitude!!,it.second.longitude!!)};if(p.size==1){m.controller.setCenter(p.first());m.controller.setZoom(17.0)}else m.zoomToBoundingBox(BoundingBox.fromGeoPoints(p),true,80);m.invalidate()}}
+@Composable private fun CallMap(attempts:List<CallAttemptResult>){
+    // Building hundreds/thousands of OSM overlays on every recomposition can block the main thread.
+    // Pre-compute a bounded data set and populate the MapView only once for this detail session.
+    val located=remember(attempts){attempts.flatMap{a->a.snapshots.map{s->a to s}}.filter{it.second.latitude!=null&&it.second.longitude!=null}}
+    if(located.isEmpty()){Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){Text("No valid GPS snapshots")};return}
+    val trackA=remember(located){downsampleGeo(located.filter{it.second.endpoint=="A"}.map{GeoPoint(it.second.latitude!!,it.second.longitude!!)},600)}
+    val trackB=remember(located){downsampleGeo(located.filter{it.second.endpoint=="B"}.map{GeoPoint(it.second.latitude!!,it.second.longitude!!)},600)}
+    val markerData=remember(attempts){attempts.mapNotNull{a->
+        val s=a.snapshots.lastOrNull{it.moment=="FAILURE"&&it.latitude!=null&&it.longitude!=null}
+            ?:a.snapshots.lastOrNull{it.moment=="CONNECTED"&&it.latitude!=null&&it.longitude!=null}
+        s?.let{Triple(a,it,GeoPoint(it.latitude!!,it.longitude!!))}
+    }.takeLast(120)}
+    val boundsPoints=remember(trackA,trackB){(trackA+trackB).let{downsampleGeo(it,500)}}
+    val context=LocalContext.current
+    val map=remember{MapView(context).apply{setMultiTouchControls(true)}}
+    DisposableEffect(map){map.onResume();onDispose{map.onPause();map.onDetach()}}
+    AndroidView(
+        factory={
+            map.apply{
+                overlays.clear()
+                if(trackA.isNotEmpty())overlays.add(Polyline().apply{setPoints(trackA);outlinePaint.color=android.graphics.Color.BLUE;outlinePaint.strokeWidth=6f})
+                if(trackB.isNotEmpty())overlays.add(Polyline().apply{setPoints(trackB);outlinePaint.color=android.graphics.Color.MAGENTA;outlinePaint.strokeWidth=6f})
+                markerData.forEach{(a,s,p)->overlays.add(Marker(this).apply{position=p;title="${a.result} #${a.attemptNumber}";snippet="${s.endpoint} ${s.displayRat}/${s.voiceRat} RSRP ${s.rsrp}"})}
+                post{
+                    if(boundsPoints.size==1){controller.setCenter(boundsPoints.first());controller.setZoom(17.0)}
+                    else if(boundsPoints.isNotEmpty())zoomToBoundingBox(BoundingBox.fromGeoPoints(boundsPoints),false,80)
+                    invalidate()
+                }
+            }
+        },
+        modifier=Modifier.fillMaxSize(),
+        update={}
+    )
+}
+
+private fun downsampleGeo(points:List<GeoPoint>,maxPoints:Int):List<GeoPoint>{
+    if(points.size<=maxPoints)return points
+    val step=(points.size-1).toDouble()/(maxPoints-1).coerceAtLeast(1)
+    return List(maxPoints){i->points[(i*step).toInt().coerceIn(0,points.lastIndex)]}
+}
 @Composable private fun CallTrend(a:List<CallAttemptResult>,threshold:Long){val v=a.mapNotNull{it.setupLatencyMs?.toDouble()};if(a.isEmpty()){Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){Text("No attempts")};return};Column(Modifier.padding(16.dp)){Text("Setup latency by attempt",style=MaterialTheme.typography.titleMedium);Text("Blue: success · Red: failure · Orange: high latency threshold",style=MaterialTheme.typography.bodySmall);Canvas(Modifier.fillMaxWidth().height(280.dp).background(MaterialTheme.colorScheme.surfaceVariant)){val top=maxOf(v.maxOrNull()?:1.0,threshold.toDouble(),1.0)*1.15;val thresholdY=size.height-(threshold/top*size.height).toFloat();drawLine(Color(0xFFFF9800),androidx.compose.ui.geometry.Offset(0f,thresholdY),androidx.compose.ui.geometry.Offset(size.width,thresholdY),3f);val n=a.size.coerceAtLeast(2);a.forEachIndexed{i,x->val xx=if(a.size==1)size.width/2 else i.toFloat()/(n-1)*size.width;val y=x.setupLatencyMs?.let{size.height-(it/top*size.height).toFloat()};if(y==null)drawCircle(Color.Red,7f,androidx.compose.ui.geometry.Offset(xx,size.height-8))else drawCircle(if(x.result=="SUCCESS")Color.Blue else Color.Red,7f,androidx.compose.ui.geometry.Offset(xx,y))}}}}
 
 @Composable private fun CCard(title:String,content:@Composable ColumnScope.()->Unit){Card(Modifier.fillMaxWidth()){Column(Modifier.padding(14.dp),verticalArrangement=Arrangement.spacedBy(7.dp)){Text(title,style=MaterialTheme.typography.titleMedium);content()}}}
 @Composable private fun CField(k:String,v:String){Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Text(k,style=MaterialTheme.typography.bodySmall);Text(v,style=MaterialTheme.typography.bodySmall)}}
 @Composable private fun NumberPair(a:String,av:String,ac:(String)->Unit,b:String,bv:String,bc:(String)->Unit,e:Boolean){Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){OutlinedTextField(av,ac,label={Text(a)},singleLine=true,enabled=e,modifier=Modifier.weight(1f));OutlinedTextField(bv,bc,label={Text(b)},singleLine=true,enabled=e,modifier=Modifier.weight(1f))}}
-@Composable private fun SimChips(v:Int,set:(Int)->Unit,e:Boolean,slots:List<Int> = listOf(0,1)){Row{slots.forEach{s->if(v==s) Button(onClick={set(s)},enabled=e,contentPadding=PaddingValues(horizontal=12.dp,vertical=6.dp)){Text("SIM ${s+1}")} else OutlinedButton(onClick={set(s)},enabled=e,contentPadding=PaddingValues(horizontal=12.dp,vertical=6.dp)){Text("SIM ${s+1}")};Spacer(Modifier.width(4.dp))}}}
+@Composable private fun SimSelector(v:Int,set:(Int)->Unit,e:Boolean,slots:List<Int> = listOf(0,1)){
+    Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){
+        slots.forEach{s->
+            if(v==s) Button(onClick={set(s)},enabled=e,modifier=Modifier.weight(1f)){Text("SIM ${s+1}")}
+            else OutlinedButton(onClick={set(s)},enabled=e,modifier=Modifier.weight(1f)){Text("SIM ${s+1}")}
+        }
+    }
+}
 private fun digits(s:String,n:Int)=s.filter{it.isDigit()}.take(n)
 private fun ms(v:Double?)=v?.let{String.format(Locale.US,"%.1f ms",it)}?:"--"
 private fun date(v:Long)=SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS",Locale.getDefault()).format(Date(v))

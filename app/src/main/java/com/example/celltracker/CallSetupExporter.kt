@@ -17,10 +17,10 @@ object CallSetupExporter {
         val base=dir.name
         val combinedCsv=buildCombinedCsv(detail)
         val csvName="${base}_attempts_and_snapshots.csv";val csv=save(context,csvName,"text/csv",combinedCsv.toByteArray()).toString()
-        val htmlName="${base}_summary.html";val html=save(context,htmlName,"text/html",buildHtml(detail).toByteArray()).toString()
+        val htmlName="${base}_report.html";val html=save(context,htmlName,"text/html",buildHtml(detail).toByteArray()).toString()
         val xlsxName="${base}_report.xlsx";val xlsx=save(context,xlsxName,"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",buildXlsx(dir,detail)).toString()
         val kmlName="${base}_track.kml";val kml=save(context,kmlName,"application/vnd.google-earth.kml+xml",buildKml(detail).toByteArray()).toString()
-        return ExportResult("Call Setup export successful · CSV + Summary + Excel + KML",listOf(csv),html,htmlName,xlsx,xlsxName,kml,kmlName)
+        return ExportResult("Call Setup report exported · HTML Report + Excel + CSV + KML",listOf(csv),html,htmlName,xlsx,xlsxName,kml,kmlName)
     }
 
     private fun buildCombinedCsv(d:CallSetupDetail)=buildString {
@@ -39,6 +39,9 @@ object CallSetupExporter {
         listOf("Task" to i.taskName,"DUT A" to "${i.deviceA} / ${i.operatorA}","DUT B" to "${i.deviceB} / ${i.operatorB}","Direction" to i.direction,"Attempts" to i.attempts.toString(),"Success / Failure" to "${i.success} / ${i.failure}","Success Rate" to String.format(Locale.US,"%.1f%%",i.successRate),"Avg / Min / Max" to "${l(i.averageMs)} / ${l(lat.minOrNull())} / ${l(lat.maxOrNull())}","P50 / P90 / P95" to "${l(pct(.5))} / ${l(i.p90Ms)} / ${l(i.p95Ms)}","HIGH latency" to d.events.count{it.type=="HIGH_CALL_SETUP_LATENCY"}.toString(),"Timeout" to d.events.count{it.type=="CALL_SETUP_TIMEOUT"}.toString(),"Status" to i.status).forEach{(k,v)->append("<div><div class='k'>${e(k)}</div><div class='v'>${e(v)}</div></div>")}
         append("</div><div class='c'><table><tr><th>#</th><th>Direction</th><th>Result</th><th>Setup</th><th>Confidence</th><th>Detail</th></tr>")
         d.attempts.forEach{append("<tr><td>${it.attemptNumber}</td><td>${e(it.direction)}</td><td>${e(it.result)}</td><td>${l(it.setupLatencyMs?.toDouble())}</td><td>${e(it.confidence)}</td><td>${e(it.failureDetail)}</td></tr>")}
+        append("</table></div>")
+        append("<div class='c'><h2>Events</h2><table><tr><th>Time</th><th>Type</th><th>Direction</th><th>Attempt</th><th>Detail</th></tr>")
+        d.events.forEach{ev->append("<tr><td>${e(SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS",Locale.getDefault()).format(Date(ev.timestampMs)))}</td><td>${e(ev.type)}</td><td>${e(ev.direction)}</td><td>${e(ev.attemptId)}</td><td>${e(ev.detail)}</td></tr>")}
         append("</table></div></body></html>")
         }
     }
