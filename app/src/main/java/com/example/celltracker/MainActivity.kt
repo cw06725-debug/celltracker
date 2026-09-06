@@ -139,6 +139,7 @@ class MainActivity : ComponentActivity() {
                         onSelectSim = vm::selectSubscription,
                         onStartRecording = vm::startRecording,
                         onRecordScope = vm::setRecordScope,
+                        onMarkTarget = vm::setMarkTargetSubscription,
                         onStopRecording = vm::stopRecording,
                         onMarkEvent = vm::markEvent,
                         onExport = vm::exportLatestCsv,
@@ -169,6 +170,7 @@ private fun MainScreen(
     onSelectSim: (Int) -> Unit,
     onStartRecording: () -> Unit,
     onRecordScope: (RecordScope) -> Unit,
+    onMarkTarget: (Int) -> Unit,
     onStopRecording: () -> Unit,
     onMarkEvent: (String, String) -> Unit,
     onExport: (CsvExportMode) -> Unit,
@@ -284,6 +286,9 @@ private fun MainScreen(
             InfoCard("Network") {
                 Field("Operator", c.operator)
                 Field("RAT", c.displayRat.ifBlank { c.rat })
+                val dataSim = state.sims.firstOrNull { it.subscriptionId == state.dataSimSubscriptionId }
+                Field("Data SIM", dataSim?.let { "SIM ${it.simSlotIndex + 1} ${it.servingCell.operator}" } ?: "--")
+                Field("DataNet", state.dataNetwork)
                 Field("Registered", if (c.registered) "Yes" else "No")
             }
             InfoCard("Serving Cell") {
@@ -361,6 +366,17 @@ private fun MainScreen(
                             onClick = { onRecordScope(RecordScope.BOTH_SIMS) })
                         Text("Both SIMs")
                     }
+                }
+                if (state.sims.size > 1 && state.settings.recordScope == RecordScope.BOTH_SIMS) {
+                    Text("Mark target", style = MaterialTheme.typography.labelLarge)
+                    state.sims.forEach { sim ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            val targetId = if (state.isRecording) state.recordingMarkTargetSubscriptionId else state.markTargetSubscriptionId
+                            RadioButton(selected = targetId == sim.subscriptionId, enabled = !state.isRecording, onClick = { onMarkTarget(sim.subscriptionId) })
+                            Text("SIM ${sim.simSlotIndex + 1} · ${sim.servingCell.operator}")
+                        }
+                    }
+                    if (state.isRecording) Text("Mark target is locked during recording", style = MaterialTheme.typography.bodySmall)
                 }
                 val active = pageSelected
                 if (state.isRecording) {
@@ -908,15 +924,7 @@ private fun OsmTrackMap(
                 if (currentRat == null) currentRat = rat
                 if (rat != currentRat) { flush(); currentRat = rat }
                 segment += point
-                if (sample.isMarker) {
-                    mapView.overlays.add(Marker(mapView).apply {
-                        position = point
-                        title = sample.eventType.ifBlank { "Marker" }
-                        snippet = "${sample.operator} · ${normalizedRat(sample)} · RSRP ${sample.rsrp} dBm"
-                        setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
-                        setOnMarkerClickListener { _, _ -> selectedIsCurrent = false; selectedSample = sample; true }
-                    })
-                }
+
             }
             flush()
         }
@@ -968,6 +976,17 @@ private fun OsmTrackMap(
             }
             override fun longPressHelper(p: GeoPoint): Boolean = false
         }))
+
+        // Event markers are added last so they stay above Start/End/current-location overlays.
+        samples.filter { it.isMarker && it.latitude != null && it.longitude != null }.forEach { sample ->
+            mapView.overlays.add(Marker(mapView).apply {
+                position = GeoPoint(sample.latitude!!, sample.longitude!!)
+                title = "⚑ ${sample.eventType.ifBlank { "Issue" }}"
+                snippet = "SIM ${sample.simSlot} · ${sample.operator} · ${normalizedRat(sample)} · RSRP ${sample.rsrp} dBm"
+                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                setOnMarkerClickListener { _, _ -> selectedIsCurrent = false; selectedSample = sample; true }
+            })
+        }
 
         mapView.invalidate()
         mapView.post {

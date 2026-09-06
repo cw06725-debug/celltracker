@@ -2,6 +2,10 @@ package com.example.celltracker
 
 import android.app.Application
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.telephony.SubscriptionManager
+import android.telephony.TelephonyManager
 import android.media.AudioManager
 import android.media.ToneGenerator
 import android.os.Build
@@ -72,9 +76,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         sims.isNotEmpty() -> sims.first().subscriptionId
                         else -> null
                     }
+                    val dataSim = defaultDataSubscriptionId()
+                    val dataNet = currentDataNetwork()
+                    NetworkStore.dataSimSubscriptionId = dataSim ?: -1
+                    NetworkStore.dataNetwork = dataNet
                     _state.value = _state.value.copy(
                         sims = sims,
                         selectedSubscriptionId = selectedId,
+                        markTargetSubscriptionId = _state.value.markTargetSubscriptionId?.takeIf { id -> sims.any { it.subscriptionId == id } } ?: selectedId,
+                        dataSimSubscriptionId = dataSim,
+                        dataNetwork = dataNet,
                         lastUpdated = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date()),
                         error = null
                     )
@@ -97,6 +108,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _state.value = _state.value.copy(selectedSubscriptionId = id)
     }
 
+    fun setMarkTargetSubscription(id: Int) {
+        if (!_state.value.isRecording && _state.value.sims.any { it.subscriptionId == id }) {
+            _state.value = _state.value.copy(markTargetSubscriptionId = id)
+        }
+    }
+
     fun updateSettings(settings: AppSettings) {
         settingsRepository.save(settings)
         _state.value = _state.value.copy(settings = settings)
@@ -107,9 +124,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val app = getApplication<Application>()
         val selectedId = _state.value.selectedSubscriptionId ?: return
         val both = _state.value.settings.recordScope == RecordScope.BOTH_SIMS && _state.value.sims.size > 1
+        val markTargetId = if (both) (_state.value.markTargetSubscriptionId ?: selectedId) else selectedId
         val intent = Intent(app, RecordingService::class.java)
             .putExtra(RecordingService.EXTRA_SUBSCRIPTION_ID, selectedId)
             .putExtra(RecordingService.EXTRA_BOTH_SIMS, both)
+            .putExtra(RecordingService.EXTRA_MARK_SUBSCRIPTION_ID, markTargetId)
+        _state.value = _state.value.copy(recordingMarkTargetSubscriptionId = markTargetId)
         ContextCompat.startForegroundService(app, intent)
     }
 
@@ -122,7 +142,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun markEvent(issueType: String, note: String = "") {
         val app = getApplication<Application>()
         if (!_state.value.isRecording) return
-        val selectedId = _state.value.selectedSubscriptionId ?: return
+        val selectedId = _state.value.recordingMarkTargetSubscriptionId ?: _state.value.markTargetSubscriptionId ?: _state.value.selectedSubscriptionId ?: return
         val intent = Intent(app, RecordingService::class.java).apply {
             action = RecordingService.ACTION_MARK
             putExtra(RecordingService.EXTRA_MARK_SUBSCRIPTION_ID, selectedId)
@@ -161,6 +181,34 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun setRecordScope(scope: RecordScope) {
         val updated = _state.value.settings.copy(recordScope = scope)
         settingsRepository.save(updated); _state.value = _state.value.copy(settings = updated)
+    }
+
+    private fun defaultDataSubscriptionId(): Int? = runCatching {
+        SubscriptionManager.getDefaultDataSubscriptionId().takeIf { it != SubscriptionManager.INVALID_SUBSCRIPTION_ID }
+    }.getOrNull()
+
+    private fun currentDataNetwork(): String {
+        val app = getApplication<Application>()
+        val cm = app.getSystemService(ConnectivityManager::class.java) ?: return "--"
+        val network = cm.activeNetwork ?: return "No network"
+        val caps = cm.getNetworkCapabilities(network) ?: return "No network"
+        return when {
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "Wi-Fi"
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "Ethernet"
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> {
+                val subId = defaultDataSubscriptionId()
+                val tm = app.getSystemService(TelephonyManager::class.java)
+                val type = runCatching { if (subId != null) tm.createForSubscriptionId(subId).dataNetworkType else tm.dataNetworkType }.getOrDefault(TelephonyManager.NETWORK_TYPE_UNKNOWN)
+                when (type) {
+                    TelephonyManager.NETWORK_TYPE_NR -> "5G"
+                    TelephonyManager.NETWORK_TYPE_LTE -> "LTE"
+                    TelephonyManager.NETWORK_TYPE_UMTS, TelephonyManager.NETWORK_TYPE_HSPA, TelephonyManager.NETWORK_TYPE_HSPAP, TelephonyManager.NETWORK_TYPE_HSDPA, TelephonyManager.NETWORK_TYPE_HSUPA -> "3G"
+                    TelephonyManager.NETWORK_TYPE_GPRS, TelephonyManager.NETWORK_TYPE_EDGE, TelephonyManager.NETWORK_TYPE_GSM -> "2G"
+                    else -> "Cellular"
+                }
+            }
+            else -> "Other"
+        }
     }
 
     fun deleteRecording(path: String) {

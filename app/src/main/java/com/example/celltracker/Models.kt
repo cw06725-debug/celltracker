@@ -95,6 +95,10 @@ data class AppSettings(
 data class AppState(
     val sims: List<SimCellState> = emptyList(),
     val selectedSubscriptionId: Int? = null,
+    val markTargetSubscriptionId: Int? = null,
+    val recordingMarkTargetSubscriptionId: Int? = null,
+    val dataSimSubscriptionId: Int? = null,
+    val dataNetwork: String = "--",
     val location: LocationData = LocationData(),
     val settings: AppSettings = AppSettings(),
     val isRecording: Boolean = false,
@@ -145,7 +149,9 @@ data class TrackSample(
     val eventSource: String = "MANUAL",
     val eventType: String = "",
     val eventNote: String = "",
-    val screenshot: String = ""
+    val screenshot: String = "",
+    val dataSimSubscriptionId: Int? = null,
+    val dataNetwork: String = "--"
 )
 
 data class RecordingDetail(
@@ -153,4 +159,9 @@ data class RecordingDetail(
     val samples: List<TrackSample>
 ) {
     val simSlots: List<Int> get() = samples.map { it.simSlot }.distinct().sorted()
+}
+
+object NetworkStore {
+    @Volatile var dataSimSubscriptionId: Int = -1
+    @Volatile var dataNetwork: String = "--"
 }

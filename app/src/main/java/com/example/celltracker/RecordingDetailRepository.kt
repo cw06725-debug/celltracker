@@ -65,7 +65,9 @@ object RecordingDetailRepository {
                     eventSource = field(f, "event_source").ifBlank { "MANUAL" },
                     eventType = field(f, "event_type"),
                     eventNote = field(f, "event_note"),
-                    screenshot = field(f, "screenshot")
+                    screenshot = field(f, "screenshot"),
+                    dataSimSubscriptionId = field(f, "data_sim_subscription_id").toIntOrNull(),
+                    dataNetwork = field(f, "data_network").ifBlank { "--" }
                 )
             }.getOrNull()
         }.filterNotNull()
