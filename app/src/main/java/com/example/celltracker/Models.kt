@@ -103,6 +103,7 @@ data class AppSettings(
     val soundOnMark: Boolean = false,
     val floatingWindowEnabled: Boolean = true,
     val floatingAutoShowDuringRecording: Boolean = true,
+    val floatingKeepWhenStopped: Boolean = true,
     val floatingOpacity: Float = 0.80f,
     val floatingStartCompact: Boolean = false,
     val floatingRememberPosition: Boolean = true,

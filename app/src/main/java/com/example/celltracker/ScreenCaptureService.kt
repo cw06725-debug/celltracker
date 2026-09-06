@@ -2,6 +2,7 @@ package com.example.celltracker
 
 import android.app.*
 import android.app.usage.UsageStatsManager
+import android.app.usage.UsageEvents
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
@@ -137,11 +138,28 @@ class ScreenCaptureService : Service() {
         return runCatching {
             val usm = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
             val end = System.currentTimeMillis()
-            val stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, end - 15_000, end)
-            val pkg = stats.maxByOrNull { it.lastTimeUsed }?.packageName ?: return@runCatching "Screen"
-            if (pkg == packageName) return@runCatching "CellTracker"
+            val events = usm.queryEvents(end - 30_000L, end)
+            val event = UsageEvents.Event()
+            var latestPackage: String? = null
+            var latestTime = Long.MIN_VALUE
+            while (events.hasNextEvent()) {
+                events.getNextEvent(event)
+                val isForeground = event.eventType == UsageEvents.Event.MOVE_TO_FOREGROUND ||
+                    (Build.VERSION.SDK_INT >= 29 && event.eventType == UsageEvents.Event.ACTIVITY_RESUMED)
+                val pkg = event.packageName.orEmpty()
+                if (isForeground && pkg.isNotBlank() && pkg != packageName &&
+                    pkg != "com.android.systemui" && event.timeStamp >= latestTime) {
+                    latestPackage = pkg
+                    latestTime = event.timeStamp
+                }
+            }
+            val pkg = latestPackage ?: run {
+                val stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, end - 30_000L, end)
+                stats.filter { it.packageName != packageName && it.packageName != "com.android.systemui" }
+                    .maxByOrNull { it.lastTimeUsed }?.packageName
+            } ?: return@runCatching "Screen"
             val info = packageManager.getApplicationInfo(pkg, 0)
-            packageManager.getApplicationLabel(info).toString()
+            packageManager.getApplicationLabel(info).toString().ifBlank { "Screen" }
         }.getOrDefault("Screen")
     }
 

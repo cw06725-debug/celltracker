@@ -110,7 +110,9 @@ class RecordingService : Service() {
     private fun locationAge(l: LocationData): Long = if (!l.isValid || l.timestampMs <= 0L) Long.MAX_VALUE else (System.currentTimeMillis() - l.timestampMs).coerceAtLeast(0L)
     override fun onDestroy(){
         RecordingState.status.value=RecordingState.status.value.copy(isRecording=false)
-        runCatching { stopService(Intent(this, FloatingOverlayService::class.java)) }
+        if (!settingsRepository.load().floatingKeepWhenStopped) {
+            runCatching { stopService(Intent(this, FloatingOverlayService::class.java)) }
+        }
         scope.cancel()
         super.onDestroy()
     }

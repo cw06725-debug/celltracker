@@ -126,10 +126,19 @@ class MainActivity : ComponentActivity() {
                     launcher.launch(permissions.toTypedArray())
                 }
 
-                LaunchedEffect(state.isRecording, state.settings.floatingWindowEnabled, state.settings.floatingAutoShowDuringRecording) {
-                    if (!state.isRecording) {
-                        overlayPermissionRequestedForRecording = false
-                    } else if (state.settings.floatingWindowEnabled && state.settings.floatingAutoShowDuringRecording &&
+                LaunchedEffect(
+                    state.isRecording,
+                    state.settings.floatingWindowEnabled,
+                    state.settings.floatingAutoShowDuringRecording,
+                    state.settings.floatingKeepWhenStopped
+                ) {
+                    val shouldShowOverlay = state.settings.floatingWindowEnabled &&
+                        ((state.isRecording && state.settings.floatingAutoShowDuringRecording) ||
+                            (!state.isRecording && state.settings.floatingKeepWhenStopped))
+                    if (!state.isRecording) overlayPermissionRequestedForRecording = false
+                    if (shouldShowOverlay && android.provider.Settings.canDrawOverlays(this@MainActivity)) {
+                        runCatching { startService(Intent(this@MainActivity, FloatingOverlayService::class.java)) }
+                    } else if (state.isRecording && state.settings.floatingWindowEnabled && state.settings.floatingAutoShowDuringRecording &&
                         !android.provider.Settings.canDrawOverlays(this@MainActivity) && !overlayPermissionRequestedForRecording) {
                         overlayPermissionRequestedForRecording = true
                         val intent = Intent(
@@ -143,7 +152,9 @@ class MainActivity : ComponentActivity() {
                 LaunchedEffect(state.isRecording, state.settings.floatingCaptureScreenshotOnMark) {
                     if (!state.isRecording) {
                         capturePermissionRequestedForRecording = false
-                        runCatching { stopService(Intent(this@MainActivity, ScreenCaptureService::class.java)) }
+                        if (!state.settings.floatingKeepWhenStopped) {
+                            runCatching { stopService(Intent(this@MainActivity, ScreenCaptureService::class.java)) }
+                        }
                     } else if (state.settings.floatingCaptureScreenshotOnMark && !ScreenCaptureService.isReady && !capturePermissionRequestedForRecording) {
                         capturePermissionRequestedForRecording = true
                         val mgr = getSystemService(android.media.projection.MediaProjectionManager::class.java)
@@ -1872,6 +1883,8 @@ private fun SettingsScreen(settings: AppSettings, onUpdate: (AppSettings) -> Uni
                     }
                     SettingSwitch("Enable floating window", draft.floatingWindowEnabled) { applySetting(draft.copy(floatingWindowEnabled = it)) }
                     SettingSwitch("Auto show while recording", draft.floatingAutoShowDuringRecording) { applySetting(draft.copy(floatingAutoShowDuringRecording = it)) }
+                    SettingSwitch("Keep floating window when not recording", draft.floatingKeepWhenStopped) { applySetting(draft.copy(floatingKeepWhenStopped = it)) }
+                    Text("When enabled, the overlay stays available after Stop so the next recording can be started without reopening CellTracker.", style = MaterialTheme.typography.bodySmall)
                     HorizontalDivider()
                     Text("Opacity  ${(draft.floatingOpacity * 100).toInt()}%", style = MaterialTheme.typography.titleMedium)
                     Slider(

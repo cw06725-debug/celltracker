@@ -47,3 +47,21 @@ Version: 0.7.1 (versionCode 33)
   - A dedicated Ping CSV is saved under the app's ping_results directory and can be shared from the Ping Test page.
 
 Version: 0.7.2 (versionCode 35)
+
+## v0.7.3
+
+- Floating Window can now control recording directly:
+  - START opens a compact overlay setup panel with Task name, Recording scope and SIM/Mark target selection.
+  - STOP ends the active recording without returning to CellTracker.
+  - Recording status field now shows live elapsed time (REC mm:ss / hh:mm:ss).
+- Added `Keep floating window when not recording` under Settings > Floating Window.
+  - Default: ON.
+  - When enabled, the overlay remains after Stop and can start the next task directly.
+  - The last task/scope/target selection is remembered for faster repeated tests.
+- Screenshot file naming/export handling improved:
+  - Foreground app detection now prefers UsageEvents foreground/resume events instead of only latest usage stats.
+  - Exported screenshots are normalized to `<TaskName>_<AppName>_<yyyyMMdd_HHmmss_SSS>.png`.
+  - HTML and Excel screenshot labels use the same normalized filename.
+- Screen-capture permission is kept alive between overlay-controlled recordings when the floating window is configured to remain active, reducing the need to reopen CellTracker between tasks.
+
+Version: 0.7.3 (versionCode 38)

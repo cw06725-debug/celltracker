@@ -15,6 +15,7 @@ class SettingsRepository(context: Context) {
         soundOnMark = prefs.getBoolean("sound_on_mark", false),
         floatingWindowEnabled = prefs.getBoolean("floating_window_enabled", true),
         floatingAutoShowDuringRecording = prefs.getBoolean("floating_auto_show", true),
+        floatingKeepWhenStopped = prefs.getBoolean("floating_keep_when_stopped", true),
         floatingOpacity = prefs.getFloat("floating_opacity", 0.80f).coerceIn(0.20f, 1.00f),
         floatingStartCompact = prefs.getBoolean("floating_start_compact", false),
         floatingRememberPosition = prefs.getBoolean("floating_remember_position", true),
@@ -39,6 +40,7 @@ class SettingsRepository(context: Context) {
             .putBoolean("sound_on_mark", settings.soundOnMark)
             .putBoolean("floating_window_enabled", settings.floatingWindowEnabled)
             .putBoolean("floating_auto_show", settings.floatingAutoShowDuringRecording)
+            .putBoolean("floating_keep_when_stopped", settings.floatingKeepWhenStopped)
             .putFloat("floating_opacity", settings.floatingOpacity.coerceIn(0.20f, 1.00f))
             .putBoolean("floating_start_compact", settings.floatingStartCompact)
             .putBoolean("floating_remember_position", settings.floatingRememberPosition)

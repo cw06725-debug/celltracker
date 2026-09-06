@@ -10,11 +10,14 @@ import android.os.IBinder
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.provider.Settings
+import android.text.InputType
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import android.view.inputmethod.InputMethodManager
 import android.widget.Button
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -31,9 +34,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Recording companion overlay.  It intentionally owns only UI state; samples and
- * markers continue to be written by RecordingService so leaving CellTracker does
- * not create a second recording pipeline.
+ * Always-available test companion overlay.
+ *
+ * While recording it shows the locked Mark Target SIM and can create markers.
+ * When "keep when stopped" is enabled it remains on screen and can start the next
+ * recording without reopening CellTracker.
  */
 class FloatingOverlayService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -44,6 +49,7 @@ class FloatingOverlayService : Service() {
     private var overlayView: LinearLayout? = null
     private var overlayParams: WindowManager.LayoutParams? = null
     private var issueView: View? = null
+    private var startView: View? = null
     private var refreshJob: Job? = null
     private var compact = false
     private var lastTargetSimNo: Int? = null
@@ -53,6 +59,10 @@ class FloatingOverlayService : Service() {
     private lateinit var secondaryText: TextView
     private lateinit var dataText: TextView
     private lateinit var toggleButton: Button
+    private lateinit var markButton: Button
+    private lateinit var startButton: Button
+    private lateinit var stopButton: Button
+    private lateinit var controlsRow: LinearLayout
 
     override fun onCreate() {
         super.onCreate()
@@ -104,21 +114,38 @@ class FloatingOverlayService : Service() {
 
         primaryText = textView(17f, true).apply { text = "RSRP --   SINR --" }
         secondaryText = textView(13f, false).apply { text = "RSRQ -- · B-- · PCI --" }
-        dataText = textView(12f, false).apply { text = "Data -- · REC" }
+        dataText = textView(12f, false).apply { text = "Data --" }
         root.addView(primaryText)
         root.addView(secondaryText)
         root.addView(dataText)
 
-        val mark = Button(this).apply {
+        controlsRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        markButton = Button(this).apply {
             text = "MARK"
-            textSize = 14f
+            textSize = 13f
             setOnClickListener { showIssueMenu() }
         }
-        root.addView(mark, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(42)))
-        mark.tag = "markButton"
+        stopButton = Button(this).apply {
+            text = "STOP"
+            textSize = 13f
+            setOnClickListener { stopRecordingFromOverlay() }
+        }
+        controlsRow.addView(markButton, LinearLayout.LayoutParams(0, dp(42), 1f).apply { marginEnd = dp(4) })
+        controlsRow.addView(stopButton, LinearLayout.LayoutParams(0, dp(42), 1f).apply { marginStart = dp(4) })
+        root.addView(controlsRow)
+
+        startButton = Button(this).apply {
+            text = "START"
+            textSize = 14f
+            setOnClickListener { showStartMenu() }
+        }
+        root.addView(startButton, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(42)))
 
         val params = WindowManager.LayoutParams(
-            dp(220),
+            dp(230),
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
@@ -133,6 +160,7 @@ class FloatingOverlayService : Service() {
         overlayParams = params
         windowManager.addView(root, params)
         setCompact(compact)
+        updateControls(RecordingState.status.value.isRecording)
     }
 
     private fun attachDrag(handle: View, params: WindowManager.LayoutParams) {
@@ -175,11 +203,21 @@ class FloatingOverlayService : Service() {
         primaryText.visibility = if (compact) View.GONE else View.VISIBLE
         secondaryText.visibility = if (compact) View.GONE else View.VISIBLE
         dataText.visibility = if (compact) View.GONE else View.VISIBLE
-        overlayView?.findViewWithTag<View>("markButton")?.visibility = if (compact) View.GONE else View.VISIBLE
+        updateControls(RecordingState.status.value.isRecording)
         overlayParams?.let { p ->
-            p.width = if (compact) dp(165) else dp(220)
+            p.width = if (compact) dp(175) else dp(230)
             overlayView?.let { runCatching { windowManager.updateViewLayout(it, p) } }
         }
+    }
+
+    private fun updateControls(isRecording: Boolean) {
+        if (compact) {
+            controlsRow.visibility = View.GONE
+            startButton.visibility = View.GONE
+            return
+        }
+        controlsRow.visibility = if (isRecording) View.VISIBLE else View.GONE
+        startButton.visibility = if (isRecording) View.GONE else View.VISIBLE
     }
 
     private fun startRefreshLoop() {
@@ -188,23 +226,28 @@ class FloatingOverlayService : Service() {
             while (isActive) {
                 val status = RecordingState.status.value
                 val settings = settingsRepository.load()
-                if (!status.isRecording || !settings.floatingWindowEnabled) {
+                if (!settings.floatingWindowEnabled || (!status.isRecording && !settings.floatingKeepWhenStopped)) {
                     withContext(Dispatchers.Main) { stopSelf() }
                     break
                 }
                 val all = runCatching { cellular.readAllSims() }.getOrDefault(emptyList())
-                val targetId = status.markTargetSubscriptionId
+                val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+                val rememberedTarget = prefs.getInt(KEY_LAST_MARK_SUB, -1)
+                val targetId = if (status.isRecording && status.markTargetSubscriptionId >= 0) status.markTargetSubscriptionId
+                else rememberedTarget
                 val sim = all.firstOrNull { it.subscriptionId == targetId } ?: all.firstOrNull()
                 withContext(Dispatchers.Main) {
                     overlayView?.background = roundedBackground(settings.floatingOpacity)
-                    if (sim != null) updateTexts(sim)
+                    updateControls(status.isRecording)
+                    if (sim != null) updateTexts(sim, status)
+                    else headerText.text = if (status.isRecording) "Recording · No SIM" else "Ready · No SIM"
                 }
                 delay(settings.uiRefreshMs.coerceIn(500L, 2000L))
             }
         }
     }
 
-    private fun updateTexts(sim: SimCellState) {
+    private fun updateTexts(sim: SimCellState, status: RecordingStatus) {
         val c = sim.servingCell
         val simNo = sim.simSlotIndex + 1
         lastTargetSimNo = simNo
@@ -215,10 +258,10 @@ class FloatingOverlayService : Service() {
             FloatingField.MARK_TARGET -> "S$simNo"
             FloatingField.OPERATOR -> c.operator.ifBlank { "--" }
             FloatingField.RAT -> c.displayRat.ifBlank { c.rat }
-            FloatingField.RSRP -> "RSRP ${unit(c.rsrp, "dBm")}"
-            FloatingField.RSRQ -> "RSRQ ${unit(c.rsrq, "dB")}"
-            FloatingField.SINR -> "SINR ${unit(c.sinr, "dB")}"
-            FloatingField.RSSI -> "RSSI ${unit(c.rssi, "dBm")}"
+            FloatingField.RSRP -> "RSRP ${unit(c.rsrp, "dBm")}" 
+            FloatingField.RSRQ -> "RSRQ ${unit(c.rsrq, "dB")}" 
+            FloatingField.SINR -> "SINR ${unit(c.sinr, "dB")}" 
+            FloatingField.RSSI -> "RSSI ${unit(c.rssi, "dBm")}" 
             FloatingField.BAND -> "Band ${c.band}"
             FloatingField.PCI -> "PCI ${c.pci}"
             FloatingField.ARFCN -> "ARFCN ${c.arfcn}"
@@ -232,10 +275,12 @@ class FloatingOverlayService : Service() {
             FloatingField.TAC -> "TAC ${c.tac}"
             FloatingField.SPEED -> "Speed ${LocationStore.latest.value.speedKmh} km/h"
             FloatingField.GPS_ACCURACY -> "GPS ±${LocationStore.latest.value.accuracy} m"
-            FloatingField.RECORDING -> "REC"
+            FloatingField.RECORDING -> if (status.isRecording) "REC ${formatElapsed(System.currentTimeMillis() - status.startedAt)}" else "STOP"
         }
         if (compact) {
-            headerText.text = ordered.joinToString(" · ") { value(it) }.ifBlank { "S$simNo · REC" }
+            headerText.text = ordered.joinToString(" · ") { value(it) }.ifBlank {
+                if (status.isRecording) "S$simNo · REC ${formatElapsed(System.currentTimeMillis() - status.startedAt)}" else "S$simNo · Ready"
+            }
             return
         }
         val tokens = ordered.map { value(it) }
@@ -248,8 +293,140 @@ class FloatingOverlayService : Service() {
         dataText.visibility = if (dataText.text.isBlank()) View.GONE else View.VISIBLE
     }
 
+    private fun showStartMenu() {
+        if (startView != null || issueView != null || RecordingState.status.value.isRecording) return
+        scope.launch {
+            val sims = runCatching { cellular.readAllSims() }.getOrDefault(emptyList())
+            withContext(Dispatchers.Main) {
+                if (sims.isEmpty()) {
+                    Toast.makeText(this@FloatingOverlayService, "No active SIM available", Toast.LENGTH_SHORT).show()
+                } else {
+                    createStartMenu(sims)
+                }
+            }
+        }
+    }
+
+    private fun createStartMenu(sims: List<SimCellState>) {
+        val settings = settingsRepository.load()
+        val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+        var both = prefs.getBoolean(KEY_LAST_BOTH, false) && sims.size > 1
+        var selectedSub = prefs.getInt(KEY_LAST_MARK_SUB, -1).takeIf { id -> sims.any { it.subscriptionId == id } }
+            ?: sims.first().subscriptionId
+
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            background = roundedBackground((settings.floatingOpacity + 0.12f).coerceAtMost(1f))
+        }
+        panel.addView(textView(16f, true).apply { text = "Start recording" })
+        val taskInput = EditText(this).apply {
+            hint = "Task name"
+            setText(prefs.getString(KEY_LAST_TASK, "").orEmpty())
+            setTextColor(Color.WHITE)
+            setHintTextColor(Color.LTGRAY)
+            singleLine = true
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            setPadding(dp(8), dp(4), dp(8), dp(4))
+        }
+        panel.addView(taskInput, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(48)))
+
+        val scopeButton = Button(this)
+        val targetTitle = textView(13f, true)
+        val simButtons = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+
+        fun redraw() {
+            scopeButton.text = if (both) "Recording scope: Both SIMs" else "Recording scope: Current SIM"
+            targetTitle.text = if (both) "Mark target" else "Recording SIM"
+            simButtons.removeAllViews()
+            sims.forEach { sim ->
+                val selected = sim.subscriptionId == selectedSub
+                simButtons.addView(Button(this).apply {
+                    isAllCaps = false
+                    text = "${if (selected) "✓ " else ""}SIM ${sim.simSlotIndex + 1} · ${sim.servingCell.operator.ifBlank { "--" }}"
+                    setOnClickListener { selectedSub = sim.subscriptionId; redraw() }
+                }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(44)))
+            }
+        }
+        scopeButton.isAllCaps = false
+        scopeButton.setOnClickListener {
+            if (sims.size > 1) {
+                both = !both
+                redraw()
+            }
+        }
+        panel.addView(scopeButton, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(44)))
+        panel.addView(targetTitle)
+        panel.addView(simButtons)
+        redraw()
+
+        val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        actions.addView(Button(this).apply {
+            text = "Cancel"
+            isAllCaps = false
+            setOnClickListener { closeStartMenu() }
+        }, LinearLayout.LayoutParams(0, dp(44), 1f).apply { marginEnd = dp(4) })
+        actions.addView(Button(this).apply {
+            text = "Start"
+            isAllCaps = false
+            setOnClickListener {
+                startRecordingFromOverlay(taskInput.text?.toString().orEmpty(), selectedSub, both)
+                closeStartMenu()
+            }
+        }, LinearLayout.LayoutParams(0, dp(44), 1f).apply { marginStart = dp(4) })
+        panel.addView(actions)
+
+        val base = overlayParams ?: return
+        val params = WindowManager.LayoutParams(
+            dp(275), WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = base.x
+            y = (base.y + dp(42)).coerceAtLeast(0)
+            softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+        }
+        startView = panel
+        runCatching {
+            windowManager.addView(panel, params)
+            taskInput.requestFocus()
+            taskInput.postDelayed({
+                (getSystemService(INPUT_METHOD_SERVICE) as? InputMethodManager)?.showSoftInput(taskInput, InputMethodManager.SHOW_IMPLICIT)
+            }, 120)
+        }.onFailure { startView = null }
+    }
+
+    private fun startRecordingFromOverlay(task: String, selectedSub: Int, both: Boolean) {
+        val safeTask = task.trim().take(48)
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+            .putString(KEY_LAST_TASK, safeTask)
+            .putBoolean(KEY_LAST_BOTH, both)
+            .putInt(KEY_LAST_MARK_SUB, selectedSub)
+            .apply()
+        val intent = Intent(this, RecordingService::class.java).apply {
+            putExtra(RecordingService.EXTRA_SUBSCRIPTION_ID, selectedSub)
+            putExtra(RecordingService.EXTRA_BOTH_SIMS, both)
+            putExtra(RecordingService.EXTRA_MARK_SUBSCRIPTION_ID, selectedSub)
+            putExtra(RecordingService.EXTRA_TASK_NAME, safeTask)
+        }
+        ContextCompat.startForegroundService(this, intent)
+        if (settingsRepository.load().floatingCaptureScreenshotOnMark && !ScreenCaptureService.isReady) {
+            Toast.makeText(this, "Recording started. Screenshot capture needs CellTracker screen-capture permission if it is not already active.", Toast.LENGTH_LONG).show()
+        } else {
+            Toast.makeText(this, "Recording started", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun stopRecordingFromOverlay() {
+        if (!RecordingState.status.value.isRecording) return
+        stopService(Intent(this, RecordingService::class.java))
+        Toast.makeText(this, "Recording stopped", Toast.LENGTH_SHORT).show()
+    }
+
     private fun showIssueMenu() {
-        if (issueView != null) return
+        if (issueView != null || startView != null || !RecordingState.status.value.isRecording) return
         val settings = settingsRepository.load()
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -287,9 +464,7 @@ class FloatingOverlayService : Service() {
         runCatching { windowManager.addView(panel, params) }.onFailure { issueView = null }
     }
 
-    private fun targetLabel(): String {
-        return lastTargetSimNo?.let { "SIM$it" } ?: "--"
-    }
+    private fun targetLabel(): String = lastTargetSimNo?.let { "SIM$it" } ?: "--"
 
     private fun submitMark(issue: String) {
         val subId = RecordingState.status.value.markTargetSubscriptionId
@@ -333,6 +508,11 @@ class FloatingOverlayService : Service() {
         issueView = null
     }
 
+    private fun closeStartMenu() {
+        startView?.let { runCatching { windowManager.removeView(it) } }
+        startView = null
+    }
+
     private fun textView(sizeSp: Float, bold: Boolean) = TextView(this).apply {
         textSize = sizeSp
         setTextColor(Color.WHITE)
@@ -350,11 +530,20 @@ class FloatingOverlayService : Service() {
     }
 
     private fun unit(value: String, suffix: String) = if (value.isBlank() || value == "--") "--" else "$value $suffix"
+    private fun formatElapsed(ms: Long): String {
+        val total = (ms.coerceAtLeast(0L) / 1000L)
+        val h = total / 3600
+        val m = (total % 3600) / 60
+        val s = total % 60
+        return if (h > 0) String.format(java.util.Locale.US, "%02d:%02d:%02d", h, m, s)
+        else String.format(java.util.Locale.US, "%02d:%02d", m, s)
+    }
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt().coerceAtLeast(1)
 
     override fun onDestroy() {
         refreshJob?.cancel()
         closeIssueMenu()
+        closeStartMenu()
         overlayView?.let { runCatching { windowManager.removeView(it) } }
         overlayView = null
         scope.cancel()
@@ -367,5 +556,8 @@ class FloatingOverlayService : Service() {
         private const val PREFS = "celltracker_overlay"
         private const val KEY_X = "x"
         private const val KEY_Y = "y"
+        private const val KEY_LAST_TASK = "last_task"
+        private const val KEY_LAST_BOTH = "last_both"
+        private const val KEY_LAST_MARK_SUB = "last_mark_sub"
     }
 }

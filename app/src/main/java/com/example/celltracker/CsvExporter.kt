@@ -72,8 +72,11 @@ object CsvExporter {
         ).toString()
 
         val screenshotFiles = collectScreenshotFiles(source)
-        val screenshotUris = screenshotFiles.mapNotNull { file ->
-            runCatching { saveBytesToDownloads(context, file.name, "image/png", file.readBytes()).toString() }.getOrNull()
+        val screenshotExports = screenshotFiles.mapIndexed { index, file ->
+            file to normalizedScreenshotName(source, file, index)
+        }
+        val screenshotUris = screenshotExports.mapNotNull { (file, exportName) ->
+            runCatching { saveBytesToDownloads(context, exportName, "image/png", file.readBytes()).toString() }.getOrNull()
         }
 
         val rawDescription = if (mode == CsvExportMode.SEPARATE_BY_SIM) {
@@ -91,8 +94,35 @@ object CsvExporter {
             kmlUri = kmlUri,
             kmlName = kmlName,
             screenshotUris = screenshotUris,
-            screenshotNames = screenshotFiles.map { it.name }
+            screenshotNames = screenshotExports.map { it.second }
         )
+    }
+
+
+    /**
+     * Export screenshots with a stable human-readable name even for recordings
+     * created by older builds. New captures already follow this format, but the
+     * export normalizer guarantees: TaskName_AppName_yyyyMMdd_HHmmss_SSS.png.
+     */
+    private fun normalizedScreenshotName(source: File, screenshot: File, index: Int): String {
+        val task = recordingTaskName(source).ifBlank { "Untitled" }
+        val raw = screenshot.nameWithoutExtension
+        val stampMatch = Regex("_(\\d{8}_\\d{6}_\\d{3})$").find(raw)
+        val stamp = stampMatch?.groupValues?.getOrNull(1) ?:
+            SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date(screenshot.lastModified().takeIf { it > 0L } ?: System.currentTimeMillis()))
+        var prefix = stampMatch?.let { raw.substring(0, it.range.first) } ?: raw
+        val safeTask = sanitize(task)
+        if (prefix.startsWith(safeTask + "_", ignoreCase = true)) prefix = prefix.substring(safeTask.length + 1)
+        if (prefix.startsWith("Untitled_", ignoreCase = true)) prefix = prefix.substring("Untitled_".length)
+        val app = sanitize(prefix).ifBlank { "Screen" }.take(48)
+        val suffix = if (index > 0 && screenshot.nameWithoutExtension == raw && stampMatch == null) "_${index + 1}" else ""
+        return "${safeTask}_${app}_${stamp}${suffix}.png"
+    }
+
+    private fun recordingTaskName(source: File): String {
+        val base = source.nameWithoutExtension.removePrefix("CellTracker_").removePrefix("CellTracker")
+        val match = Regex("^(.*)_(DualSIM|SIM\\d+|SIM)_\\d{8}_\\d{6}$").matchEntire(base)
+        return sanitize(match?.groupValues?.getOrNull(1).orEmpty().trim('_')).ifBlank { "Untitled" }
     }
 
     private fun collectScreenshotFiles(source: File): List<File> {
@@ -193,7 +223,7 @@ object CsvExporter {
         summary += listOf("Marked Issue Details")
         val issueHeaders = listOf("Time","Source","Issue","SIM","Operator","RAT","Band","CA / EN-DC","RSRP","RSRQ","SINR","RSSI","CQI","PCI","ARFCN","Data RAT","DataNet","Latitude","Longitude","Note","Screenshot")
         summary += issueHeaders
-        events.forEach { r -> summary += listOf(f(r,"timestamp"),f(r,"event_source"),f(r,"event_type"),f(r,"sim_slot"),f(r,"operator"),f(r,"display_rat").ifBlank{f(r,"rat")},f(r,"band"),f(r,"carrier_aggregation"),f(r,"rsrp"),f(r,"rsrq"),f(r,"sinr"),f(r,"rssi"),f(r,"cqi"),f(r,"pci"),f(r,"arfcn"),f(r,"data_rat"),f(r,"data_network"),f(r,"latitude"),f(r,"longitude"),f(r,"event_note"),File(f(r,"screenshot")).name.takeIf { f(r,"screenshot").isNotBlank() }.orEmpty()) }
+        events.forEach { r -> summary += listOf(f(r,"timestamp"),f(r,"event_source"),f(r,"event_type"),f(r,"sim_slot"),f(r,"operator"),f(r,"display_rat").ifBlank{f(r,"rat")},f(r,"band"),f(r,"carrier_aggregation"),f(r,"rsrp"),f(r,"rsrq"),f(r,"sinr"),f(r,"rssi"),f(r,"cqi"),f(r,"pci"),f(r,"arfcn"),f(r,"data_rat"),f(r,"data_network"),f(r,"latitude"),f(r,"longitude"),f(r,"event_note"),f(r,"screenshot").takeIf { it.isNotBlank() }?.let { normalizedScreenshotName(source, File(it), 0) }.orEmpty()) }
 
         fun xml(v:String)=v.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace("\"","&quot;")
         fun colName(n:Int):String { var x=n+1; var out=""; while(x>0){ val r=(x-1)%26; out=('A'.code+r).toChar()+out; x=(x-1)/26 }; return out }
@@ -241,7 +271,7 @@ object CsvExporter {
 
     private fun buildSummaryHtml(source: File): String {
         val lines = source.readLines().filter { it.isNotBlank() }
-        if (lines.size < 2) return basicSummaryHtml(source.name, emptyList())
+        if (lines.size < 2) return basicSummaryHtml(source, emptyList())
 
         val header = parseCsvLine(lines.first())
         val index = header.withIndex().associate { it.value to it.index }
@@ -273,10 +303,11 @@ object CsvExporter {
                 screenshot = field(f, "screenshot")
             )
         }
-        return basicSummaryHtml(source.name, rows)
+        return basicSummaryHtml(source, rows)
     }
 
-    private fun basicSummaryHtml(sourceName: String, rows: List<SummaryRow>): String {
+    private fun basicSummaryHtml(source: File, rows: List<SummaryRow>): String {
+        val sourceName = source.name
         val started = rows.firstOrNull()?.timestamp.orEmpty()
         val ended = rows.lastOrNull()?.timestamp.orEmpty()
         val events = rows.filter { it.issueType.isNotBlank() }
@@ -329,7 +360,8 @@ object CsvExporter {
             append("<h2>Marked Issue Details</h2><div class='card'><table><thead><tr><th>Time</th><th>Source</th><th>Issue</th><th>SIM</th><th>Operator</th><th>RAT</th><th>Band</th><th>CA / EN-DC</th><th>RSRP</th><th>RSRQ</th><th>SINR</th><th>RSSI</th><th>CQI</th><th>PCI</th><th>ARFCN</th><th>Data RAT</th><th>Latitude</th><th>Longitude</th><th>Note</th><th>Screenshot</th></tr></thead><tbody>")
             if (events.isEmpty()) append("<tr><td colspan='20' class='muted'>No marked issues</td></tr>")
             else events.forEach { e ->
-                append("<tr><td>${esc(e.timestamp)}</td><td>${esc(e.eventSource)}</td><td class='issue'>${esc(e.issueType)}</td><td>SIM ${esc(e.simSlot)}</td><td>${esc(e.operator)}</td><td>${esc(e.rat)}</td><td>${esc(e.band)}</td><td>${esc(e.carrierAggregation)}</td><td>${esc(e.rsrp)}</td><td>${esc(e.rsrq)}</td><td>${esc(e.sinr)}</td><td>${esc(e.rssi)}</td><td>${esc(e.cqi)}</td><td>${esc(e.pci)}</td><td>${esc(e.arfcn)}</td><td>${esc(e.dataRat)}</td><td>${esc(e.latitude)}</td><td>${esc(e.longitude)}</td><td>${esc(e.note)}</td><td>${esc(File(e.screenshot).name.takeIf { e.screenshot.isNotBlank() }.orEmpty())}</td></tr>")
+                val screenshotName = if (e.screenshot.isNotBlank()) normalizedScreenshotName(source, File(e.screenshot), 0) else ""
+                append("<tr><td>${esc(e.timestamp)}</td><td>${esc(e.eventSource)}</td><td class='issue'>${esc(e.issueType)}</td><td>SIM ${esc(e.simSlot)}</td><td>${esc(e.operator)}</td><td>${esc(e.rat)}</td><td>${esc(e.band)}</td><td>${esc(e.carrierAggregation)}</td><td>${esc(e.rsrp)}</td><td>${esc(e.rsrq)}</td><td>${esc(e.sinr)}</td><td>${esc(e.rssi)}</td><td>${esc(e.cqi)}</td><td>${esc(e.pci)}</td><td>${esc(e.arfcn)}</td><td>${esc(e.dataRat)}</td><td>${esc(e.latitude)}</td><td>${esc(e.longitude)}</td><td>${esc(e.note)}</td><td>${esc(screenshotName)}</td></tr>")
             }
             append("</tbody></table></div>")
             append("</body></html>")
