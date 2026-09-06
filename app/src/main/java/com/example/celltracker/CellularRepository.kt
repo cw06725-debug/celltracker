@@ -21,6 +21,9 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.resume
 
 class CellularRepository(private val context: Context) {
+    // LTE_CA is hidden from some public Android SDK stubs; AOSP uses network type 19.
+    // Keep this compatibility value local so the project compiles with compileSdk 34.
+    private val NETWORK_TYPE_LTE_CA_COMPAT = 19
     private val baseTm = context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
     private val subscriptionManager = context.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as SubscriptionManager
 
@@ -215,7 +218,7 @@ class CellularRepository(private val context: Context) {
         val registeredLteBands = parsed.filter { it.registered && it.rat == "LTE" }.map { it.band }.filter { it != "--" }.distinct()
         val visibleNrBands = parsed.filter { it.rat == "NR" }.map { it.band }.filter { it != "--" }.distinct()
         val type = runCatching { tm.dataNetworkType }.getOrDefault(TelephonyManager.NETWORK_TYPE_UNKNOWN)
-        val lteCa = type == TelephonyManager.NETWORK_TYPE_LTE_CA || registeredLteBands.size > 1
+        val lteCa = type == NETWORK_TYPE_LTE_CA_COMPAT || registeredLteBands.size > 1
         return when {
             lteCa && registeredLteBands.isNotEmpty() -> "LTE CA: ${registeredLteBands.joinToString(" + ")}"
             lteCa -> "LTE CA: Active"
@@ -229,7 +232,7 @@ class CellularRepository(private val context: Context) {
 
     private fun networkTypeName(type: Int): String = when (type) {
         TelephonyManager.NETWORK_TYPE_NR -> "NR"
-        TelephonyManager.NETWORK_TYPE_LTE, TelephonyManager.NETWORK_TYPE_LTE_CA -> "LTE"
+        TelephonyManager.NETWORK_TYPE_LTE, NETWORK_TYPE_LTE_CA_COMPAT -> "LTE"
         TelephonyManager.NETWORK_TYPE_UMTS -> "UMTS"
         TelephonyManager.NETWORK_TYPE_HSPA -> "HSPA"
         TelephonyManager.NETWORK_TYPE_HSPAP -> "HSPA+"

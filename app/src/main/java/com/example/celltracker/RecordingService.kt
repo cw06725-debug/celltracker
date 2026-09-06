@@ -25,6 +25,7 @@ class RecordingService : Service() {
     private var targetSubscriptionId: Int = -1
     private var bothSims: Boolean = false
     private var markTargetSubscriptionId: Int = -1
+    private var taskName: String = ""
 
     override fun onCreate() {
         super.onCreate()
@@ -48,6 +49,7 @@ class RecordingService : Service() {
             targetSubscriptionId = intent?.getIntExtra(EXTRA_SUBSCRIPTION_ID, -1) ?: -1
             markTargetSubscriptionId = intent?.getIntExtra(EXTRA_MARK_SUBSCRIPTION_ID, targetSubscriptionId) ?: targetSubscriptionId
             bothSims = intent?.getBooleanExtra(EXTRA_BOTH_SIMS, false) ?: false
+            taskName = intent?.getStringExtra(EXTRA_TASK_NAME).orEmpty().trim()
             startRecording()
         }
         return START_NOT_STICKY
@@ -58,7 +60,9 @@ class RecordingService : Service() {
             val dir = File(getExternalFilesDir(null), "recordings").apply { mkdirs() }
             val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
             val scopeName = if (bothSims) "DualSIM" else "SIM"
-            val file = File(dir, "CellTracker_${scopeName}_$stamp.csv")
+            val safeTask = sanitizeTaskName(taskName)
+            val taskPart = safeTask.takeIf { it.isNotBlank() }?.let { "_${it}" }.orEmpty()
+            val file = File(dir, "CellTracker${taskPart}_${scopeName}_$stamp.csv")
             FileWriter(file, false).use { it.appendLine(CSV_HEADER) }
             val started = System.currentTimeMillis(); val perSim = mutableMapOf<Int, Long>()
             val initialLocation = LocationStore.latest.value
@@ -102,11 +106,17 @@ class RecordingService : Service() {
         const val EXTRA_MARK_SUBSCRIPTION_ID="mark_subscription_id"
         const val EXTRA_EVENT_TYPE="event_type"
         const val EXTRA_EVENT_NOTE="event_note"
+        const val EXTRA_TASK_NAME="task_name"
         const val CSV_HEADER="timestamp,sim_slot,subscription_id,operator,rat,display_rat,mcc,mnc,tac,cell_id,pci,arfcn,rsrp,rsrq,sinr,band,bandwidth,rssi,timing_advance,csi_rsrp,csi_rsrq,csi_sinr,cqi,signal_level,asu_level,carrier_aggregation,data_rat,voice_rat,roaming,latitude,longitude,altitude,accuracy,speed_kmh,bearing,location_valid,is_marker,marker_id,event_source,event_type,event_note,screenshot,data_sim_subscription_id,data_network"
         fun csvLine(timestamp:Long,c:CellData,l:LocationData,isMarker:Boolean,eventType:String,eventNote:String,markerId:String="",eventSource:String="MANUAL"):String{
             val time=SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS",Locale.US).format(Date(timestamp)); val v=listOf(time,(c.simSlotIndex+1).toString(),c.subscriptionId.toString(),c.operator,c.rat,c.displayRat,c.mcc,c.mnc,c.tac,c.cellId,c.pci,c.arfcn,c.rsrp,c.rsrq,c.sinr,c.band,c.bandwidth,c.rssi,c.timingAdvance,c.csiRsrp,c.csiRsrq,c.csiSinr,c.cqi,c.level,c.asuLevel,c.carrierAggregation,c.dataRat,c.voiceRat,c.roaming,l.latitude,l.longitude,l.altitude,l.accuracy,l.speedKmh,l.bearing,l.isValid.toString(),isMarker.toString(),markerId,eventSource,eventType,eventNote,"",NetworkStore.dataSimSubscriptionId.takeIf { it >= 0 }?.toString().orEmpty(),NetworkStore.dataNetwork)
             return v.joinToString(","){ escapeCsv(it) }
         }
+        private fun sanitizeTaskName(value: String): String = value
+            .replace(Regex("[\\/:*?\"<>|\r\n]+"), "_")
+            .replace(Regex("\\s+"), "_")
+            .trim('_', ' ')
+            .take(48)
         private fun escapeCsv(value:String):String{ val safe=value.replace("\"","\"\""); return if(safe.contains(',')||safe.contains('"')||safe.contains('\n')) "\"$safe\"" else safe }
     }
 }

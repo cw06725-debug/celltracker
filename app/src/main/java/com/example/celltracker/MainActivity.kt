@@ -182,7 +182,7 @@ private sealed interface RootDestination {
 private fun MainScreen(
     state: AppState,
     onSelectSim: (Int) -> Unit,
-    onStartRecording: () -> Unit,
+    onStartRecording: (String) -> Unit,
     onRecordScope: (RecordScope) -> Unit,
     onMarkTarget: (Int) -> Unit,
     onStopRecording: () -> Unit,
@@ -202,6 +202,8 @@ private fun MainScreen(
     var showDeleteAll by remember { mutableStateOf(false) }
     var showLiveMap by remember { mutableStateOf(false) }
     var showMarkDialog by remember { mutableStateOf(false) }
+    var showTaskNameDialog by remember { mutableStateOf(false) }
+    var taskNameInput by remember { mutableStateOf("") }
 
     val selected = state.sims.firstOrNull { it.subscriptionId == state.selectedSubscriptionId } ?: state.sims.firstOrNull()
     val context = LocalContext.current
@@ -418,7 +420,7 @@ private fun MainScreen(
                         Button(onClick = onStopRecording) { Text("Stop") }
                         OutlinedButton(onClick = { showMarkDialog = true }) { Text("Mark issue") }
                     }
-                } else Button(onClick = onStartRecording, enabled = active != null) { Text("Start Recording") }
+                } else Button(onClick = { showTaskNameDialog = true }, enabled = active != null) { Text("Start Recording") }
 
                 if (state.recordings.isNotEmpty()) {
                     HorizontalDivider(Modifier.padding(vertical = 8.dp))
@@ -435,6 +437,7 @@ private fun MainScreen(
                                     Text(SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(item.startedAt)), style = MaterialTheme.typography.labelLarge)
                                     Text("View ›", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                                 }
+                                Text(recordingDisplayName(item.fileName), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
                                 Text("${item.simSummary} · ${formatElapsed(item.durationMs)} · ${item.totalSamples} samples", style = MaterialTheme.typography.bodySmall)
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     TextButton(onClick = {
@@ -463,6 +466,42 @@ private fun MainScreen(
             onSave = { issue, note ->
                 onMarkEvent(issue, note)
                 showMarkDialog = false
+            }
+        )
+    }
+
+    if (showTaskNameDialog) {
+        AlertDialog(
+            onDismissRequest = { showTaskNameDialog = false },
+            title = { Text("Recording task") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Give this recording a task name so it is easier to identify later. You can also skip it.")
+                    OutlinedTextField(
+                        value = taskNameInput,
+                        onValueChange = { if (it.length <= 48) taskNameInput = it },
+                        label = { Text("Task name") },
+                        placeholder = { Text("e.g. Zong 5G Drive Test") },
+                        singleLine = true
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    onStartRecording(taskNameInput.trim())
+                    showTaskNameDialog = false
+                    taskNameInput = ""
+                }) { Text("Start") }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = {
+                        onStartRecording("")
+                        showTaskNameDialog = false
+                        taskNameInput = ""
+                    }) { Text("Skip") }
+                    TextButton(onClick = { showTaskNameDialog = false }) { Text("Cancel") }
+                }
             }
         )
     }
@@ -1530,6 +1569,16 @@ private fun ratColor(rat: String): Int = when {
     rat.contains("3G", true) -> AndroidColor.rgb(255, 152, 0)
     rat.contains("2G", true) -> AndroidColor.rgb(117, 117, 117)
     else -> AndroidColor.rgb(156, 39, 176)
+}
+
+private fun recordingDisplayName(fileName: String): String {
+    val base = fileName.substringBeforeLast('.')
+    val prefix = "CellTracker_"
+    if (!base.startsWith(prefix)) return base
+    val body = base.removePrefix(prefix)
+    val match = Regex("^(.*)_(DualSIM|SIM)_\\d{8}_\\d{6}$").matchEntire(body)
+    val task = match?.groupValues?.getOrNull(1).orEmpty()
+    return if (task.isBlank()) "Untitled recording" else task.replace('_', ' ')
 }
 
 private fun formatCoord(v: Double?): String = v?.let { String.format(Locale.US, "%.6f", it) } ?: "--"

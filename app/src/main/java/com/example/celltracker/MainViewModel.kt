@@ -120,7 +120,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         restartCellLoop()
     }
 
-    fun startRecording() {
+    fun startRecording(taskName: String = "") {
         val app = getApplication<Application>()
         val selectedId = _state.value.selectedSubscriptionId ?: return
         val both = _state.value.settings.recordScope == RecordScope.BOTH_SIMS && _state.value.sims.size > 1
@@ -129,6 +129,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             .putExtra(RecordingService.EXTRA_SUBSCRIPTION_ID, selectedId)
             .putExtra(RecordingService.EXTRA_BOTH_SIMS, both)
             .putExtra(RecordingService.EXTRA_MARK_SUBSCRIPTION_ID, markTargetId)
+            .putExtra(RecordingService.EXTRA_TASK_NAME, taskName.trim())
         _state.value = _state.value.copy(recordingMarkTargetSubscriptionId = markTargetId)
         ContextCompat.startForegroundService(app, intent)
     }
