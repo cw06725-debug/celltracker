@@ -26,8 +26,6 @@ data class ExportResult(
     val excelName: String? = null,
     val kmlUri: String? = null,
     val kmlName: String? = null,
-    val pingUri: String? = null,
-    val pingName: String? = null,
     val screenshotUris: List<String> = emptyList(),
     val screenshotNames: List<String> = emptyList()
 ) {
@@ -73,10 +71,6 @@ object CsvExporter {
             buildKml(source)
         ).toString()
 
-        val pingSource = File(source.parentFile, source.nameWithoutExtension + "_ping.csv").takeIf { it.exists() }
-        val pingName = pingSource?.name
-        val pingUri = pingSource?.let { saveToDownloads(context, it.name, "text/csv", it.readText()).toString() }
-
         val screenshotFiles = collectScreenshotFiles(source)
         val screenshotUris = screenshotFiles.mapNotNull { file ->
             runCatching { saveBytesToDownloads(context, file.name, "image/png", file.readBytes()).toString() }.getOrNull()
@@ -88,7 +82,7 @@ object CsvExporter {
             "1 CSV file"
         }
         return ExportResult(
-            message = "Export successful · $rawDescription + Summary + Excel + KML" + if (pingUri != null) " + Ping results" else "",
+            message = "Export successful · $rawDescription + Summary + Excel + KML",
             exportedFileUris = rawUris,
             summaryUri = summaryUri,
             summaryName = summaryName,
@@ -96,8 +90,6 @@ object CsvExporter {
             excelName = excelName,
             kmlUri = kmlUri,
             kmlName = kmlName,
-            pingUri = pingUri,
-            pingName = pingName,
             screenshotUris = screenshotUris,
             screenshotNames = screenshotFiles.map { it.name }
         )
@@ -187,11 +179,6 @@ object CsvExporter {
         val data = raw.drop(1)
         val events = data.filter { f(it, "event_type").isNotBlank() }
         val issueCounts = events.groupingBy { f(it, "event_type") }.eachCount().entries.sortedByDescending { it.value }
-        val pingFile = File(source.parentFile, source.nameWithoutExtension + "_ping.csv").takeIf { it.exists() }
-        val pingRaw = pingFile?.readLines()?.filter { it.isNotBlank() }?.map { parseCsvLine(it) }.orEmpty()
-        val pingData = pingRaw.drop(1)
-        val pingLatencies = pingData.mapNotNull { it.getOrNull(4)?.toDoubleOrNull() }.sorted()
-        val pingSuccess = pingData.count { it.getOrNull(3).equals("true", true) }
         val summary = mutableListOf<List<String>>()
         summary += listOf("CellTracker Recording Summary")
         summary += listOf("Source", source.name)
@@ -202,17 +189,6 @@ object CsvExporter {
         summary += emptyList<String>()
         summary += listOf("Issue Summary", "Count")
         if (issueCounts.isEmpty()) summary += listOf("No marked issues", "0") else issueCounts.forEach { summary += listOf(it.key, it.value.toString()) }
-        if (pingData.isNotEmpty()) {
-            fun pingPct(p: Double): String = if (pingLatencies.isEmpty()) "--" else String.format(Locale.US, "%.1f ms", pingLatencies[kotlin.math.ceil((pingLatencies.size - 1) * p).toInt().coerceIn(0, pingLatencies.lastIndex)])
-            summary += emptyList<String>()
-            summary += listOf("Ping Test Summary")
-            summary += listOf("Target", pingData.firstOrNull()?.getOrNull(2).orEmpty())
-            summary += listOf("Attempts", pingData.size.toString())
-            summary += listOf("Success", pingSuccess.toString())
-            summary += listOf("Packet Loss", String.format(Locale.US, "%.1f%%", (pingData.size-pingSuccess)*100.0/pingData.size))
-            summary += listOf("Average", if(pingLatencies.isEmpty()) "--" else String.format(Locale.US,"%.1f ms",pingLatencies.average()))
-            summary += listOf("P50 / P90 / P95", "${pingPct(.50)} / ${pingPct(.90)} / ${pingPct(.95)}")
-        }
         summary += emptyList<String>()
         summary += listOf("Marked Issue Details")
         val issueHeaders = listOf("Time","Source","Issue","SIM","Operator","RAT","Band","CA / EN-DC","RSRP","RSRQ","SINR","RSSI","CQI","PCI","ARFCN","Data RAT","DataNet","Latitude","Longitude","Note","Screenshot")
@@ -229,14 +205,13 @@ object CsvExporter {
         }
         val out=ByteArrayOutputStream(); ZipOutputStream(out).use { z ->
             fun add(name:String, text:String){ z.putNextEntry(ZipEntry(name)); z.write(text.toByteArray(Charsets.UTF_8)); z.closeEntry() }
-            add("[Content_Types].xml", """<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/worksheets/sheet3.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>""")
+            add("[Content_Types].xml", """<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>""")
             add("_rels/.rels", """<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>""")
-            add("xl/workbook.xml", """<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Summary" sheetId="1" r:id="rId1"/><sheet name="Raw Data" sheetId="2" r:id="rId2"/><sheet name="Ping Results" sheetId="3" r:id="rId4"/></sheets></workbook>""")
-            add("xl/_rels/workbook.xml.rels", """<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet3.xml"/></Relationships>""")
+            add("xl/workbook.xml", """<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Summary" sheetId="1" r:id="rId1"/><sheet name="Raw Data" sheetId="2" r:id="rId2"/></sheets></workbook>""")
+            add("xl/_rels/workbook.xml.rels", """<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>""")
             add("xl/styles.xml", """<?xml version="1.0" encoding="UTF-8"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="1"><fill><patternFill patternType="none"/></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/></cellXfs></styleSheet>""")
             add("xl/worksheets/sheet1.xml", sheet(summary, listOf(23,20,12,18,18,12,12,12,12,12,14,14,16,16,30)))
             add("xl/worksheets/sheet2.xml", sheet(raw, List(maxOf(header.size,1)){18}))
-            add("xl/worksheets/sheet3.xml", sheet(if (pingRaw.isEmpty()) listOf(listOf("No Ping results linked to this session")) else pingRaw, List(maxOf(pingRaw.firstOrNull()?.size ?: 1,1)){18}))
         }; return out.toByteArray()
     }
 
@@ -266,7 +241,7 @@ object CsvExporter {
 
     private fun buildSummaryHtml(source: File): String {
         val lines = source.readLines().filter { it.isNotBlank() }
-        if (lines.size < 2) return basicSummaryHtml(source.name, emptyList(), File(source.parentFile, source.nameWithoutExtension + "_ping.csv").takeIf { it.exists() })
+        if (lines.size < 2) return basicSummaryHtml(source.name, emptyList())
 
         val header = parseCsvLine(lines.first())
         val index = header.withIndex().associate { it.value to it.index }
@@ -298,11 +273,10 @@ object CsvExporter {
                 screenshot = field(f, "screenshot")
             )
         }
-        val pingFile = File(source.parentFile, source.nameWithoutExtension + "_ping.csv").takeIf { it.exists() }
-        return basicSummaryHtml(source.name, rows, pingFile)
+        return basicSummaryHtml(source.name, rows)
     }
 
-    private fun basicSummaryHtml(sourceName: String, rows: List<SummaryRow>, pingFile: File? = null): String {
+    private fun basicSummaryHtml(sourceName: String, rows: List<SummaryRow>): String {
         val started = rows.firstOrNull()?.timestamp.orEmpty()
         val ended = rows.lastOrNull()?.timestamp.orEmpty()
         val events = rows.filter { it.issueType.isNotBlank() }
@@ -351,24 +325,6 @@ object CsvExporter {
             if (dataNets.isEmpty()) append("<span class='muted'>--</span>")
             else dataNets.forEach { append("<div>${esc(it.key)} × ${it.value}</div>") }
             append("</div>")
-
-            if (pingFile != null) {
-                val pingRows = pingFile.readLines().drop(1).filter { it.isNotBlank() }.map { parseCsvLine(it) }
-                val success = pingRows.count { it.getOrNull(3).equals("true", true) }
-                val lat = pingRows.mapNotNull { it.getOrNull(4)?.toDoubleOrNull() }.sorted()
-                fun pct(p: Double): String = if (lat.isEmpty()) "--" else String.format(Locale.US, "%.1f ms", lat[kotlin.math.ceil((lat.size - 1) * p).toInt().coerceIn(0, lat.lastIndex)])
-                val host = pingRows.firstOrNull()?.getOrNull(2).orEmpty()
-                append("<h2>Ping Test Summary</h2><div class='card grid'>")
-                append("<div><div class='k'>Target</div><div class='v'>${esc(host)}</div></div>")
-                append("<div><div class='k'>Attempts</div><div class='v'>${pingRows.size}</div></div>")
-                append("<div><div class='k'>Success</div><div class='v'>$success</div></div>")
-                append("<div><div class='k'>Packet loss</div><div class='v'>${if(pingRows.isEmpty()) "--" else String.format(Locale.US,"%.1f%%",(pingRows.size-success)*100.0/pingRows.size)}</div></div>")
-                append("<div><div class='k'>Average</div><div class='v'>${if(lat.isEmpty()) "--" else String.format(Locale.US,"%.1f ms",lat.average())}</div></div>")
-                append("<div><div class='k'>P50 / P90 / P95</div><div class='v'>${pct(.50)} / ${pct(.90)} / ${pct(.95)}</div></div></div>")
-                append("<h2>Ping Results</h2><div class='card'><table><thead><tr><th>#</th><th>Time</th><th>Target</th><th>Result</th><th>Latency</th><th>DataNet</th><th>SIM</th><th>Operator</th><th>RAT</th><th>RSRP</th><th>RSRQ</th><th>SINR</th><th>Band</th><th>PCI</th></tr></thead><tbody>")
-                pingRows.forEach { r -> append("<tr><td>${esc(r.getOrNull(0).orEmpty())}</td><td>${esc(r.getOrNull(1).orEmpty())}</td><td>${esc(r.getOrNull(2).orEmpty())}</td><td>${if(r.getOrNull(3).equals("true",true)) "Success" else "Failed"}</td><td>${esc(r.getOrNull(4).orEmpty())}</td><td>${esc(r.getOrNull(6).orEmpty())}</td><td>SIM ${esc(r.getOrNull(7).orEmpty())}</td><td>${esc(r.getOrNull(8).orEmpty())}</td><td>${esc(r.getOrNull(9).orEmpty())}</td><td>${esc(r.getOrNull(10).orEmpty())}</td><td>${esc(r.getOrNull(11).orEmpty())}</td><td>${esc(r.getOrNull(12).orEmpty())}</td><td>${esc(r.getOrNull(13).orEmpty())}</td><td>${esc(r.getOrNull(14).orEmpty())}</td></tr>") }
-                append("</tbody></table></div>")
-            }
 
             append("<h2>Marked Issue Details</h2><div class='card'><table><thead><tr><th>Time</th><th>Source</th><th>Issue</th><th>SIM</th><th>Operator</th><th>RAT</th><th>Band</th><th>CA / EN-DC</th><th>RSRP</th><th>RSRQ</th><th>SINR</th><th>RSSI</th><th>CQI</th><th>PCI</th><th>ARFCN</th><th>Data RAT</th><th>Latitude</th><th>Longitude</th><th>Note</th><th>Screenshot</th></tr></thead><tbody>")
             if (events.isEmpty()) append("<tr><td colspan='20' class='muted'>No marked issues</td></tr>")
