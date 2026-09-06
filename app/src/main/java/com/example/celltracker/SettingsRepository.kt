@@ -27,7 +27,8 @@ class SettingsRepository(context: Context) {
         recordScope = enumValueOrDefault(prefs.getString("record_scope", null), RecordScope.CURRENT_SIM),
         mapDetailFields = prefs.getStringSet("map_detail_fields", null)?.mapNotNull { runCatching { MapDetailField.valueOf(it) }.getOrNull() }?.toSet()
             ?: AppSettings().mapDetailFields,
-        issueTypes = prefs.getString("issue_types", null)?.split("\u001F")?.filter { it.isNotBlank() } ?: AppSettings().issueTypes
+        issueTypes = (prefs.getString("issue_types", null)?.split("\u001F")?.filter { it.isNotBlank() } ?: AppSettings().issueTypes)
+            .let { saved -> (saved + listOf("Call Drop", "No Audio", "One-way Audio", "Noise", "Audio Interruption", "Poor Voice Quality")).distinct() }
     )
 
     fun save(settings: AppSettings) {

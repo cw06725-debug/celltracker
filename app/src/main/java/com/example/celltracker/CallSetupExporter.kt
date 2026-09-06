@@ -43,6 +43,8 @@ object CallSetupExporter {
         val total=attempts.size
         val success=attempts.count{it.result=="SUCCESS"}
         val failure=(total-success).coerceAtLeast(0)
+        val drops=attempts.count{it.result=="CALL_DROP"}
+        val dropRate=if(total==0)0.0 else drops*100.0/total
         val successRate=if(total==0)0.0 else success*100.0/total
         val lat=attempts.mapNotNull{it.setupLatencyMs?.toDouble()}.sorted()
         val avg=lat.takeIf{it.isNotEmpty()}?.average()
@@ -85,13 +87,17 @@ object CallSetupExporter {
             append(metric("P50 / P90 / P95","${l(pct(.5))} / ${l(pct(.9))} / ${l(pct(.95))}"))
             append(metric("High Latency Events",d.events.count{it.type=="HIGH_CALL_SETUP_LATENCY"}.toString()))
             append(metric("Timeout Events",d.events.count{it.type=="CALL_SETUP_TIMEOUT"}.toString()))
+            append(metric("Dropped Calls",drops.toString()))
+            append(metric("Drop Rate",String.format(Locale.US,"%.1f%%",dropRate)))
             append(metric("DUT A Network",if(d.networkSamples.isNotEmpty())"${d.networkSamples.size} samples" else "Not available"))
             append(metric("DUT B Network",if(d.agentNetworkSamples.isNotEmpty())"${d.agentNetworkSamples.size} samples" else "Not available"))
             append("</div></div>")
 
-            append("<div class='card'><div class='section'>Attempts</div><div class='tablewrap'><table><tr><th>#</th><th>Direction</th><th>Result</th><th>Setup</th><th>Confidence</th><th>Detail</th></tr>")
+            append("<div class='card'><div class='section'>Attempts</div><div class='tablewrap'><table><tr><th>#</th><th>Direction</th><th>Result</th><th>Setup</th><th>Hold</th><th>Confidence</th><th>Detail</th></tr>")
             attempts.forEach{
-                append("<tr><td>${it.attemptNumber}</td><td>${e(it.direction)}</td><td class='ok'>${e(it.result)}</td><td>${l(it.setupLatencyMs?.toDouble())}</td><td>${e(it.confidence)}</td><td class='detail'>${e(it.failureDetail.ifBlank{"--"})}</td></tr>")
+                val connectedAt=listOfNotNull(it.moConnectedAt,it.mtConnectedAt).maxOrNull()
+                val holdMs=connectedAt?.let{t->it.callEndedAt?.minus(t)?.coerceAtLeast(0)}
+                append("<tr><td>${it.attemptNumber}</td><td>${e(it.direction)}</td><td class='ok'>${e(it.result)}</td><td>${l(it.setupLatencyMs?.toDouble())}</td><td>${holdMs?.let{h->String.format(Locale.US,"%.1f s",h/1000.0)}?:"--"}</td><td>${e(it.confidence)}</td><td class='detail'>${e(it.failureDetail.ifBlank{"--"})}</td></tr>")
             }
             append("</table></div></div>")
 
@@ -106,7 +112,9 @@ object CallSetupExporter {
         fun rows(name:String)=File(dir,name).takeIf{it.exists()}?.readLines()?.map(CallSetupRepository::parseCsv)?:emptyList()
         val lat=d.attempts.mapNotNull{it.setupLatencyMs?.toDouble()}.sorted()
         fun pct(q:Double)=lat.takeIf{it.isNotEmpty()}?.get(kotlin.math.ceil((lat.size-1)*q).toInt().coerceIn(0,lat.lastIndex))
-        val summary=listOf(listOf("CellTracker Call Setup Summary"),listOf("Task",d.item.taskName),listOf("DUT A",d.item.deviceA),listOf("DUT B",d.item.deviceB),listOf("Operator A",d.item.operatorA),listOf("Operator B",d.item.operatorB),listOf("Direction",d.item.direction),listOf("Attempts",d.item.attempts.toString()),listOf("Success",d.item.success.toString()),listOf("Failure",d.item.failure.toString()),listOf("Success Rate %",String.format(Locale.US,"%.3f",d.item.successRate)),listOf("Average Setup ms",d.item.averageMs?.toString().orEmpty()),listOf("Minimum Setup ms",lat.minOrNull()?.toString().orEmpty()),listOf("Maximum Setup ms",lat.maxOrNull()?.toString().orEmpty()),listOf("P50 ms",pct(.5)?.toString().orEmpty()),listOf("P90 ms",d.item.p90Ms?.toString().orEmpty()),listOf("P95 ms",d.item.p95Ms?.toString().orEmpty()),listOf("High threshold ms",d.item.highLatencyThresholdMs.toString()),listOf("HIGH_CALL_SETUP_LATENCY",d.events.count{it.type=="HIGH_CALL_SETUP_LATENCY"}.toString()),listOf("CALL_SETUP_TIMEOUT",d.events.count{it.type=="CALL_SETUP_TIMEOUT"}.toString()),listOf("Status",d.item.status))
+        val drops=d.attempts.count{it.result=="CALL_DROP"}
+        val dropRate=if(d.attempts.isEmpty())0.0 else drops*100.0/d.attempts.size
+        val summary=listOf(listOf("CellTracker Call Setup Summary"),listOf("Task",d.item.taskName),listOf("DUT A",d.item.deviceA),listOf("DUT B",d.item.deviceB),listOf("Operator A",d.item.operatorA),listOf("Operator B",d.item.operatorB),listOf("Direction",d.item.direction),listOf("Attempts",d.item.attempts.toString()),listOf("Success",d.item.success.toString()),listOf("Failure",d.item.failure.toString()),listOf("Success Rate %",String.format(Locale.US,"%.3f",d.item.successRate)),listOf("Average Setup ms",d.item.averageMs?.toString().orEmpty()),listOf("Minimum Setup ms",lat.minOrNull()?.toString().orEmpty()),listOf("Maximum Setup ms",lat.maxOrNull()?.toString().orEmpty()),listOf("P50 ms",pct(.5)?.toString().orEmpty()),listOf("P90 ms",d.item.p90Ms?.toString().orEmpty()),listOf("P95 ms",d.item.p95Ms?.toString().orEmpty()),listOf("High threshold ms",d.item.highLatencyThresholdMs.toString()),listOf("HIGH_CALL_SETUP_LATENCY",d.events.count{it.type=="HIGH_CALL_SETUP_LATENCY"}.toString()),listOf("CALL_SETUP_TIMEOUT",d.events.count{it.type=="CALL_SETUP_TIMEOUT"}.toString()),listOf("Dropped Calls",drops.toString()),listOf("Drop Rate %",String.format(Locale.US,"%.3f",dropRate)),listOf("Status",d.item.status))
         val header=CallSetupRepository.SNAPSHOT_HEADER.split(',')
         fun snapshotRow(attemptId:String,s:CallNetworkSnapshot)=listOf(attemptId,s.endpoint,s.moment,s.timestampMs.toString(),s.elapsedRealtimeMs.toString(),s.subscriptionId.toString(),s.simSlot.toString(),s.operator,s.rat,s.displayRat,s.voiceRat,s.mcc,s.mnc,s.tac,s.cellId,s.pci,s.arfcn,s.band,s.bandwidth,s.rsrp,s.rsrq,s.sinr,s.rssi,s.carrierAggregation,s.dataNetwork,s.latitude?.toString().orEmpty(),s.longitude?.toString().orEmpty(),s.speedKmh,s.accuracy)
         val mo=mutableListOf(header);val mt=mutableListOf(header)

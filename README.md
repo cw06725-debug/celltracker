@@ -1,13 +1,15 @@
-# CellTracker v0.9.0.7
+# CellTracker v0.9.0.9
 
-Device Link + Call Setup stabilization based on v0.9.0.6 real-device feedback.
+Based on the field-tested v0.9.0.8 project.
 
 ## Changes
-- Call Setup detail Map is clipped below the tab bar; tab surface is opaque/elevated so MapView cannot visually cover navigation controls.
-- Normal CALL_SETUP_SUCCESS remains in Call Setup Attempts/Events but is no longer written into the network Recording as an issue marker. Failure, timeout, link loss and high-latency conditions remain issue markers.
-- Navigation scroll positions are preserved for Call Setup history, Ping history, main SIM pages and Settings root navigation so Back returns to the previous position.
-- Agent (DUT B) automated network Recording is transferred to Controller (DUT A) after the test over the existing RFCOMM Device Link using chunked Base64 messages.
-- Controller stores the received file as `agent_network_recording.csv` in the Call Setup session.
-- Export now includes separate `DUT A Network` and `DUT B Network` worksheets when available, plus separate DUT A/B network CSV exports.
+- Settings root starts at the top on each fresh entry; Back to the home screen still restores the previous home position.
+- Floating overlay adds an `×` close button with confirmation. Closing disables/hides only the overlay; an active RecordingService continues in the background.
+- Call Setup hold phase now continuously monitors local/peer call state and Device Link instead of using a blind delay.
+- Unexpected release before the configured Hold Time is classified as `CALL_DROP`, recorded as an AUTO issue/event, and includes the actual hold duration in the detail.
+- Long-call progress is shown during hold.
+- Call Setup HTML/XLSX reports include Dropped Calls and Drop Rate; HTML attempts include Hold duration.
+- Existing issue lists are augmented with long-call manual audio markers: No Audio, One-way Audio, Noise, Audio Interruption, Poor Voice Quality.
+- Automatic voice-quality analysis is intentionally not claimed: public Android APIs do not reliably expose cellular call PCM audio to an ordinary app. Manual audio issue marking remains the supported v0.9.0.9 path.
 
-Version: 0.9.0.7 (versionCode 50)
+Version: 0.9.0.9 (versionCode 52)

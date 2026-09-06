@@ -50,6 +50,7 @@ class FloatingOverlayService : Service() {
     private var overlayParams: WindowManager.LayoutParams? = null
     private var issueView: View? = null
     private var startView: View? = null
+    private var closeConfirmView: View? = null
     private var refreshJob: Job? = null
     private var compact = false
     private var lastTargetSimNo: Int? = null
@@ -59,6 +60,7 @@ class FloatingOverlayService : Service() {
     private lateinit var secondaryText: TextView
     private lateinit var dataText: TextView
     private lateinit var toggleButton: Button
+    private lateinit var closeButton: Button
     private lateinit var markButton: Button
     private lateinit var startButton: Button
     private lateinit var stopButton: Button
@@ -108,8 +110,17 @@ class FloatingOverlayService : Service() {
             setPadding(0, 0, 0, 0)
             setOnClickListener { setCompact(!compact) }
         }
+        closeButton = Button(this).apply {
+            text = "×"
+            textSize = 17f
+            minWidth = dp(34); minimumWidth = dp(34)
+            minHeight = dp(34); minimumHeight = dp(34)
+            setPadding(0, 0, 0, 0)
+            setOnClickListener { confirmCloseOverlay() }
+        }
         headerRow.addView(headerText, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        headerRow.addView(toggleButton, LinearLayout.LayoutParams(dp(40), dp(36)))
+        headerRow.addView(toggleButton, LinearLayout.LayoutParams(dp(38), dp(36)).apply { marginEnd = dp(3) })
+        headerRow.addView(closeButton, LinearLayout.LayoutParams(dp(36), dp(36)))
         root.addView(headerRow)
 
         primaryText = textView(17f, true).apply { text = "RSRP --   SINR --" }
@@ -422,6 +433,55 @@ class FloatingOverlayService : Service() {
         }
     }
 
+
+    private fun confirmCloseOverlay() {
+        if (closeConfirmView != null) return
+        val settings = settingsRepository.load()
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            background = roundedBackground((settings.floatingOpacity + 0.15f).coerceAtMost(1f))
+        }
+        panel.addView(textView(15f, true).apply { text = "Close floating window?" })
+        panel.addView(textView(12f, false).apply {
+            text = if (RecordingState.status.value.isRecording)
+                "Recording will continue in the background."
+            else "You can enable the floating window again in Settings."
+        })
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        row.addView(Button(this).apply {
+            text = "Cancel"; isAllCaps = false
+            setOnClickListener { closeCloseConfirmation() }
+        }, LinearLayout.LayoutParams(0, dp(42), 1f).apply { marginEnd = dp(4) })
+        row.addView(Button(this).apply {
+            text = "Close"; isAllCaps = false
+            setOnClickListener {
+                val current = settingsRepository.load()
+                settingsRepository.save(current.copy(floatingWindowEnabled = false))
+                closeCloseConfirmation()
+                closeIssueMenu()
+                closeStartMenu()
+                // Explicitly stop only this overlay service. RecordingService is untouched.
+                stopSelf()
+            }
+        }, LinearLayout.LayoutParams(0, dp(42), 1f).apply { marginStart = dp(4) })
+        panel.addView(row)
+        val base = overlayParams ?: return
+        val params = WindowManager.LayoutParams(
+            dp(230), WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT
+        ).apply { gravity = Gravity.TOP or Gravity.START; x = base.x; y = (base.y + dp(45)).coerceAtLeast(0) }
+        closeConfirmView = panel
+        runCatching { windowManager.addView(panel, params) }.onFailure { closeConfirmView = null }
+    }
+
+    private fun closeCloseConfirmation() {
+        closeConfirmView?.let { runCatching { windowManager.removeView(it) } }
+        closeConfirmView = null
+    }
+
     private fun stopRecordingFromOverlay() {
         if (!RecordingState.status.value.isRecording) return
         stopService(Intent(this, RecordingService::class.java))
@@ -546,6 +606,7 @@ class FloatingOverlayService : Service() {
     override fun onDestroy() {
         refreshJob?.cancel()
         closeIssueMenu()
+        closeCloseConfirmation()
         closeStartMenu()
         overlayView?.let { runCatching { windowManager.removeView(it) } }
         overlayView = null

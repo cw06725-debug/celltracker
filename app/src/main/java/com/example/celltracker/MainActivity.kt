@@ -2087,6 +2087,13 @@ private fun SettingsScreen(settings: AppSettings, onUpdate: (AppSettings) -> Uni
     var page by remember { mutableStateOf("root") }
     var newIssue by remember { mutableStateOf("") }
     val rootScrollState = rememberRetainedScrollState("settings.root")
+    // A fresh Settings visit starts at the top. Child -> Settings Back stays in this
+    // composition, so it does not reset again; leaving Settings still preserves the
+    // parent/home position through the root navigation memory.
+    LaunchedEffect(Unit) {
+        UiScrollMemory.setScrollOffset("settings.root", 0)
+        rootScrollState.scrollTo(0)
+    }
 
     fun applySetting(next: AppSettings) {
         draft = next

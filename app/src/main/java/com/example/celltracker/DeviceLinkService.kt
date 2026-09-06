@@ -365,7 +365,7 @@ class DeviceLinkService : Service() {
                 currentCoroutineContext().ensureActive()
                 val result=runAttempt(index+1,directions.size,direction,a,b,config,session)
                 repository.appendAttempt(sessionDir!!,result)
-                val eventType=when { result.result=="SUCCESS" -> "CALL_SETUP_SUCCESS"; result.result=="SETUP_TIMEOUT" -> "CALL_SETUP_TIMEOUT"; result.bluetoothLost -> "DEVICE_LINK_LOST"; else -> "CALL_SETUP_FAILURE" }
+                val eventType=when { result.result=="SUCCESS" -> "CALL_SETUP_SUCCESS"; result.result=="CALL_DROP" -> "CALL_DROP"; result.result=="SETUP_TIMEOUT" -> "CALL_SETUP_TIMEOUT"; result.bluetoothLost -> "DEVICE_LINK_LOST"; else -> "CALL_SETUP_FAILURE" }
                 if(eventType!="CALL_SETUP_SUCCESS") recordAutoEvent(eventType,"${result.direction} #${result.attemptNumber}: ${result.result}")
                 repository.appendEvent(sessionDir!!,System.currentTimeMillis(),eventType,result.attemptId,result.direction,result.failureDetail.ifBlank{result.result})
                 val high = result.result=="SUCCESS" && (result.setupLatencyMs?:0)>=config.highLatencyThresholdMs
@@ -438,9 +438,48 @@ class DeviceLinkService : Service() {
         }
         val connected=moAt!=null&&mtAt!=null
         val latency=if(connected) SystemClock.elapsedRealtime()-dialElapsed else null
+        var droppedDuringHold = false
+        var actualHoldMs = 0L
+        var callEndedAtActual: Long? = null
         if(connected){
             val snap=captureSnapshot("A","CONNECTED",activeSubscriptionId);snapshots+=snap;DeviceLinkStore.callTest.value=DeviceLinkStore.callTest.value.copy(localSnapshot=snap,currentSetupLatencyMs=latency,statusMessage="Connected · holding")
-            delay(c.holdTimeMs)
+            // Long-call capable hold: do not blindly delay. Continuously watch both DUTs
+            // and the control link so an unexpected release is classified as CALL_DROP.
+            val holdStartedElapsed = SystemClock.elapsedRealtime()
+            val holdDeadline = holdStartedElapsed + c.holdTimeMs
+            while (SystemClock.elapsedRealtime() < holdDeadline) {
+                currentCoroutineContext().ensureActive()
+                if (DeviceLinkStore.link.value.status != DeviceLinkStatus.CONNECTED) {
+                    linkLost = true
+                    failure = "Bluetooth control link lost during hold"
+                    break
+                }
+                if (localCallState == "IDLE") {
+                    droppedDuringHold = true
+                    actualHoldMs = SystemClock.elapsedRealtime() - holdStartedElapsed
+                    callEndedAtActual = System.currentTimeMillis()
+                    failure = "Unexpected call drop after ${actualHoldMs / 1000.0} s (target ${c.holdTimeMs / 1000.0} s)"
+                    break
+                }
+                val holdMsg = withTimeoutOrNull(200) { messages.receive() }
+                if (holdMsg?.attemptId == attemptId) when (holdMsg.messageType) {
+                    "CALL_ENDED", "CALL_FAILED" -> {
+                        droppedDuringHold = true
+                        actualHoldMs = SystemClock.elapsedRealtime() - holdStartedElapsed
+                        callEndedAtActual = System.currentTimeMillis()
+                        failure = "Peer call dropped after ${actualHoldMs / 1000.0} s (target ${c.holdTimeMs / 1000.0} s)"
+                    }
+                    "SNAPSHOT" -> decodeSnapshot(holdMsg.payload)?.let { remoteSnapshots[attemptId]?.add(it) }
+                }
+                if (droppedDuringHold) break
+                actualHoldMs = SystemClock.elapsedRealtime() - holdStartedElapsed
+                DeviceLinkStore.callTest.value = DeviceLinkStore.callTest.value.copy(statusMessage = "Connected · hold ${actualHoldMs / 1000}s / ${c.holdTimeMs / 1000}s")
+            }
+            if (droppedDuringHold) snapshots += captureSnapshot("A","CALL_DROP",activeSubscriptionId)
+            else if (!linkLost) {
+                actualHoldMs = c.holdTimeMs
+                callEndedAtActual = System.currentTimeMillis()
+            }
         }
         val endedAutomatically=endCall(); send("CALL_ENDED",session,attemptId)
         if(!endedAutomatically&&localCallState!="IDLE") {
@@ -448,12 +487,12 @@ class DeviceLinkService : Service() {
             withTimeoutOrNull(10_000L){while(localCallState!="IDLE")delay(200)}
         }
         delay(1200)
-        snapshots+=captureSnapshot("A",if(connected)"CALL_END" else "FAILURE",activeSubscriptionId)
+        snapshots+=captureSnapshot("A",when { droppedDuringHold -> "CALL_DROP"; connected -> "CALL_END"; else -> "FAILURE" },activeSubscriptionId)
         snapshots += localLiveSnapshots.remove(attemptId).orEmpty().toList()
         snapshots += remoteSnapshots.remove(attemptId).orEmpty().toList()
-        val result=when { connected->CallResultCodes.SUCCESS; linkLost->CallResultCodes.BLUETOOTH_LINK_LOST; remoteFailure!=null->remoteFailure!!; failure.contains("before",true)->CallResultCodes.DISCONNECTED_BEFORE_CONNECTED; failure.contains("place",true)->CallResultCodes.MO_DIAL_FAILED; ringAt==null && direction=="A_TO_B"->CallResultCodes.MT_NO_INCOMING_CALL; !ringingSeen && direction=="B_TO_A"->CallResultCodes.MT_NO_INCOMING_CALL; SystemClock.elapsedRealtime()>=deadline->CallResultCodes.SETUP_TIMEOUT; localRole=="MO"&&localCallState!="OFFHOOK"->CallResultCodes.MO_NOT_CONNECTED; else->CallResultCodes.MT_NOT_CONNECTED }
+        val result=when { droppedDuringHold->"CALL_DROP"; linkLost->CallResultCodes.BLUETOOTH_LINK_LOST; connected->CallResultCodes.SUCCESS; remoteFailure!=null->remoteFailure!!; failure.contains("before",true)->CallResultCodes.DISCONNECTED_BEFORE_CONNECTED; failure.contains("place",true)->CallResultCodes.MO_DIAL_FAILED; ringAt==null && direction=="A_TO_B"->CallResultCodes.MT_NO_INCOMING_CALL; !ringingSeen && direction=="B_TO_A"->CallResultCodes.MT_NO_INCOMING_CALL; SystemClock.elapsedRealtime()>=deadline->CallResultCodes.SETUP_TIMEOUT; localRole=="MO"&&localCallState!="OFFHOOK"->CallResultCodes.MO_NOT_CONNECTED; else->CallResultCodes.MT_NOT_CONNECTED }
         val end=System.currentTimeMillis()
-        return CallAttemptResult(number,attemptId,direction,start,end,dialAt,ringAt,moAt,mtAt,end,latency,result,"MEDIUM_PUBLIC_API",failure,linkLost,snapshots)
+        return CallAttemptResult(number,attemptId,direction,start,end,dialAt,ringAt,moAt,mtAt,callEndedAtActual ?: end,latency,result,"MEDIUM_PUBLIC_API",failure,linkLost,snapshots)
     }
 
     private suspend fun awaitMessage(timeout:Long,predicate:(DeviceLinkMessage)->Boolean):DeviceLinkMessage?=withTimeoutOrNull(timeout){while(true){val m=messages.receive();if(predicate(m))return@withTimeoutOrNull m};null}
