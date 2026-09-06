@@ -21,6 +21,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -59,7 +62,7 @@ fun CallSetupScreen(
 ) {
     // Keep the history scroll position while a detail page temporarily replaces this content.
     // Returning from View Details now lands exactly where the user entered it.
-    val historyListState = rememberLazyListState()
+    val historyListState = rememberSaveable(saver=androidx.compose.foundation.lazy.LazyListState.Saver) { androidx.compose.foundation.lazy.LazyListState() }
     if(detail!=null){BackHandler{onCloseDetail()};CallSetupDetailView(detail,onCloseDetail){onExport(detail.item.path)};return}
     val context=LocalContext.current
     val focusManager=LocalFocusManager.current
@@ -263,7 +266,10 @@ private fun detectPhoneNumber(context:Context,simSlot:Int):String?{
     val tabs=listOf("Summary","Attempts","Events","Map","Trend")
     Scaffold(topBar={TopAppBar(title={Text(d.item.taskName)},navigationIcon={TextButton(onClick=onBack){Text("Back")}},actions={TextButton(onClick=onExport){Text("Export")}})}){p->
         Column(Modifier.padding(p).fillMaxSize()){
-            ScrollableTabRow(tab){tabs.forEachIndexed{i,t->Tab(tab==i,{tab=i},text={Text(t)})}}
+            Surface(modifier=Modifier.fillMaxWidth().zIndex(20f),color=MaterialTheme.colorScheme.surface,tonalElevation=2.dp){
+                ScrollableTabRow(selectedTabIndex=tab,containerColor=MaterialTheme.colorScheme.surface){tabs.forEachIndexed{i,t->Tab(tab==i,{tab=i},text={Text(t)})}}
+            }
+            Box(Modifier.fillMaxWidth().weight(1f).clipToBounds()){
             when(tab){
                 0->LazyColumn(contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
                     item{CCard("Summary"){
@@ -282,6 +288,7 @@ private fun detectPhoneNumber(context:Context,simSlot:Int):String?{
                 2->EventList(d.events)
                 3->CallMap(d)
                 else->CallTrend(d.attempts,d.item.highLatencyThresholdMs)
+            }
             }
         }
     }
@@ -342,7 +349,7 @@ private fun detectPhoneNumber(context:Context,simSlot:Int):String?{
                     invalidate()
                 }
             }},
-            modifier=Modifier.fillMaxWidth().weight(1f),
+            modifier=Modifier.fillMaxWidth().weight(1f).clipToBounds(),
             update={}
         )
     }

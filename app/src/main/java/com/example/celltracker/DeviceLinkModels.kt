@@ -154,7 +154,7 @@ data class CallSetupHistoryItem(
 }
 
 data class CallSetupEvent(val timestampMs:Long,val source:String,val type:String,val attemptId:String,val direction:String,val detail:String)
-data class CallSetupDetail(val item: CallSetupHistoryItem, val attempts: List<CallAttemptResult>, val events: List<CallSetupEvent> = emptyList(), val networkSamples: List<TrackSample> = emptyList())
+data class CallSetupDetail(val item: CallSetupHistoryItem, val attempts: List<CallAttemptResult>, val events: List<CallSetupEvent> = emptyList(), val networkSamples: List<TrackSample> = emptyList(), val agentNetworkSamples: List<TrackSample> = emptyList())
 
 data class CallSetupTestState(
     val isRunning: Boolean = false,

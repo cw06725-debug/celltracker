@@ -95,6 +95,15 @@ class CallSetupRepository(private val context: Context) {
         p.store(metaFile.outputStream(), "CellTracker Call Setup Session")
     }
 
+
+    fun setAgentRecordingPath(dir: File, path: String?) {
+        if (path.isNullOrBlank()) return
+        val metaFile = File(dir, "session.properties")
+        val p = Properties().apply { if (metaFile.exists()) runCatching { metaFile.inputStream().use { load(it) } } }
+        p.setProperty("agent_recording_path", path)
+        p.store(metaFile.outputStream(), "CellTracker Call Setup Session")
+    }
+
     fun loadHistory(): List<CallSetupHistoryItem> = root.listFiles { f -> f.isDirectory }?.mapNotNull { loadItem(it) }
         ?.sortedByDescending { it.startedAt } ?: emptyList()
 
@@ -115,7 +124,9 @@ class CallSetupRepository(private val context: Context) {
         val dir = File(path); val item = loadItem(dir) ?: return null
         val snapshots = readSnapshots(dir).groupBy { it.first }
         val network = item.recordingPath?.let { runCatching { RecordingDetailRepository.loadSamples(it) }.getOrDefault(emptyList()) }.orEmpty()
-        return CallSetupDetail(item, readAttempts(dir).map { it.copy(snapshots = snapshots[it.attemptId].orEmpty().map { pair -> pair.second }) }, readEvents(dir), network)
+        val props=Properties().apply{runCatching{File(dir,"session.properties").inputStream().use{load(it)}}}
+        val agentNetwork=props.getProperty("agent_recording_path","").takeIf{it.isNotBlank()}?.let{runCatching{RecordingDetailRepository.loadSamples(it)}.getOrDefault(emptyList())}.orEmpty()
+        return CallSetupDetail(item, readAttempts(dir).map { it.copy(snapshots = snapshots[it.attemptId].orEmpty().map { pair -> pair.second }) }, readEvents(dir), network, agentNetwork)
     }
 
     private fun readAttempts(dir: File): List<CallAttemptResult> = File(dir, "attempts.csv").takeIf { it.exists() }?.readLines()?.drop(1)?.filter { it.isNotBlank() }?.mapNotNull { line ->

@@ -9,6 +9,7 @@ import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.net.Uri
 import android.os.*
+import android.util.Base64
 import android.telecom.TelecomManager
 import android.telephony.PhoneStateListener
 import android.telephony.SubscriptionManager
@@ -45,6 +46,8 @@ class DeviceLinkService : Service() {
     private val messages = Channel<DeviceLinkMessage>(Channel.UNLIMITED)
     private var sessionDir: File? = null
     private var ownedRecordingPath: String? = null
+    private var agentRecordingPath: String? = null
+    private var incomingAgentRecording: File? = null
     private var sessionConfig = CallSetupConfig()
     private var attemptId = ""
     private var endpointRole = "--"
@@ -282,6 +285,21 @@ class DeviceLinkService : Service() {
                 remoteSnapshots.getOrPut(m.attemptId) { Collections.synchronizedList(mutableListOf()) }.add(snapshot)
                 val s=DeviceLinkStore.callTest.value; DeviceLinkStore.callTest.value=s.copy(peerSnapshot=snapshot)
             }
+            "AGENT_RECORDING_BEGIN" -> if (DeviceLinkStore.link.value.role == DeviceLinkRole.CONTROLLER) {
+                val dir=sessionDir
+                if(dir!=null){
+                    incomingAgentRecording=File(dir,"agent_network_recording.csv").apply{writeBytes(ByteArray(0))}
+                    repository.setAgentRecordingPath(dir,incomingAgentRecording!!.absolutePath)
+                }
+            }
+            "AGENT_RECORDING_CHUNK" -> if (DeviceLinkStore.link.value.role == DeviceLinkRole.CONTROLLER) {
+                val data=m.payload["data"].orEmpty()
+                if(data.isNotBlank()) runCatching{ incomingAgentRecording?.appendBytes(Base64.decode(data,Base64.DEFAULT)) }
+            }
+            "AGENT_RECORDING_END" -> if (DeviceLinkStore.link.value.role == DeviceLinkRole.CONTROLLER) {
+                val f=incomingAgentRecording; incomingAgentRecording=null
+                if(f!=null) DeviceLinkStore.callTest.value=DeviceLinkStore.callTest.value.copy(statusMessage="Completed · Agent network received (${f.length()/1024} KB)")
+            }
         }
         messages.trySend(m)
     }
@@ -292,7 +310,8 @@ class DeviceLinkService : Service() {
     }
 
     private fun prepareAgentTest(m: DeviceLinkMessage) {
-        sessionDir = null // Agent owns its network recording, not the Controller result directory.
+        sessionDir = null // Agent owns its network recording, then transfers it to Controller at test end.
+        agentRecordingPath = null
         sessionConfig = configFrom(m.payload); repository.saveConfig(sessionConfig)
         val state=CallSetupTestState(isRunning=true,config=sessionConfig,sessionId=m.sessionId,startedAt=System.currentTimeMillis(),statusMessage="Prepared by Controller",automationCapability=automationCapability())
         DeviceLinkStore.callTest.value=state
@@ -347,7 +366,7 @@ class DeviceLinkService : Service() {
                 val result=runAttempt(index+1,directions.size,direction,a,b,config,session)
                 repository.appendAttempt(sessionDir!!,result)
                 val eventType=when { result.result=="SUCCESS" -> "CALL_SETUP_SUCCESS"; result.result=="SETUP_TIMEOUT" -> "CALL_SETUP_TIMEOUT"; result.bluetoothLost -> "DEVICE_LINK_LOST"; else -> "CALL_SETUP_FAILURE" }
-                recordAutoEvent(eventType,"${result.direction} #${result.attemptNumber}: ${result.result}")
+                if(eventType!="CALL_SETUP_SUCCESS") recordAutoEvent(eventType,"${result.direction} #${result.attemptNumber}: ${result.result}")
                 repository.appendEvent(sessionDir!!,System.currentTimeMillis(),eventType,result.attemptId,result.direction,result.failureDetail.ifBlank{result.result})
                 val high = result.result=="SUCCESS" && (result.setupLatencyMs?:0)>=config.highLatencyThresholdMs
                 if(high){
@@ -538,7 +557,11 @@ class DeviceLinkService : Service() {
             repeat(10){
                 delay(200)
                 val path=RecordingState.status.value.latestPath
-                if(!path.isNullOrBlank()){ ownedRecordingPath=path; sessionDir?.let{repository.setRecordingPath(it,path)}; return@launch }
+                if(!path.isNullOrBlank()){
+                    ownedRecordingPath=path
+                    if(DeviceLinkStore.link.value.role==DeviceLinkRole.AGENT) agentRecordingPath=path else sessionDir?.let{repository.setRecordingPath(it,path)}
+                    return@launch
+                }
             }
         }
     }
@@ -552,10 +575,35 @@ class DeviceLinkService : Service() {
     private fun recordAutoEvent(type:String,note:String){if(!isRecordingActive())return;val sub=activeSubscriptionId.takeIf{it>=0}?:return;ContextCompat.startForegroundService(this,Intent(this,RecordingService::class.java).apply{action=RecordingService.ACTION_MARK;putExtra(RecordingService.EXTRA_MARK_SUBSCRIPTION_ID,sub);putExtra(RecordingService.EXTRA_EVENT_TYPE,type);putExtra(RecordingService.EXTRA_EVENT_NOTE,note);putExtra(RecordingService.EXTRA_EVENT_SOURCE,"AUTO")})}
 
     private fun agentAttemptResult(m:DeviceLinkMessage){
-        val event=m.payload["event"]?:"CALL_SETUP_FAILURE";recordAutoEvent(event,m.payload["detail"]?:m.payload["result"].orEmpty())
+        val event=m.payload["event"]?:"CALL_SETUP_FAILURE"
+        if(event!="CALL_SETUP_SUCCESS") recordAutoEvent(event,m.payload["detail"]?:m.payload["result"].orEmpty())
         if(m.payload["high"]=="true")recordAutoEvent("HIGH_CALL_SETUP_LATENCY","${m.payload["latency"]} ms")
     }
-    private fun finishAgentTest(status:String){endCall();stopOwnedRecording();unregisterCallMonitor();val s=DeviceLinkStore.callTest.value;DeviceLinkStore.callTest.value=s.copy(isRunning=false,endedAt=System.currentTimeMillis(),statusMessage=status)}
+    private fun finishAgentTest(status:String){
+        endCall()
+        val path=agentRecordingPath ?: ownedRecordingPath?.takeIf{it!="pending"}
+        stopOwnedRecording();unregisterCallMonitor()
+        val s=DeviceLinkStore.callTest.value;DeviceLinkStore.callTest.value=s.copy(isRunning=false,endedAt=System.currentTimeMillis(),statusMessage=status)
+        if(!path.isNullOrBlank()) scope.launch {
+            repeat(12){ if(!getSharedPreferences("celltracker_recording",MODE_PRIVATE).getBoolean("active_recording",false)) return@repeat; delay(150) }
+            delay(250); sendAgentRecording(path,s.sessionId)
+        }
+    }
+    private suspend fun sendAgentRecording(path:String,session:String){
+        val f=File(path); if(!f.exists())return
+        val bytes=runCatching{f.readBytes()}.getOrNull()?:return
+        send("AGENT_RECORDING_BEGIN",session,payload=mapOf("name" to f.name,"bytes" to bytes.size.toString()))
+        val chunkSize=6144
+        var seq=0
+        for(offset in bytes.indices step chunkSize){
+            val end=(offset+chunkSize).coerceAtMost(bytes.size)
+            val encoded=Base64.encodeToString(bytes.copyOfRange(offset,end),Base64.NO_WRAP)
+            if(!send("AGENT_RECORDING_CHUNK",session,payload=mapOf("seq" to (seq++).toString(),"data" to encoded))) break
+            delay(4)
+        }
+        send("AGENT_RECORDING_END",session,payload=mapOf("chunks" to seq.toString(),"bytes" to bytes.size.toString()))
+        agentRecordingPath=null
+    }
     private fun stopTest(reason:String,notifyPeer:Boolean){if(notifyPeer)send("STOP_TEST",payload=mapOf("status" to reason));testJob?.cancel(CancellationException(reason));if(DeviceLinkStore.link.value.role==DeviceLinkRole.AGENT)finishAgentTest(reason);endCall()}
     private fun failForLinkLoss(){if(testJob?.isActive==true){recordAutoEvent("DEVICE_LINK_LOST","Bluetooth control link lost");sessionDir?.let{repository.appendEvent(it,System.currentTimeMillis(),"DEVICE_LINK_LOST",attemptId,DeviceLinkStore.callTest.value.currentDirection,"Bluetooth control link lost")};testJob?.cancel(CancellationException("Bluetooth link lost"))}}
 

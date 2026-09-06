@@ -42,6 +42,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -435,7 +436,7 @@ private fun MainScreen(
                 val sortedNeighbors = pageSelected?.neighbors.orEmpty().sortedByDescending { it.rsrp.toIntOrNull() ?: Int.MIN_VALUE }
                 val strongestNeighbor = sortedNeighbors.firstOrNull()
                 Column(
-                    modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
+                    modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberSaveable(page, saver = androidx.compose.foundation.ScrollState.Saver) { androidx.compose.foundation.ScrollState(0) }),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
             InfoCard("Network") {
@@ -710,6 +711,7 @@ private fun PingTestScreen(
     onCloseDetail: () -> Unit,
     onExport: (String) -> Unit
 ) {
+    val pingListState = rememberSaveable(saver = androidx.compose.foundation.lazy.LazyListState.Saver) { androidx.compose.foundation.lazy.LazyListState() }
     if (detail != null) {
         BackHandler { onCloseDetail() }
         PingDetailScreen(detail = detail, onBack = onCloseDetail, onExport = { onExport(detail.item.path) })
@@ -740,6 +742,7 @@ private fun PingTestScreen(
     ) { padding ->
         LazyColumn(
             Modifier.padding(padding).fillMaxSize(),
+            state = pingListState,
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
@@ -2083,6 +2086,7 @@ private fun SettingsScreen(settings: AppSettings, onUpdate: (AppSettings) -> Uni
     var draft by remember(settings) { mutableStateOf(settings) }
     var page by remember { mutableStateOf("root") }
     var newIssue by remember { mutableStateOf("") }
+    val rootScrollState = rememberSaveable(saver = androidx.compose.foundation.ScrollState.Saver) { androidx.compose.foundation.ScrollState(0) }
 
     fun applySetting(next: AppSettings) {
         draft = next
@@ -2226,7 +2230,7 @@ private fun SettingsScreen(settings: AppSettings, onUpdate: (AppSettings) -> Uni
                         }) { Text("Add") }
                     }
                 }
-                else -> Column(Modifier.padding(12.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                else -> Column(Modifier.padding(12.dp).verticalScroll(rootScrollState), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     SettingsMenuRow("Sampling", "UI refresh and recording intervals") { navigateTo("sampling") }
                     HorizontalDivider()
                     SettingsMenuRow("Marker Button", "Tap, long press and feedback") { navigateTo("marker") }
