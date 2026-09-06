@@ -3,6 +3,7 @@ package com.example.celltracker
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshotFlow
@@ -32,6 +33,11 @@ fun rememberRetainedScrollState(key: String): ScrollState {
             .distinctUntilChanged()
             .collect { UiScrollMemory.setScrollOffset(key, it) }
     }
+    // Persist synchronously when navigation disposes the parent screen. snapshotFlow can
+    // otherwise miss the very last scroll delta during an AnimatedContent transition.
+    DisposableEffect(state, key) {
+        onDispose { UiScrollMemory.setScrollOffset(key, state.value) }
+    }
     return state
 }
 
@@ -43,6 +49,11 @@ fun rememberRetainedLazyListState(key: String): LazyListState {
         snapshotFlow { state.firstVisibleItemIndex to state.firstVisibleItemScrollOffset }
             .distinctUntilChanged()
             .collect { (index, offset) -> UiScrollMemory.setLazyOffset(key, index, offset) }
+    }
+    DisposableEffect(state, key) {
+        onDispose {
+            UiScrollMemory.setLazyOffset(key, state.firstVisibleItemIndex, state.firstVisibleItemScrollOffset)
+        }
     }
     return state
 }

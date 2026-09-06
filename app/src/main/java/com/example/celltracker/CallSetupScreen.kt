@@ -109,7 +109,19 @@ fun CallSetupScreen(
                 CField("Device",link.localProfile.deviceName);CField("Device ID",link.localProfile.deviceId.take(12));CField("CellTracker",link.localProfile.appVersion)
                 if(activeSlots.isEmpty()) Text("No active SIM detected. Check SIM/phone permissions.",style=MaterialTheme.typography.bodySmall)
                 else activeSlots.forEach{slot->
-                    OutlinedTextField(phoneBySlot[slot].orEmpty(),{v->phoneBySlot[slot]=v.filter{ch->ch.isDigit()||ch=='+'||ch=='#'||ch=='*'}.take(24)},label={Text("SIM ${slot+1} phone number")},singleLine=true,modifier=Modifier.fillMaxWidth(),enabled=!test.isRunning)
+                    // Keep the label outside the animated TextField. On some OEM builds a
+                    // pre-filled field briefly renders its floating label and value on top
+                    // of each other while this screen is entering composition.
+                    Column(verticalArrangement=Arrangement.spacedBy(4.dp)) {
+                        Text("SIM ${slot+1} phone number", style=MaterialTheme.typography.labelMedium)
+                        OutlinedTextField(
+                            value=phoneBySlot[slot].orEmpty(),
+                            onValueChange={v->phoneBySlot[slot]=v.filter{ch->ch.isDigit()||ch=='+'||ch=='#'||ch=='*'}.take(24)},
+                            singleLine=true,
+                            modifier=Modifier.fillMaxWidth(),
+                            enabled=!test.isRunning
+                        )
+                    }
                 }
                 Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)){
                     Text("Local SIM")

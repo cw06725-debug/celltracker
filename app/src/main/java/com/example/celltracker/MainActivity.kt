@@ -32,6 +32,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.layout.*
@@ -118,7 +119,10 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            MaterialTheme {
+            val darkTheme = isSystemInDarkTheme()
+            MaterialTheme(
+                colorScheme = if (darkTheme) darkColorScheme() else lightColorScheme()
+            ) {
                 val vm: MainViewModel = viewModel()
                 val state by vm.state.collectAsStateWithLifecycle()
                 val lifecycleOwner = LocalLifecycleOwner.current
@@ -2086,14 +2090,11 @@ private fun SettingsScreen(settings: AppSettings, onUpdate: (AppSettings) -> Uni
     var draft by remember(settings) { mutableStateOf(settings) }
     var page by remember { mutableStateOf("root") }
     var newIssue by remember { mutableStateOf("") }
-    val rootScrollState = rememberRetainedScrollState("settings.root")
-    // A fresh Settings visit starts at the top. Child -> Settings Back stays in this
-    // composition, so it does not reset again; leaving Settings still preserves the
-    // parent/home position through the root navigation memory.
-    LaunchedEffect(Unit) {
-        UiScrollMemory.setScrollOffset("settings.root", 0)
-        rootScrollState.scrollTo(0)
-    }
+    // Settings is a fresh destination: every new visit starts at the top. Because this
+    // state lives for the lifetime of SettingsScreen, child -> Settings Back still keeps
+    // the current Settings position during that visit. The parent/home scroll is stored
+    // independently by UiScrollMemory and is restored when leaving Settings.
+    val rootScrollState = rememberScrollState(initial = 0)
 
     fun applySetting(next: AppSettings) {
         draft = next
