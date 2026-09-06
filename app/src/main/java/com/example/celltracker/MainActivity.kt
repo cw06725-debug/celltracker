@@ -268,7 +268,6 @@ private fun MainScreen(
             HorizontalPager(
                 state = simPagerState,
                 modifier = Modifier.weight(1f).fillMaxWidth(),
-                beyondViewportPageCount = 1
             ) { page ->
                 val pageSelected = state.sims.getOrNull(page) ?: selected
                 val c = pageSelected?.servingCell ?: CellData()
@@ -649,7 +648,6 @@ private fun RecordingDetailScreen(
                 HorizontalPager(
                     state = detailPagerState,
                     modifier = Modifier.fillMaxWidth().weight(1f).clipToBounds().zIndex(0f),
-                    beyondViewportPageCount = 1
                 ) { page ->
                     when (DetailTab.entries[page]) {
                         DetailTab.SUMMARY -> RecordingSummary(d.item, filtered)
