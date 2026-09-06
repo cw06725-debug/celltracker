@@ -719,9 +719,13 @@ private fun LiveMapScreen(
             }
         }
 
+        // The map itself needs unrestricted horizontal drags for panning.
+        // Disable pager drag here so a map pan never accidentally switches SIM.
+        // SIM switching remains available through the tabs above, with animation.
         HorizontalPager(
             state = livePagerState,
-            modifier = Modifier.fillMaxWidth().weight(1f)
+            modifier = Modifier.fillMaxWidth().weight(1f),
+            userScrollEnabled = false
         ) { page ->
             val mapSelected = state.sims.getOrNull(page) ?: state.sims.firstOrNull()
             val mapVisibleSamples = remember(liveSamples, state.settings.recordScope, mapSelected?.simSlotIndex) {
@@ -861,6 +865,9 @@ private fun RecordingDetailScreen(
                 HorizontalPager(
                     state = detailPagerState,
                     modifier = Modifier.fillMaxWidth().weight(1f).clipToBounds().zIndex(0f),
+                    // On the Map tab, horizontal gestures belong to the map.
+                    // Summary/Samples can still use finger-following page swipes.
+                    userScrollEnabled = selectedTab != DetailTab.MAP,
                 ) { page ->
                     when (DetailTab.entries[page]) {
                         DetailTab.SUMMARY -> RecordingSummary(d.item, filtered) { marker ->

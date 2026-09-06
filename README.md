@@ -1,4 +1,4 @@
-# CellTracker v0.6.2
+# CellTracker v0.6.2.1
 
 Changes:
 - Restyled 1-minute signal trend controls to compact Cellular-Z-like metric tiles; removed arrow glyphs and added chart grid.
@@ -11,3 +11,9 @@ Marker colors:
 - End: red
 - Current location: blue
 - Issue marker: orange
+
+
+## v0.6.2.1 hotfix
+- Prevent accidental SIM switching while horizontally panning the Live Map.
+- Live Map SIM switching is now done through the SIM tabs; tab animation is preserved.
+- Recording Detail Map also reserves horizontal gestures for map panning, while Summary/Samples remain swipeable.
