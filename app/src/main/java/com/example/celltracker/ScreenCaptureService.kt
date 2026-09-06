@@ -118,7 +118,7 @@ class ScreenCaptureService : Service() {
                 val cropped = Bitmap.createBitmap(bitmap, 0, 0, width, height)
                 bitmap.recycle()
                 val dir = File(getExternalFilesDir(null), "screenshots").apply { mkdirs() }
-                val task = sanitize(RecordingState.status.value.taskName.ifBlank { "Untitled" })
+                val task = sanitize(resolveRecordingTaskName().ifBlank { "Untitled" })
                 val app = sanitize(foregroundAppLabel().ifBlank { "Screen" })
                 val stamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
                 val file = File(dir, "${task}_${app}_$stamp.png")
@@ -132,6 +132,28 @@ class ScreenCaptureService : Service() {
             }
             sendMark(subId, eventType, eventNote, path)
         }
+    }
+
+
+    /**
+     * Resolve the current task name independently of the Activity/ViewModel lifecycle.
+     * Overlay-started recordings may continue while the main UI is backgrounded, so
+     * screenshot naming must not rely only on the in-memory RecordingState value.
+     */
+    private fun resolveRecordingTaskName(): String {
+        RecordingState.status.value.taskName.trim().takeIf { it.isNotBlank() }?.let { return it }
+        val prefs = getSharedPreferences("celltracker_recording", MODE_PRIVATE)
+        prefs.getString("active_task_name", null)?.trim()?.takeIf { it.isNotBlank() }?.let { return it }
+        val path = RecordingState.status.value.latestPath
+            ?: prefs.getString("active_path", null)
+            ?: prefs.getString("latest_path", null)
+        return path?.let { taskNameFromRecordingPath(it) }.orEmpty()
+    }
+
+    private fun taskNameFromRecordingPath(path: String): String {
+        val base = File(path).nameWithoutExtension.removePrefix("CellTracker_").removePrefix("CellTracker")
+        val match = Regex("^(.*)_(DualSIM|SIM\\d+|SIM)_\\d{8}_\\d{6}$").matchEntire(base)
+        return match?.groupValues?.getOrNull(1).orEmpty().trim('_').replace('_', ' ')
     }
 
     private fun foregroundAppLabel(): String {

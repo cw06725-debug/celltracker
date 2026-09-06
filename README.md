@@ -65,3 +65,8 @@ Version: 0.7.2 (versionCode 35)
 - Screen-capture permission is kept alive between overlay-controlled recordings when the floating window is configured to remain active, reducing the need to reopen CellTracker between tasks.
 
 Version: 0.7.3 (versionCode 38)
+
+
+## v0.7.3.2
+- Fixed overlay-started screenshot names falling back to `Untitled`: active task/session metadata is persisted by RecordingService and ScreenCaptureService resolves the task from memory, persisted session metadata, or the recording filename.
+- Fixed stale History/Recent recordings after START/STOP from the floating window. MainViewModel refreshes when an externally controlled recording stops, and the UI refreshes recordings again on resume.

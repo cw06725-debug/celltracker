@@ -51,6 +51,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         if (recordingStatusJob?.isActive != true) {
             recordingStatusJob = viewModelScope.launch {
+                var wasRecording = RecordingState.status.value.isRecording
                 RecordingState.status.collect { status ->
                     _state.value = _state.value.copy(
                         isRecording = status.isRecording,
@@ -62,6 +63,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         recordingLocationValid = status.locationValid,
                         recordingLocationAgeMs = status.locationAgeMs
                     )
+                    // A recording can be started/stopped from the floating overlay while
+                    // MainActivity stays in the background. Refresh history on that external
+                    // transition so returning to the app never shows a stale recording list.
+                    if (wasRecording && !status.isRecording) {
+                        delay(120)
+                        _state.value = _state.value.copy(
+                            recordings = loadRecordings(),
+                            latestRecordingPath = latestPathFromPrefs()
+                        )
+                    }
+                    wasRecording = status.isRecording
                 }
             }
         }
@@ -448,6 +460,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clearMessage() {
         _state.value = _state.value.copy(exportResult = null)
+    }
+
+    fun refreshRecordings() {
+        _state.value = _state.value.copy(
+            recordings = loadRecordings(),
+            latestRecordingPath = latestPathFromPrefs()
+        )
     }
 
     private fun recordingsDir() = File(getApplication<Application>().getExternalFilesDir(null), "recordings").apply { mkdirs() }

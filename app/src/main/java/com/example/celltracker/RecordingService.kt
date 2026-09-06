@@ -75,7 +75,13 @@ class RecordingService : Service() {
             val started = System.currentTimeMillis(); val perSim = mutableMapOf<Int, Long>()
             val initialLocation = LocationStore.latest.value
             RecordingState.status.value = RecordingStatus(true, started, 0, emptyMap(), file.absolutePath, markTargetSubscriptionId, initialLocation.isValid, locationAge(initialLocation), taskName)
-            getSharedPreferences("celltracker_recording", MODE_PRIVATE).edit().putString("latest_path", file.absolutePath).apply()
+            getSharedPreferences("celltracker_recording", MODE_PRIVATE).edit()
+                .putString("latest_path", file.absolutePath)
+                .putString("active_path", file.absolutePath)
+                .putString("active_task_name", taskName)
+                .putLong("active_started_at", started)
+                .putBoolean("active_recording", true)
+                .apply()
             val overlaySettings = settingsRepository.load()
             if (overlaySettings.floatingWindowEnabled && overlaySettings.floatingAutoShowDuringRecording && android.provider.Settings.canDrawOverlays(this@RecordingService)) {
                 runCatching { startService(Intent(this@RecordingService, FloatingOverlayService::class.java)) }
@@ -110,6 +116,12 @@ class RecordingService : Service() {
     private fun locationAge(l: LocationData): Long = if (!l.isValid || l.timestampMs <= 0L) Long.MAX_VALUE else (System.currentTimeMillis() - l.timestampMs).coerceAtLeast(0L)
     override fun onDestroy(){
         RecordingState.status.value=RecordingState.status.value.copy(isRecording=false)
+        getSharedPreferences("celltracker_recording", MODE_PRIVATE).edit()
+            .putBoolean("active_recording", false)
+            .remove("active_path")
+            .remove("active_task_name")
+            .remove("active_started_at")
+            .apply()
         if (!settingsRepository.load().floatingKeepWhenStopped) {
             runCatching { stopService(Intent(this, FloatingOverlayService::class.java)) }
         }
