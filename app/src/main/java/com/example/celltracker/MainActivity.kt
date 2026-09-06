@@ -23,6 +23,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -39,12 +40,16 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
+import androidx.core.graphics.drawable.DrawableCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.Dispatchers
@@ -265,7 +270,7 @@ private fun MainScreen(
                                 selected = sim.subscriptionId == selected?.subscriptionId,
                                 onClick = {
                                     val index = state.sims.indexOf(sim)
-                                    if (index >= 0) simPagerScope.launch { simPagerState.animateScrollToPage(index) }
+                                    if (index >= 0) simPagerScope.launch { simPagerState.animateScrollToPage(index, animationSpec = tween(420)) }
                                 },
                                 text = { Text("SIM ${sim.simSlotIndex + 1}\n${sim.servingCell.operator}") }
                             )
@@ -298,6 +303,9 @@ private fun MainScreen(
                 val dataSim = state.sims.firstOrNull { it.subscriptionId == state.dataSimSubscriptionId }
                 Field("Data SIM", dataSim?.let { "SIM ${it.simSlotIndex + 1} ${it.servingCell.operator}" } ?: "--")
                 Field("DataNet", state.dataNetwork)
+                Field("Data RAT", c.dataRat)
+                Field("Voice RAT", c.voiceRat)
+                Field("Roaming", c.roaming)
                 Field("Registered", if (c.registered) "Yes" else "No")
             }
             InfoCard("Serving Cell") {
@@ -308,6 +316,7 @@ private fun MainScreen(
                 Field("Band", c.band)
                 Field(if (c.rat == "NR") "NR-ARFCN" else "EARFCN", c.arfcn)
                 if (c.bandwidth != "--") Field("Bandwidth", c.bandwidth)
+                Field("CA / EN-DC", c.carrierAggregation)
             }
             InfoCard("Signal") {
                 Field(if (c.rat == "NR") "SS-RSRP" else "RSRP", valueWithUnit(c.rsrp, "dBm"))
@@ -318,6 +327,10 @@ private fun MainScreen(
                 if (c.csiRsrp != "--") Field("CSI-RSRP", valueWithUnit(c.csiRsrp, "dBm"))
                 if (c.csiRsrq != "--") Field("CSI-RSRQ", valueWithUnit(c.csiRsrq, "dB"))
                 if (c.csiSinr != "--") Field("CSI-SINR", valueWithUnit(c.csiSinr, "dB"))
+                if (c.cqi != "--") Field("CQI", c.cqi)
+                if (c.level != "--") Field("Signal level", "${c.level} / 4")
+                if (c.asuLevel != "--") Field("ASU", c.asuLevel)
+                SignalTrendSection(c, state.lastUpdated)
             }
 
             Card(modifier = Modifier.fillMaxWidth()) {
@@ -497,6 +510,7 @@ private fun ExportSuccessDialog(
                 Text(result.message)
                 Text("Saved to Downloads/CellTracker", style = MaterialTheme.typography.bodyMedium)
                 result.excelName?.let { Text("Excel: $it", style = MaterialTheme.typography.bodySmall) }
+                result.kmlName?.let { Text("KML: $it", style = MaterialTheme.typography.bodySmall) }
             }
         },
         confirmButton = {
@@ -526,7 +540,7 @@ private fun openExportedFile(context: android.content.Context, uriString: String
 }
 
 private fun shareExportedFiles(context: android.content.Context, result: ExportResult) {
-    val uris = (result.exportedFileUris + listOfNotNull(result.summaryUri, result.excelUri)).distinct().map { Uri.parse(it) }
+    val uris = (result.exportedFileUris + listOfNotNull(result.summaryUri, result.excelUri, result.kmlUri)).distinct().map { Uri.parse(it) }
     if (uris.isEmpty()) return
     val intent = if (uris.size == 1) {
         Intent(Intent.ACTION_SEND).apply { type = "*/*"; putExtra(Intent.EXTRA_STREAM, uris.first()) }
@@ -647,7 +661,7 @@ private fun LiveMapScreen(
                         state.sims.forEachIndexed { index, sim ->
                             Tab(
                                 selected = livePagerState.currentPage == index,
-                                onClick = { livePagerScope.launch { livePagerState.animateScrollToPage(index) } },
+                                onClick = { livePagerScope.launch { livePagerState.animateScrollToPage(index, animationSpec = tween(420)) } },
                                 text = { Text("SIM ${sim.simSlotIndex + 1}\n${sim.servingCell.operator}") }
                             )
                         }
@@ -748,6 +762,7 @@ private fun RecordingDetailScreen(
         }
     }
     var selectedSimSlot by remember { mutableStateOf<Int?>(null) }
+    var focusMarkerId by remember { mutableStateOf<String?>(null) }
     var showDelete by remember { mutableStateOf(false) }
     var showExport by remember { mutableStateOf(false) }
     val detail by produceState<RecordingDetail?>(initialValue = null, path) {
@@ -795,7 +810,7 @@ private fun RecordingDetailScreen(
                             DetailTab.entries.forEach { tab ->
                                 Tab(
                                     selected = selectedTab == tab,
-                                    onClick = { detailPagerScope.launch { detailPagerState.animateScrollToPage(tab.ordinal) } },
+                                    onClick = { detailPagerScope.launch { detailPagerState.animateScrollToPage(tab.ordinal, animationSpec = tween(420)) } },
                                     text = { Text(tab.name.lowercase().replaceFirstChar { it.uppercase() }) }
                                 )
                             }
@@ -807,9 +822,17 @@ private fun RecordingDetailScreen(
                     modifier = Modifier.fillMaxWidth().weight(1f).clipToBounds().zIndex(0f),
                 ) { page ->
                     when (DetailTab.entries[page]) {
-                        DetailTab.SUMMARY -> RecordingSummary(d.item, filtered)
-                        DetailTab.MAP -> RecordingMap(filtered)
-                        DetailTab.SAMPLES -> RecordingSamples(filtered)
+                        DetailTab.SUMMARY -> RecordingSummary(d.item, filtered) { marker ->
+                            focusMarkerId = marker.markerId
+                            selectedTab = DetailTab.MAP
+                            detailPagerScope.launch { detailPagerState.animateScrollToPage(DetailTab.MAP.ordinal, animationSpec = tween(420)) }
+                        }
+                        DetailTab.MAP -> RecordingMap(filtered, focusMarkerId)
+                        DetailTab.SAMPLES -> RecordingSamples(filtered) { marker ->
+                            focusMarkerId = marker.markerId
+                            selectedTab = DetailTab.MAP
+                            detailPagerScope.launch { detailPagerState.animateScrollToPage(DetailTab.MAP.ordinal, animationSpec = tween(420)) }
+                        }
                     }
                 }
             }
@@ -831,7 +854,7 @@ private fun RecordingDetailScreen(
 }
 
 @Composable
-private fun RecordingSummary(item: RecordingItem, samples: List<TrackSample>) {
+private fun RecordingSummary(item: RecordingItem, samples: List<TrackSample>, onMarkerClick: (TrackSample) -> Unit) {
     val validLocation = samples.count { it.locationValid }
     val ratCounts = samples.groupingBy { normalizedRat(it) }.eachCount().toList().sortedByDescending { it.second }
     val rsrp = samples.mapNotNull { it.rsrp.toIntOrNull() }
@@ -857,26 +880,72 @@ private fun RecordingSummary(item: RecordingItem, samples: List<TrackSample>) {
                 Field("RSRP Max", "${rsrp.maxOrNull()} dBm")
             }
         }
-        val markerCount = samples.count { it.isMarker }
-        InfoCard("Markers") { Field("Marked events", markerCount.toString()) }
+        val markers = samples.filter { it.isMarker }.sortedBy { it.timestampMs }
+        InfoCard("Markers") {
+            Field("Marked events", markers.size.toString())
+            if (markers.isEmpty()) {
+                Text("No marked events", style = MaterialTheme.typography.bodySmall)
+            } else {
+                markers.forEachIndexed { index, marker ->
+                    if (index > 0) HorizontalDivider(Modifier.padding(vertical = 6.dp))
+                    Column(
+                        Modifier.fillMaxWidth().clickable { onMarkerClick(marker) }.padding(vertical = 4.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(marker.eventType.ifBlank { "Marker" }, style = MaterialTheme.typography.labelLarge)
+                            Text(SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()).format(Date(marker.timestampMs)), style = MaterialTheme.typography.labelMedium)
+                        }
+                        Text("SIM ${marker.simSlot} · ${marker.operator} · ${normalizedRat(marker)}", style = MaterialTheme.typography.bodySmall)
+                        Text("RSRP ${valueWithUnit(marker.rsrp, "dBm")} · PCI ${marker.pci} · ${marker.band}", style = MaterialTheme.typography.bodySmall)
+                        Text("Tap to view on Map", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                    }
+                }
+            }
+        }
     }
 }
 
+private enum class MapSampleFilter { ALL, MARKERS }
+
 @Composable
-private fun RecordingMap(samples: List<TrackSample>) {
-    // Keep the filtered list stable across recompositions. A freshly-created List on every
-    // recomposition was restarting the map effect and repeatedly refitting the camera.
+private fun RecordingMap(samples: List<TrackSample>, focusMarkerId: String? = null) {
+    var filter by remember { mutableStateOf(MapSampleFilter.ALL) }
     val valid = remember(samples) {
         samples.filter { it.locationValid && it.latitude != null && it.longitude != null }
     }
+    val markerCount = valid.count { it.isMarker }
+    val visible = remember(valid, filter) {
+        if (filter == MapSampleFilter.MARKERS) valid.filter { it.isMarker } else valid
+    }
     Column(Modifier.fillMaxSize()) {
-        RatLegend(valid.map { normalizedRat(it) }.distinct())
-        if (valid.isEmpty()) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            FilterChip(selected = filter == MapSampleFilter.ALL, onClick = { filter = MapSampleFilter.ALL }, label = { Text("All points") })
+            FilterChip(selected = filter == MapSampleFilter.MARKERS, onClick = { filter = MapSampleFilter.MARKERS }, label = { Text("Markers ($markerCount)") })
+        }
+        if (filter == MapSampleFilter.ALL) RatLegend(valid.map { normalizedRat(it) }.distinct())
+        Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(10.dp).background(Color(0xFFFF9800), CircleShape))
+            Spacer(Modifier.width(4.dp))
+            Text("Issue marker", style = MaterialTheme.typography.labelSmall)
+        }
+        if (visible.isEmpty()) {
             Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                Text("No valid GPS points in this recording")
+                Text(if (filter == MapSampleFilter.MARKERS) "No markers with valid GPS" else "No valid GPS points in this recording")
             }
         } else {
-            OsmTrackMap(valid, Modifier.fillMaxWidth().weight(1f), detailFields = SettingsRepository(LocalContext.current).load().mapDetailFields)
+            OsmTrackMap(
+                visible,
+                Modifier.fillMaxWidth().weight(1f),
+                detailFields = SettingsRepository(LocalContext.current).load().mapDetailFields,
+                focusMarkerId = focusMarkerId,
+                drawTrack = filter == MapSampleFilter.ALL,
+                showEndpoints = filter == MapSampleFilter.ALL
+            )
         }
     }
 }
@@ -902,7 +971,10 @@ private fun OsmTrackMap(
     currentLabel: String? = null,
     currentSample: TrackSample? = null,
     liveFollow: Boolean = false,
-    detailFields: Set<MapDetailField> = AppSettings().mapDetailFields
+    detailFields: Set<MapDetailField> = AppSettings().mapDetailFields,
+    focusMarkerId: String? = null,
+    drawTrack: Boolean = true,
+    showEndpoints: Boolean = true
 ) {
     val context = LocalContext.current
     var selectedSample by remember { mutableStateOf<TrackSample?>(null) }
@@ -961,7 +1033,7 @@ private fun OsmTrackMap(
 
     val livePointKey = currentPoint?.let { "${String.format(Locale.US, "%.6f", it.latitude)},${String.format(Locale.US, "%.6f", it.longitude)}" }
 
-    LaunchedEffect(mapView, trackKey, livePointKey, liveFollow) {
+    LaunchedEffect(mapView, trackKey, livePointKey, liveFollow, focusMarkerId, drawTrack, showEndpoints) {
         mapView.overlays.clear()
         val allPoints = mutableListOf<GeoPoint>()
 
@@ -969,7 +1041,7 @@ private fun OsmTrackMap(
             var currentRat: String? = null
             var segment = mutableListOf<GeoPoint>()
             fun flush() {
-                if (segment.size >= 2 && currentRat != null) {
+                if (drawTrack && segment.size >= 2 && currentRat != null) {
                     mapView.overlays.add(Polyline().apply {
                         setPoints(segment.toList())
                         outlinePaint.color = ratColor(currentRat!!)
@@ -987,13 +1059,12 @@ private fun OsmTrackMap(
                 if (currentRat == null) currentRat = rat
                 if (rat != currentRat) { flush(); currentRat = rat }
                 segment += point
-
             }
             flush()
         }
 
         val ordered = samples.sortedBy { it.timestampMs }
-        ordered.firstOrNull()?.let { sample ->
+        if (showEndpoints) ordered.firstOrNull()?.let { sample ->
             mapView.overlays.add(Marker(mapView).apply {
                 position = GeoPoint(sample.latitude!!, sample.longitude!!)
                 title = "Start"
@@ -1001,7 +1072,7 @@ private fun OsmTrackMap(
                 setOnMarkerClickListener { _, _ -> selectedIsCurrent = false; selectedSample = sample; true }
             })
         }
-        ordered.lastOrNull()?.takeIf { it.timestampMs != ordered.firstOrNull()?.timestampMs }?.let { sample ->
+        if (showEndpoints) ordered.lastOrNull()?.takeIf { it.timestampMs != ordered.firstOrNull()?.timestampMs }?.let { sample ->
             mapView.overlays.add(Marker(mapView).apply {
                 position = GeoPoint(sample.latitude!!, sample.longitude!!)
                 title = "End"
@@ -1041,19 +1112,31 @@ private fun OsmTrackMap(
         }))
 
         // Event markers are added last so they stay above Start/End/current-location overlays.
+        val focusedMarker = samples.firstOrNull { it.isMarker && it.markerId.isNotBlank() && it.markerId == focusMarkerId }
         samples.filter { it.isMarker && it.latitude != null && it.longitude != null }.forEach { sample ->
             mapView.overlays.add(Marker(mapView).apply {
                 position = GeoPoint(sample.latitude!!, sample.longitude!!)
                 title = "⚑ ${sample.eventType.ifBlank { "Issue" }}"
                 snippet = "SIM ${sample.simSlot} · ${sample.operator} · ${normalizedRat(sample)} · RSRP ${sample.rsrp} dBm"
-                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                icon = ContextCompat.getDrawable(context, android.R.drawable.star_big_on)?.mutate()?.also {
+                    DrawableCompat.setTint(it, AndroidColor.rgb(255, 152, 0))
+                }
+                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
                 setOnMarkerClickListener { _, _ -> selectedIsCurrent = false; selectedSample = sample; true }
             })
+        }
+        if (focusedMarker != null) {
+            selectedIsCurrent = false
+            selectedSample = focusedMarker
         }
 
         mapView.invalidate()
         mapView.post {
             when {
+                focusedMarker?.latitude != null && focusedMarker.longitude != null -> {
+                    mapView.controller.setCenter(GeoPoint(focusedMarker.latitude, focusedMarker.longitude))
+                    if (mapView.zoomLevelDouble < 17.0) mapView.controller.setZoom(18.0)
+                }
                 liveFollow && currentPoint != null -> {
                     mapView.controller.setCenter(currentPoint)
                     if (mapView.zoomLevelDouble < 16.0) mapView.controller.setZoom(17.0)
@@ -1105,14 +1188,16 @@ private fun OsmTrackMap(
 }
 
 @Composable
-private fun RecordingSamples(samples: List<TrackSample>) {
+private fun RecordingSamples(samples: List<TrackSample>, onMarkerClick: (TrackSample) -> Unit) {
     if (samples.isEmpty()) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("No samples") }
         return
     }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         items(samples, key = { "${it.timestampMs}-${it.simSlot}-${it.subscriptionId}" }) { s ->
-            Card(Modifier.fillMaxWidth()) {
+            Card(
+                Modifier.fillMaxWidth().then(if (s.isMarker) Modifier.clickable { onMarkerClick(s) } else Modifier)
+            ) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text(SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()).format(Date(s.timestampMs)), style = MaterialTheme.typography.labelLarge)
@@ -1121,9 +1206,96 @@ private fun RecordingSamples(samples: List<TrackSample>) {
                     Text("${s.operator} · PCI ${s.pci} · ARFCN ${s.arfcn}", style = MaterialTheme.typography.bodySmall)
                     Text("RSRP ${valueWithUnit(s.rsrp, "dBm")} · RSRQ ${valueWithUnit(s.rsrq, "dB")} · SINR ${valueWithUnit(s.sinr, "dB")}", style = MaterialTheme.typography.bodySmall)
                     Text(if (s.locationValid) "${formatCoord(s.latitude)}, ${formatCoord(s.longitude)}" else "Location --", style = MaterialTheme.typography.bodySmall)
-                    if (s.isMarker) AssistChip(onClick = {}, label = { Text(if (s.eventType.isBlank()) "Marker" else s.eventType) })
+                    if (s.isMarker) AssistChip(onClick = { onMarkerClick(s) }, label = { Text("${if (s.eventType.isBlank()) "Marker" else s.eventType} · View on Map") })
                 }
             }
+        }
+    }
+}
+
+private data class SignalTrendPoint(
+    val timeMs: Long,
+    val rsrp: Float?,
+    val rsrq: Float?,
+    val sinr: Float?,
+    val rssi: Float?
+)
+
+private enum class SignalMetric(val label: String, val unit: String) {
+    RSRP("RSRP", "dBm"), RSRQ("RSRQ", "dB"), SINR("SINR", "dB"), RSSI("RSSI", "dBm")
+}
+
+@Composable
+private fun SignalTrendSection(cell: CellData, tick: String) {
+    var metric by remember(cell.subscriptionId) { mutableStateOf(SignalMetric.RSRP) }
+    val points = remember(cell.subscriptionId) { mutableStateListOf<SignalTrendPoint>() }
+    LaunchedEffect(cell.subscriptionId, tick) {
+        val now = System.currentTimeMillis()
+        points += SignalTrendPoint(
+            now,
+            cell.rsrp.toFloatOrNull(),
+            cell.rsrq.toFloatOrNull(),
+            cell.sinr.toFloatOrNull(),
+            cell.rssi.toFloatOrNull()
+        )
+        while (points.isNotEmpty() && now - points.first().timeMs > 60_000L) points.removeAt(0)
+        while (points.size > 180) points.removeAt(0)
+    }
+    Spacer(Modifier.height(8.dp))
+    HorizontalDivider()
+    Spacer(Modifier.height(8.dp))
+    Text("Signal trend · last 1 min", style = MaterialTheme.typography.labelLarge)
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        SignalMetric.entries.forEach { item ->
+            FilterChip(
+                selected = metric == item,
+                onClick = { metric = item },
+                label = { Text("↗ ${item.label}") }
+            )
+        }
+    }
+    val values = points.mapNotNull { point ->
+        val value = when (metric) {
+            SignalMetric.RSRP -> point.rsrp
+            SignalMetric.RSRQ -> point.rsrq
+            SignalMetric.SINR -> point.sinr
+            SignalMetric.RSSI -> point.rssi
+        }
+        value?.let { point.timeMs to it }
+    }
+    if (values.size < 2) {
+        Box(Modifier.fillMaxWidth().height(112.dp), contentAlignment = Alignment.Center) {
+            Text("Collecting ${metric.label} trend…", style = MaterialTheme.typography.bodySmall)
+        }
+    } else {
+        val min = values.minOf { it.second }
+        val max = values.maxOf { it.second }
+        val latest = values.last().second
+        val lineColor = MaterialTheme.colorScheme.primary
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("${String.format(Locale.US, "%.1f", min)} ${metric.unit}", style = MaterialTheme.typography.labelSmall)
+            Text("Now ${String.format(Locale.US, "%.1f", latest)} ${metric.unit}", style = MaterialTheme.typography.labelSmall)
+            Text("${String.format(Locale.US, "%.1f", max)} ${metric.unit}", style = MaterialTheme.typography.labelSmall)
+        }
+        Canvas(Modifier.fillMaxWidth().height(120.dp).padding(top = 6.dp)) {
+            val start = values.first().first
+            val end = values.last().first
+            val timeSpan = (end - start).coerceAtLeast(1L).toFloat()
+            val valueSpan = (max - min).coerceAtLeast(1f)
+            val path = Path()
+            values.forEachIndexed { index, (time, value) ->
+                val x = ((time - start).toFloat() / timeSpan) * size.width
+                val y = size.height - ((value - min) / valueSpan) * size.height
+                if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
+            }
+            drawPath(path, lineColor, style = Stroke(width = 4f))
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("60 s ago", style = MaterialTheme.typography.labelSmall)
+            Text("Now", style = MaterialTheme.typography.labelSmall)
         }
     }
 }
@@ -1331,6 +1503,8 @@ private fun mapPointRows(sample: TrackSample, fields: Set<MapDetailField>): List
         MapDetailField.BANDWIDTH to ("Bandwidth" to sample.bandwidth), MapDetailField.RSSI to ("RSSI" to valueWithUnit(sample.rssi, "dBm")),
         MapDetailField.TIMING_ADVANCE to ("Timing Advance" to sample.timingAdvance), MapDetailField.CSI_RSRP to ("CSI-RSRP" to valueWithUnit(sample.csiRsrp, "dBm")),
         MapDetailField.CSI_RSRQ to ("CSI-RSRQ" to valueWithUnit(sample.csiRsrq, "dB")), MapDetailField.CSI_SINR to ("CSI-SINR" to valueWithUnit(sample.csiSinr, "dB")),
+        MapDetailField.CQI to ("CQI" to sample.cqi), MapDetailField.SIGNAL_LEVEL to ("Signal level" to sample.level), MapDetailField.ASU to ("ASU" to sample.asuLevel),
+        MapDetailField.CA to ("CA / EN-DC" to sample.carrierAggregation), MapDetailField.DATA_RAT to ("Data RAT" to sample.dataRat), MapDetailField.VOICE_RAT to ("Voice RAT" to sample.voiceRat), MapDetailField.ROAMING to ("Roaming" to sample.roaming),
         MapDetailField.MCC to ("MCC" to sample.mcc), MapDetailField.MNC to ("MNC" to sample.mnc), MapDetailField.LATITUDE to ("Latitude" to formatCoord(sample.latitude)),
         MapDetailField.LONGITUDE to ("Longitude" to formatCoord(sample.longitude)), MapDetailField.ACCURACY to ("Accuracy" to valueWithUnit(sample.accuracy, "m")),
         MapDetailField.SPEED to ("Speed" to valueWithUnit(sample.speedKmh, "km/h")), MapDetailField.BEARING to ("Bearing" to valueWithUnit(sample.bearing, "°"))

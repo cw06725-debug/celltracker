@@ -23,6 +23,13 @@ data class CellData(
     val csiRsrp: String = "--",
     val csiRsrq: String = "--",
     val csiSinr: String = "--",
+    val cqi: String = "--",
+    val level: String = "--",
+    val asuLevel: String = "--",
+    val carrierAggregation: String = "--",
+    val dataRat: String = "--",
+    val voiceRat: String = "--",
+    val roaming: String = "--",
     val registered: Boolean = false
 )
 
@@ -59,7 +66,8 @@ enum class MapDetailField(val label: String) {
     TIME("Time"), SIM("SIM"), OPERATOR("Operator"), RAT("RAT"), RSRP("RSRP"), RSRQ("RSRQ"), SINR("SINR"),
     PCI("PCI"), ARFCN("ARFCN"), TAC("TAC"), CELL_ID("Cell ID / NCI"), LATITUDE("Latitude"), LONGITUDE("Longitude"),
     BAND("Band"), BANDWIDTH("Bandwidth"), RSSI("RSSI"), TIMING_ADVANCE("Timing Advance"),
-    CSI_RSRP("CSI-RSRP"), CSI_RSRQ("CSI-RSRQ"), CSI_SINR("CSI-SINR"), MCC("MCC"), MNC("MNC"),
+    CSI_RSRP("CSI-RSRP"), CSI_RSRQ("CSI-RSRQ"), CSI_SINR("CSI-SINR"), CQI("CQI"), SIGNAL_LEVEL("Signal level"), ASU("ASU"),
+    CA("CA / EN-DC"), DATA_RAT("Data RAT"), VOICE_RAT("Voice RAT"), ROAMING("Roaming"), MCC("MCC"), MNC("MNC"),
     ACCURACY("Accuracy"), SPEED("Speed"), BEARING("Bearing")
 }
 
@@ -88,7 +96,7 @@ data class AppSettings(
     val toastOnMark: Boolean = true,
     val soundOnMark: Boolean = false,
     val recordScope: RecordScope = RecordScope.CURRENT_SIM,
-    val mapDetailFields: Set<MapDetailField> = setOf(MapDetailField.TIME, MapDetailField.SIM, MapDetailField.OPERATOR, MapDetailField.RAT, MapDetailField.RSRP, MapDetailField.RSRQ, MapDetailField.SINR, MapDetailField.PCI, MapDetailField.ARFCN, MapDetailField.BAND, MapDetailField.LATITUDE, MapDetailField.LONGITUDE),
+    val mapDetailFields: Set<MapDetailField> = setOf(MapDetailField.TIME, MapDetailField.SIM, MapDetailField.OPERATOR, MapDetailField.RAT, MapDetailField.RSRP, MapDetailField.RSRQ, MapDetailField.SINR, MapDetailField.PCI, MapDetailField.ARFCN, MapDetailField.BAND, MapDetailField.CA, MapDetailField.CQI, MapDetailField.LATITUDE, MapDetailField.LONGITUDE),
     val issueTypes: List<String> = listOf("Call Drop", "No Audio", "VoLTE Lost", "No Signal", "No Data", "Slow Data", "Video Stuck", "Handover Issue", "Poor Voice Quality", "Other")
 )
 
@@ -137,6 +145,13 @@ data class TrackSample(
     val csiRsrp: String = "--",
     val csiRsrq: String = "--",
     val csiSinr: String = "--",
+    val cqi: String = "--",
+    val level: String = "--",
+    val asuLevel: String = "--",
+    val carrierAggregation: String = "--",
+    val dataRat: String = "--",
+    val voiceRat: String = "--",
+    val roaming: String = "--",
     val latitude: Double?,
     val longitude: Double?,
     val altitude: String,

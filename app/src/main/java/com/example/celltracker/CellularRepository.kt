@@ -82,14 +82,17 @@ class CellularRepository(private val context: Context) {
             servingRaw.rat == "LTE" -> "LTE"
             else -> servingRaw.rat
         }
-        val serving = if (servingRaw.rat == "LTE" && servingRaw.sinr == "--") {
-            servingRaw.copy(
-                displayRat = displayRat,
-                sinr = readLteSinrFallback(tm)
-            )
-        } else {
-            servingRaw.copy(displayRat = displayRat)
-        }
+        val caInfo = carrierAggregationInfo(tm, parsed, servingRaw)
+        val common = servingRaw.copy(
+            displayRat = displayRat,
+            carrierAggregation = caInfo,
+            dataRat = networkTypeName(runCatching { tm.dataNetworkType }.getOrDefault(TelephonyManager.NETWORK_TYPE_UNKNOWN)),
+            voiceRat = networkTypeName(runCatching { tm.voiceNetworkType }.getOrDefault(TelephonyManager.NETWORK_TYPE_UNKNOWN)),
+            roaming = runCatching { if (tm.isNetworkRoaming) "Yes" else "No" }.getOrDefault("--")
+        )
+        val serving = if (common.rat == "LTE" && common.sinr == "--") {
+            common.copy(sinr = readLteSinrFallback(tm))
+        } else common
         val neighbors = parsed.filterNot { it.registered }.map { neighbor ->
             neighbor.copy(displayRat = if (neighbor.rat == "NR") "NR" else neighbor.rat)
         }
@@ -143,6 +146,9 @@ class CellularRepository(private val context: Context) {
                 bandwidth = bandwidthValue(id.bandwidth),
                 rssi = intDbValue(s.rssi),
                 timingAdvance = intValue(s.timingAdvance),
+                cqi = intValue(s.cqi),
+                level = intValue(s.level),
+                asuLevel = intValue(s.asuLevel),
                 registered = cell.isRegistered
             )
         }
@@ -169,6 +175,8 @@ class CellularRepository(private val context: Context) {
                 csiRsrp = intDbValue(s.csiRsrp),
                 csiRsrq = intDbValue(s.csiRsrq),
                 csiSinr = intDbValue(s.csiSinr),
+                level = intValue(s.level),
+                asuLevel = intValue(s.asuLevel),
                 registered = cell.isRegistered
             )
         }
@@ -201,6 +209,41 @@ class CellularRepository(private val context: Context) {
             }
         }
         return "--"
+    }
+
+    private fun carrierAggregationInfo(tm: TelephonyManager, parsed: List<CellData>, serving: CellData): String {
+        val registeredLteBands = parsed.filter { it.registered && it.rat == "LTE" }.map { it.band }.filter { it != "--" }.distinct()
+        val visibleNrBands = parsed.filter { it.rat == "NR" }.map { it.band }.filter { it != "--" }.distinct()
+        val type = runCatching { tm.dataNetworkType }.getOrDefault(TelephonyManager.NETWORK_TYPE_UNKNOWN)
+        val lteCa = type == TelephonyManager.NETWORK_TYPE_LTE_CA || registeredLteBands.size > 1
+        return when {
+            lteCa && registeredLteBands.isNotEmpty() -> "LTE CA: ${registeredLteBands.joinToString(" + ")}"
+            lteCa -> "LTE CA: Active"
+            serving.rat == "LTE" && visibleNrBands.isNotEmpty() -> {
+                val anchor = serving.band.takeIf { it != "--" } ?: "LTE"
+                "EN-DC: $anchor + ${visibleNrBands.joinToString(" + ")}"
+            }
+            else -> "--"
+        }
+    }
+
+    private fun networkTypeName(type: Int): String = when (type) {
+        TelephonyManager.NETWORK_TYPE_NR -> "NR"
+        TelephonyManager.NETWORK_TYPE_LTE, TelephonyManager.NETWORK_TYPE_LTE_CA -> "LTE"
+        TelephonyManager.NETWORK_TYPE_UMTS -> "UMTS"
+        TelephonyManager.NETWORK_TYPE_HSPA -> "HSPA"
+        TelephonyManager.NETWORK_TYPE_HSPAP -> "HSPA+"
+        TelephonyManager.NETWORK_TYPE_HSDPA -> "HSDPA"
+        TelephonyManager.NETWORK_TYPE_HSUPA -> "HSUPA"
+        TelephonyManager.NETWORK_TYPE_GSM -> "GSM"
+        TelephonyManager.NETWORK_TYPE_GPRS -> "GPRS"
+        TelephonyManager.NETWORK_TYPE_EDGE -> "EDGE"
+        TelephonyManager.NETWORK_TYPE_CDMA -> "CDMA"
+        TelephonyManager.NETWORK_TYPE_1xRTT -> "1xRTT"
+        TelephonyManager.NETWORK_TYPE_EVDO_0 -> "EVDO"
+        TelephonyManager.NETWORK_TYPE_EVDO_A -> "EVDO-A"
+        TelephonyManager.NETWORK_TYPE_EVDO_B -> "EVDO-B"
+        else -> "--"
     }
 
     private fun intValue(v: Int): String = if (v == CellInfo.UNAVAILABLE) "--" else v.toString()

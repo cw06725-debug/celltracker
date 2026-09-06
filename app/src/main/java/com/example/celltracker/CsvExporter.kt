@@ -23,7 +23,9 @@ data class ExportResult(
     val summaryUri: String? = null,
     val summaryName: String? = null,
     val excelUri: String? = null,
-    val excelName: String? = null
+    val excelName: String? = null,
+    val kmlUri: String? = null,
+    val kmlName: String? = null
 ) {
     val primaryFileUri: String? get() = summaryUri ?: excelUri ?: exportedFileUris.firstOrNull()
     val primaryMimeType: String get() = if (summaryUri != null) "text/html" else if (excelUri != null) "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" else "text/csv"
@@ -59,18 +61,28 @@ object CsvExporter {
             buildXlsx(source)
         ).toString()
 
+        val kmlName = "${source.nameWithoutExtension}_track.kml"
+        val kmlUri = saveToDownloads(
+            context,
+            kmlName,
+            "application/vnd.google-earth.kml+xml",
+            buildKml(source)
+        ).toString()
+
         val rawDescription = if (mode == CsvExportMode.SEPARATE_BY_SIM) {
             "${rawUris.size} SIM CSV files"
         } else {
             "1 CSV file"
         }
         return ExportResult(
-            message = "Export successful · $rawDescription + summary",
+            message = "Export successful · $rawDescription + Summary + Excel + KML",
             exportedFileUris = rawUris,
             summaryUri = summaryUri,
             summaryName = summaryName,
             excelUri = excelUri,
-            excelName = excelName
+            excelName = excelName,
+            kmlUri = kmlUri,
+            kmlName = kmlName
         )
     }
 
@@ -158,9 +170,9 @@ object CsvExporter {
         if (issueCounts.isEmpty()) summary += listOf("No marked issues", "0") else issueCounts.forEach { summary += listOf(it.key, it.value.toString()) }
         summary += emptyList<String>()
         summary += listOf("Marked Issue Details")
-        val issueHeaders = listOf("Time","Issue","SIM","Operator","RAT","Band","RSRP","RSRQ","SINR","PCI","ARFCN","DataNet","Latitude","Longitude","Note")
+        val issueHeaders = listOf("Time","Issue","SIM","Operator","RAT","Band","CA / EN-DC","RSRP","RSRQ","SINR","RSSI","CQI","PCI","ARFCN","Data RAT","DataNet","Latitude","Longitude","Note")
         summary += issueHeaders
-        events.forEach { r -> summary += listOf(f(r,"timestamp"),f(r,"event_type"),f(r,"sim_slot"),f(r,"operator"),f(r,"display_rat").ifBlank{f(r,"rat")},f(r,"band"),f(r,"rsrp"),f(r,"rsrq"),f(r,"sinr"),f(r,"pci"),f(r,"arfcn"),f(r,"data_network"),f(r,"latitude"),f(r,"longitude"),f(r,"event_note")) }
+        events.forEach { r -> summary += listOf(f(r,"timestamp"),f(r,"event_type"),f(r,"sim_slot"),f(r,"operator"),f(r,"display_rat").ifBlank{f(r,"rat")},f(r,"band"),f(r,"carrier_aggregation"),f(r,"rsrp"),f(r,"rsrq"),f(r,"sinr"),f(r,"rssi"),f(r,"cqi"),f(r,"pci"),f(r,"arfcn"),f(r,"data_rat"),f(r,"data_network"),f(r,"latitude"),f(r,"longitude"),f(r,"event_note")) }
 
         fun xml(v:String)=v.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace("\"","&quot;")
         fun colName(n:Int):String { var x=n+1; var out=""; while(x>0){ val r=(x-1)%26; out=('A'.code+r).toChar()+out; x=(x-1)/26 }; return out }
@@ -197,7 +209,11 @@ object CsvExporter {
         val longitude: String,
         val issueType: String,
         val note: String,
-        val dataNetwork: String
+        val dataNetwork: String,
+        val carrierAggregation: String,
+        val rssi: String,
+        val cqi: String,
+        val dataRat: String
     )
 
     private fun buildSummaryHtml(source: File): String {
@@ -225,7 +241,11 @@ object CsvExporter {
                 longitude = field(f, "longitude"),
                 issueType = field(f, "event_type"),
                 note = field(f, "event_note"),
-                dataNetwork = field(f, "data_network")
+                dataNetwork = field(f, "data_network"),
+                carrierAggregation = field(f, "carrier_aggregation"),
+                rssi = field(f, "rssi"),
+                cqi = field(f, "cqi"),
+                dataRat = field(f, "data_rat")
             )
         }
         return basicSummaryHtml(source.name, rows)
@@ -279,13 +299,59 @@ object CsvExporter {
             else dataNets.forEach { append("<div>${esc(it.key)} × ${it.value}</div>") }
             append("</div>")
 
-            append("<h2>Marked Issue Details</h2><div class='card'><table><thead><tr><th>Time</th><th>Issue</th><th>SIM</th><th>Operator</th><th>RAT</th><th>Band</th><th>RSRP</th><th>RSRQ</th><th>SINR</th><th>PCI</th><th>ARFCN</th><th>Latitude</th><th>Longitude</th><th>Note</th></tr></thead><tbody>")
-            if (events.isEmpty()) append("<tr><td colspan='14' class='muted'>No marked issues</td></tr>")
+            append("<h2>Marked Issue Details</h2><div class='card'><table><thead><tr><th>Time</th><th>Issue</th><th>SIM</th><th>Operator</th><th>RAT</th><th>Band</th><th>CA / EN-DC</th><th>RSRP</th><th>RSRQ</th><th>SINR</th><th>RSSI</th><th>CQI</th><th>PCI</th><th>ARFCN</th><th>Data RAT</th><th>Latitude</th><th>Longitude</th><th>Note</th></tr></thead><tbody>")
+            if (events.isEmpty()) append("<tr><td colspan='18' class='muted'>No marked issues</td></tr>")
             else events.forEach { e ->
-                append("<tr><td>${esc(e.timestamp)}</td><td class='issue'>${esc(e.issueType)}</td><td>SIM ${esc(e.simSlot)}</td><td>${esc(e.operator)}</td><td>${esc(e.rat)}</td><td>${esc(e.band)}</td><td>${esc(e.rsrp)}</td><td>${esc(e.rsrq)}</td><td>${esc(e.sinr)}</td><td>${esc(e.pci)}</td><td>${esc(e.arfcn)}</td><td>${esc(e.latitude)}</td><td>${esc(e.longitude)}</td><td>${esc(e.note)}</td></tr>")
+                append("<tr><td>${esc(e.timestamp)}</td><td class='issue'>${esc(e.issueType)}</td><td>SIM ${esc(e.simSlot)}</td><td>${esc(e.operator)}</td><td>${esc(e.rat)}</td><td>${esc(e.band)}</td><td>${esc(e.carrierAggregation)}</td><td>${esc(e.rsrp)}</td><td>${esc(e.rsrq)}</td><td>${esc(e.sinr)}</td><td>${esc(e.rssi)}</td><td>${esc(e.cqi)}</td><td>${esc(e.pci)}</td><td>${esc(e.arfcn)}</td><td>${esc(e.dataRat)}</td><td>${esc(e.latitude)}</td><td>${esc(e.longitude)}</td><td>${esc(e.note)}</td></tr>")
             }
             append("</tbody></table></div>")
             append("</body></html>")
+        }
+    }
+
+    private fun buildKml(source: File): String {
+        val lines = source.readLines().filter { it.isNotBlank() }
+        if (lines.size < 2) return "<?xml version=\"1.0\" encoding=\"UTF-8\"?><kml xmlns=\"http://www.opengis.net/kml/2.2\"><Document/></kml>"
+        val header = parseCsvLine(lines.first())
+        val index = header.withIndex().associate { it.value to it.index }
+        fun field(fields: List<String>, name: String): String = fields.getOrNull(index[name] ?: -1).orEmpty()
+        data class KmlRow(val fields: List<String>, val lat: Double, val lon: Double)
+        val rows = lines.drop(1).mapNotNull { line ->
+            val f = parseCsvLine(line)
+            val lat = field(f, "latitude").toDoubleOrNull() ?: return@mapNotNull null
+            val lon = field(f, "longitude").toDoubleOrNull() ?: return@mapNotNull null
+            KmlRow(f, lat, lon)
+        }
+        fun esc(v: String) = v.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace("\"","&quot;")
+        return buildString {
+            append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>")
+            append("<kml xmlns=\"http://www.opengis.net/kml/2.2\"><Document>")
+            append("<name>${esc(source.nameWithoutExtension)}</name>")
+            append("<Style id=\"track\"><LineStyle><color>ff00a5ff</color><width>4</width></LineStyle></Style>")
+            append("<Style id=\"issue\"><IconStyle><color>ff00a5ff</color><scale>1.25</scale><Icon><href>http://maps.google.com/mapfiles/kml/paddle/red-circle.png</href></Icon></IconStyle></Style>")
+            rows.groupBy { field(it.fields, "sim_slot").ifBlank { "1" } }.forEach { (slot, simRows) ->
+                append("<Placemark><name>SIM ${esc(slot)} Track</name><styleUrl>#track</styleUrl><LineString><tessellate>1</tessellate><coordinates>")
+                simRows.sortedBy { field(it.fields,"timestamp") }.forEach { r -> append("${r.lon},${r.lat},0 ") }
+                append("</coordinates></LineString></Placemark>")
+            }
+            rows.filter { field(it.fields,"is_marker").equals("true", true) }.forEach { r ->
+                val issue = field(r.fields,"event_type").ifBlank { "Marker" }
+                val desc = listOf(
+                    "Time: ${field(r.fields,"timestamp")}",
+                    "SIM: ${field(r.fields,"sim_slot")}",
+                    "Operator: ${field(r.fields,"operator")}",
+                    "RAT: ${field(r.fields,"display_rat").ifBlank { field(r.fields,"rat") }}",
+                    "Band: ${field(r.fields,"band")}",
+                    "CA / EN-DC: ${field(r.fields,"carrier_aggregation")}",
+                    "RSRP: ${field(r.fields,"rsrp")}",
+                    "RSRQ: ${field(r.fields,"rsrq")}",
+                    "SINR: ${field(r.fields,"sinr")}",
+                    "PCI: ${field(r.fields,"pci")}",
+                    "Note: ${field(r.fields,"event_note")}" 
+                ).joinToString("\n")
+                append("<Placemark><name>${esc(issue)}</name><styleUrl>#issue</styleUrl><description>${esc(desc)}</description><Point><coordinates>${r.lon},${r.lat},0</coordinates></Point></Placemark>")
+            }
+            append("</Document></kml>")
         }
     }
 
