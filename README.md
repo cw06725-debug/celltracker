@@ -1,3 +1,19 @@
+# CellTracker v0.4.9
+
+Manual TestEvent / issue marking is now wired into recordings.
+
+## New in v0.4.9
+- Mark issue while recording from the Recording card or Live Map.
+- Issue type picker uses the customizable Issue Types list from Settings.
+- Optional problem description / note.
+- Marker captures the selected SIM cellular snapshot and latest GPS position.
+- Marker is appended to the active CSV and appears on the live map on the next refresh.
+- Marker remains visible in Recording Detail / Map and is clickable for network details.
+- CSV adds marker_id and event_source fields for future manual/automatic event unification.
+- Existing vibration, toast and sound marker feedback settings are used.
+
+Screenshot capture is intentionally left for the next step because Android MediaProjection needs its own permission/capture lifecycle.
+
 # CellTracker v0.4.8
 
 Changes from v0.4.7:

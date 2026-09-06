@@ -2,6 +2,12 @@ package com.example.celltracker
 
 import android.app.Application
 import android.content.Intent
+import android.media.AudioManager
+import android.media.ToneGenerator
+import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -111,6 +117,32 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val app = getApplication<Application>()
         app.stopService(Intent(app, RecordingService::class.java))
         viewModelScope.launch { delay(200); _state.value = _state.value.copy(recordings = loadRecordings()) }
+    }
+
+    fun markEvent(issueType: String, note: String = "") {
+        val app = getApplication<Application>()
+        if (!_state.value.isRecording) return
+        val selectedId = _state.value.selectedSubscriptionId ?: return
+        val intent = Intent(app, RecordingService::class.java).apply {
+            action = RecordingService.ACTION_MARK
+            putExtra(RecordingService.EXTRA_MARK_SUBSCRIPTION_ID, selectedId)
+            putExtra(RecordingService.EXTRA_EVENT_TYPE, issueType)
+            putExtra(RecordingService.EXTRA_EVENT_NOTE, note)
+        }
+        ContextCompat.startForegroundService(app, intent)
+        val settings = _state.value.settings
+        if (settings.toastOnMark) Toast.makeText(app, "Marked: $issueType", Toast.LENGTH_SHORT).show()
+        if (settings.vibrateOnMark) {
+            val vibrator = app.getSystemService(Vibrator::class.java)
+            if (Build.VERSION.SDK_INT >= 26) vibrator?.vibrate(VibrationEffect.createOneShot(60L, VibrationEffect.DEFAULT_AMPLITUDE))
+            else @Suppress("DEPRECATION") vibrator?.vibrate(60L)
+        }
+        if (settings.soundOnMark) {
+            ToneGenerator(AudioManager.STREAM_NOTIFICATION, 70).apply {
+                startTone(ToneGenerator.TONE_PROP_BEEP, 100)
+                viewModelScope.launch { delay(150); release() }
+            }
+        }
     }
 
     fun setRecordScope(scope: RecordScope) {

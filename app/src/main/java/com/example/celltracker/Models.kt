@@ -141,6 +141,8 @@ data class TrackSample(
     val bearing: String,
     val locationValid: Boolean,
     val isMarker: Boolean = false,
+    val markerId: String = "",
+    val eventSource: String = "MANUAL",
     val eventType: String = "",
     val eventNote: String = "",
     val screenshot: String = ""

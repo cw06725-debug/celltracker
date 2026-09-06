@@ -28,11 +28,17 @@ class RecordingService : Service() {
         val n = NotificationCompat.Builder(this, CHANNEL_ID).setSmallIcon(android.R.drawable.ic_menu_mylocation)
             .setContentTitle("CellTracker recording").setContentText("Recording cellular and location samples").setOngoing(true).build()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) startForeground(NOTIFICATION_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION) else startForeground(NOTIFICATION_ID, n)
-        // Keep location updates active while recording. Every update is published into the shared LocationStore.
-        scope.launch { location.locations().collectLatest { /* LocationStore is updated by LocationRepository */ } }
+        scope.launch { location.locations().collectLatest { } }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_MARK) {
+            val subId = intent.getIntExtra(EXTRA_MARK_SUBSCRIPTION_ID, targetSubscriptionId)
+            val eventType = intent.getStringExtra(EXTRA_EVENT_TYPE).orEmpty().ifBlank { "General" }
+            val eventNote = intent.getStringExtra(EXTRA_EVENT_NOTE).orEmpty()
+            scope.launch { appendMarker(subId, eventType, eventNote) }
+            return START_NOT_STICKY
+        }
         if (recordingJob?.isActive != true) {
             targetSubscriptionId = intent?.getIntExtra(EXTRA_SUBSCRIPTION_ID, -1) ?: -1
             bothSims = intent?.getBooleanExtra(EXTRA_BOTH_SIMS, false) ?: false
@@ -65,6 +71,20 @@ class RecordingService : Service() {
             }
         }
     }
+
+    private suspend fun appendMarker(subscriptionId: Int, eventType: String, eventNote: String) {
+        val status = RecordingState.status.value
+        val path = status.latestPath ?: return
+        if (!status.isRecording) return
+        val sim = cellular.readAllSims().firstOrNull { it.subscriptionId == subscriptionId }
+            ?: cellular.readAllSims().firstOrNull() ?: return
+        val locationSnapshot = LocationStore.latest.value
+        val markerId = "M" + SimpleDateFormat("yyyyMMddHHmmssSSS", Locale.US).format(Date())
+        FileWriter(File(path), true).use { w ->
+            w.appendLine(csvLine(System.currentTimeMillis(), sim.servingCell, locationSnapshot, true, eventType, eventNote, markerId, "MANUAL"))
+        }
+    }
+
     private fun locationAge(l: LocationData): Long = if (!l.isValid || l.timestampMs <= 0L) Long.MAX_VALUE else (System.currentTimeMillis() - l.timestampMs).coerceAtLeast(0L)
     override fun onDestroy(){ RecordingState.status.value=RecordingState.status.value.copy(isRecording=false); scope.cancel(); super.onDestroy() }
     override fun onBind(intent: Intent?)=null
@@ -72,9 +92,13 @@ class RecordingService : Service() {
     companion object {
         const val CHANNEL_ID="celltracker_recording"; const val NOTIFICATION_ID=1001
         const val EXTRA_SUBSCRIPTION_ID="subscription_id"; const val EXTRA_BOTH_SIMS="both_sims"
-        const val CSV_HEADER="timestamp,sim_slot,subscription_id,operator,rat,display_rat,mcc,mnc,tac,cell_id,pci,arfcn,rsrp,rsrq,sinr,band,bandwidth,rssi,timing_advance,csi_rsrp,csi_rsrq,csi_sinr,latitude,longitude,altitude,accuracy,speed_kmh,bearing,location_valid,is_marker,event_type,event_note,screenshot"
-        fun csvLine(timestamp:Long,c:CellData,l:LocationData,isMarker:Boolean,eventType:String,eventNote:String):String{
-            val time=SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS",Locale.US).format(Date(timestamp)); val v=listOf(time,(c.simSlotIndex+1).toString(),c.subscriptionId.toString(),c.operator,c.rat,c.displayRat,c.mcc,c.mnc,c.tac,c.cellId,c.pci,c.arfcn,c.rsrp,c.rsrq,c.sinr,c.band,c.bandwidth,c.rssi,c.timingAdvance,c.csiRsrp,c.csiRsrq,c.csiSinr,l.latitude,l.longitude,l.altitude,l.accuracy,l.speedKmh,l.bearing,l.isValid.toString(),isMarker.toString(),eventType,eventNote,"")
+        const val ACTION_MARK="com.example.celltracker.ACTION_MARK"
+        const val EXTRA_MARK_SUBSCRIPTION_ID="mark_subscription_id"
+        const val EXTRA_EVENT_TYPE="event_type"
+        const val EXTRA_EVENT_NOTE="event_note"
+        const val CSV_HEADER="timestamp,sim_slot,subscription_id,operator,rat,display_rat,mcc,mnc,tac,cell_id,pci,arfcn,rsrp,rsrq,sinr,band,bandwidth,rssi,timing_advance,csi_rsrp,csi_rsrq,csi_sinr,latitude,longitude,altitude,accuracy,speed_kmh,bearing,location_valid,is_marker,marker_id,event_source,event_type,event_note,screenshot"
+        fun csvLine(timestamp:Long,c:CellData,l:LocationData,isMarker:Boolean,eventType:String,eventNote:String,markerId:String="",eventSource:String="MANUAL"):String{
+            val time=SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS",Locale.US).format(Date(timestamp)); val v=listOf(time,(c.simSlotIndex+1).toString(),c.subscriptionId.toString(),c.operator,c.rat,c.displayRat,c.mcc,c.mnc,c.tac,c.cellId,c.pci,c.arfcn,c.rsrp,c.rsrq,c.sinr,c.band,c.bandwidth,c.rssi,c.timingAdvance,c.csiRsrp,c.csiRsrq,c.csiSinr,l.latitude,l.longitude,l.altitude,l.accuracy,l.speedKmh,l.bearing,l.isValid.toString(),isMarker.toString(),markerId,eventSource,eventType,eventNote,"")
             return v.joinToString(","){ escapeCsv(it) }
         }
         private fun escapeCsv(value:String):String{ val safe=value.replace("\"","\"\""); return if(safe.contains(',')||safe.contains('"')||safe.contains('\n')) "\"$safe\"" else safe }

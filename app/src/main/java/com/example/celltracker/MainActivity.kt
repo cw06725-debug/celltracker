@@ -140,6 +140,7 @@ class MainActivity : ComponentActivity() {
                         onStartRecording = vm::startRecording,
                         onRecordScope = vm::setRecordScope,
                         onStopRecording = vm::stopRecording,
+                        onMarkEvent = vm::markEvent,
                         onExport = vm::exportLatestCsv,
                         onExportRecording = vm::exportRecording,
                         onDeleteRecording = vm::deleteRecording,
@@ -169,6 +170,7 @@ private fun MainScreen(
     onStartRecording: () -> Unit,
     onRecordScope: (RecordScope) -> Unit,
     onStopRecording: () -> Unit,
+    onMarkEvent: (String, String) -> Unit,
     onExport: (CsvExportMode) -> Unit,
     onExportRecording: (String, CsvExportMode) -> Unit,
     onDeleteRecording: (String) -> Unit,
@@ -183,6 +185,7 @@ private fun MainScreen(
     var deletePath by remember { mutableStateOf<String?>(null) }
     var showDeleteAll by remember { mutableStateOf(false) }
     var showLiveMap by remember { mutableStateOf(false) }
+    var showMarkDialog by remember { mutableStateOf(false) }
 
     val selected = state.sims.firstOrNull { it.subscriptionId == state.selectedSubscriptionId } ?: state.sims.firstOrNull()
     val context = LocalContext.current
@@ -218,6 +221,7 @@ private fun MainScreen(
             navigationIcon = { if (showLiveMap) TextButton(onClick = { showLiveMap = false }) { Text("Back") } },
             actions = {
                 if (!showLiveMap) TextButton(onClick = { showLiveMap = true }) { Text("Map") }
+                if (showLiveMap && state.isRecording) TextButton(onClick = { showMarkDialog = true }) { Text("Mark") }
                 TextButton(onClick = onSettings) { Text("Settings") }
             }
         )
@@ -371,8 +375,12 @@ private fun MainScreen(
                     Field("Location", if (state.recordingLocationValid) "GPS ready" else "Waiting for GPS...")
                     Field("Last fix", ageText)
                 }
-                if (state.isRecording) Button(onClick = onStopRecording) { Text("Stop") }
-                else Button(onClick = onStartRecording, enabled = active != null) { Text("Start Recording") }
+                if (state.isRecording) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Button(onClick = onStopRecording) { Text("Stop") }
+                        OutlinedButton(onClick = { showMarkDialog = true }) { Text("Mark issue") }
+                    }
+                } else Button(onClick = onStartRecording, enabled = active != null) { Text("Start Recording") }
 
                 if (state.recordings.isNotEmpty()) {
                     HorizontalDivider(Modifier.padding(vertical = 8.dp))
@@ -411,6 +419,17 @@ private fun MainScreen(
         }
     }
 
+    if (showMarkDialog) {
+        MarkIssueDialog(
+            issueTypes = state.settings.issueTypes,
+            onDismiss = { showMarkDialog = false },
+            onSave = { issue, note ->
+                onMarkEvent(issue, note)
+                showMarkDialog = false
+            }
+        )
+    }
+
     if (showExportDialog) {
         AlertDialog(
             onDismissRequest = { showExportDialog = false },
@@ -438,6 +457,49 @@ private fun MainScreen(
     }
 }
 
+
+@Composable
+private fun MarkIssueDialog(
+    issueTypes: List<String>,
+    onDismiss: () -> Unit,
+    onSave: (String, String) -> Unit
+) {
+    val options = issueTypes.ifEmpty { listOf("General") }
+    var selected by remember(options) { mutableStateOf(options.first()) }
+    var note by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Mark issue") },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth().heightIn(max = 430.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text("Issue type", style = MaterialTheme.typography.labelLarge)
+                options.forEach { issue ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clickable { selected = issue }.padding(vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(selected = selected == issue, onClick = { selected = issue })
+                        Text(issue)
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
+                OutlinedTextField(
+                    value = note,
+                    onValueChange = { note = it },
+                    label = { Text("Problem description / note (optional)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 2,
+                    maxLines = 4
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = { onSave(selected, note.trim()) }) { Text("Mark") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable

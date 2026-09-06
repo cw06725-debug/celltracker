@@ -61,6 +61,8 @@ object RecordingDetailRepository {
                     bearing = field(f, "bearing"),
                     locationValid = lat != null && lon != null && (field(f, "location_valid").isBlank() || field(f, "location_valid").equals("true", true)),
                     isMarker = field(f, "is_marker").equals("true", true),
+                    markerId = field(f, "marker_id"),
+                    eventSource = field(f, "event_source").ifBlank { "MANUAL" },
                     eventType = field(f, "event_type"),
                     eventNote = field(f, "event_note"),
                     screenshot = field(f, "screenshot")
