@@ -267,7 +267,7 @@ private fun MainScreen(
 
             HorizontalPager(
                 state = simPagerState,
-                modifier = Modifier.weight(1f).fillMaxWidth(),
+                modifier = Modifier.weight(1f).fillMaxWidth()
             ) { page ->
                 val pageSelected = state.sims.getOrNull(page) ?: selected
                 val c = pageSelected?.servingCell ?: CellData()
@@ -439,17 +439,18 @@ private fun MainScreen(
 }
 
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun LiveMapScreen(
     state: AppState,
     onSelectSim: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val selected = state.sims.firstOrNull { it.subscriptionId == state.selectedSubscriptionId } ?: state.sims.firstOrNull()
+    val selectedIndex = state.sims.indexOfFirst { it.subscriptionId == state.selectedSubscriptionId }.coerceAtLeast(0)
+    val livePagerState = rememberPagerState(initialPage = selectedIndex) { maxOf(1, state.sims.size) }
+    val livePagerScope = rememberCoroutineScope()
     var liveSamples by remember { mutableStateOf<List<TrackSample>>(emptyList()) }
 
-    // Live Map only owns the active recording. Once Stop is pressed, historical
-    // samples disappear from this screen; history remains available from Recording Detail.
     LaunchedEffect(state.latestRecordingPath, state.isRecording, state.recordingSamples) {
         if (!state.isRecording) {
             liveSamples = emptyList()
@@ -467,37 +468,74 @@ private fun LiveMapScreen(
         }
     }
 
-    val visibleSamples = remember(liveSamples, state.settings.recordScope, selected?.simSlotIndex) {
-        if (state.settings.recordScope == RecordScope.BOTH_SIMS || selected == null) liveSamples
-        else liveSamples.filter { it.simSlot == selected.simSlotIndex + 1 }
+    // Keep the selected subscription and pager synchronized. Dragging is handled
+    // by HorizontalPager itself, so the page follows the finger continuously.
+    LaunchedEffect(livePagerState.currentPage, state.sims) {
+        state.sims.getOrNull(livePagerState.currentPage)?.let { sim ->
+            if (sim.subscriptionId != state.selectedSubscriptionId) onSelectSim(sim.subscriptionId)
+        }
+    }
+    LaunchedEffect(state.selectedSubscriptionId, state.sims.size) {
+        val index = state.sims.indexOfFirst { it.subscriptionId == state.selectedSubscriptionId }
+        if (index >= 0 && !livePagerState.isScrollInProgress && livePagerState.currentPage != index) {
+            livePagerState.animateScrollToPage(index)
+        }
     }
 
-    Column(
-        modifier.horizontalSwipe(
-            enabled = state.sims.size > 1,
-            onSwipeLeft = {
-                val index = state.sims.indexOfFirst { it.subscriptionId == selected?.subscriptionId }
-                if (index in 0 until state.sims.lastIndex) onSelectSim(state.sims[index + 1].subscriptionId)
-            },
-            onSwipeRight = {
-                val index = state.sims.indexOfFirst { it.subscriptionId == selected?.subscriptionId }
-                if (index > 0) onSelectSim(state.sims[index - 1].subscriptionId)
-            }
-        )
-    ) {
+    Column(modifier.fillMaxSize()) {
         Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 2.dp) {
             Column(Modifier.fillMaxWidth()) {
                 if (state.sims.size > 1) {
-                    TabRow(selectedTabIndex = state.sims.indexOfFirst { it.subscriptionId == selected?.subscriptionId }.coerceAtLeast(0)) {
-                        state.sims.forEach { sim ->
+                    TabRow(selectedTabIndex = livePagerState.currentPage.coerceIn(0, state.sims.lastIndex)) {
+                        state.sims.forEachIndexed { index, sim ->
                             Tab(
-                                selected = sim.subscriptionId == selected?.subscriptionId,
-                                onClick = { onSelectSim(sim.subscriptionId) },
+                                selected = livePagerState.currentPage == index,
+                                onClick = { livePagerScope.launch { livePagerState.animateScrollToPage(index) } },
                                 text = { Text("SIM ${sim.simSlotIndex + 1}\n${sim.servingCell.operator}") }
                             )
                         }
                     }
+                } else {
+                    state.sims.firstOrNull()?.let { sim ->
+                        Text(
+                            "SIM ${sim.simSlotIndex + 1} · ${sim.servingCell.operator}",
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)
+                        )
+                    }
                 }
+            }
+        }
+
+        HorizontalPager(
+            state = livePagerState,
+            modifier = Modifier.fillMaxWidth().weight(1f)
+        ) { page ->
+            val mapSelected = state.sims.getOrNull(page) ?: state.sims.firstOrNull()
+            val mapVisibleSamples = remember(liveSamples, state.settings.recordScope, mapSelected?.simSlotIndex) {
+                if (state.settings.recordScope == RecordScope.BOTH_SIMS || mapSelected == null) liveSamples
+                else liveSamples.filter { it.simSlot == mapSelected.simSlotIndex + 1 }
+            }
+
+            val currentLat = state.location.latitude.toDoubleOrNull()
+            val currentLon = state.location.longitude.toDoubleOrNull()
+            val currentPoint = if (state.location.isValid && currentLat != null && currentLon != null) GeoPoint(currentLat, currentLon) else null
+            val currentSample = if (currentPoint != null && mapSelected != null) {
+                val c = mapSelected.servingCell
+                TrackSample(
+                    timestampMs = System.currentTimeMillis(),
+                    simSlot = mapSelected.simSlotIndex + 1, subscriptionId = mapSelected.subscriptionId, operator = c.operator,
+                    rat = c.rat, displayRat = c.displayRat, mcc = c.mcc, mnc = c.mnc, tac = c.tac, cellId = c.cellId,
+                    pci = c.pci, arfcn = c.arfcn, rsrp = c.rsrp, rsrq = c.rsrq, sinr = c.sinr,
+                    band = c.band, bandwidth = c.bandwidth, rssi = c.rssi, timingAdvance = c.timingAdvance,
+                    csiRsrp = c.csiRsrp, csiRsrq = c.csiRsrq, csiSinr = c.csiSinr,
+                    latitude = currentLat, longitude = currentLon, altitude = state.location.altitude, accuracy = state.location.accuracy,
+                    speedKmh = state.location.speedKmh, bearing = state.location.bearing, locationValid = true
+                )
+            } else null
+            val valid = mapVisibleSamples.filter { it.locationValid && it.latitude != null && it.longitude != null }
+
+            Column(Modifier.fillMaxSize()) {
                 Row(
                     Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -505,69 +543,31 @@ private fun LiveMapScreen(
                 ) {
                     Column {
                         Text(if (state.isRecording) "Recording · live track" else "Live location", style = MaterialTheme.typography.labelLarge)
-                        Text("${visibleSamples.count { it.locationValid }} GPS points", style = MaterialTheme.typography.bodySmall)
+                        Text("${valid.size} GPS points", style = MaterialTheme.typography.bodySmall)
                     }
-                    val c = selected?.servingCell
+                    val c = mapSelected?.servingCell
                     Text("${c?.displayRat?.ifBlank { c.rat } ?: "--"}  ${valueWithUnit(c?.rsrp ?: "--", "dBm")}", style = MaterialTheme.typography.labelLarge)
+                }
+
+                if (valid.isEmpty() && currentPoint == null) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text(if (state.isRecording) "Waiting for GPS track..." else "Waiting for live GPS...")
+                    }
+                } else {
+                    RatLegend((valid.map { normalizedRat(it) } + listOfNotNull(mapSelected?.servingCell?.displayRat?.takeIf { it.isNotBlank() })).distinct())
+                    OsmTrackMap(
+                        samples = valid,
+                        modifier = Modifier.fillMaxWidth().weight(1f),
+                        currentPoint = currentPoint,
+                        currentLabel = mapSelected?.servingCell?.let { "${it.operator} · ${it.displayRat.ifBlank { it.rat }} · ${valueWithUnit(it.rsrp, "dBm")}" },
+                        currentSample = currentSample,
+                        liveFollow = state.isRecording,
+                        detailFields = state.settings.mapDetailFields
+                    )
                 }
             }
         }
-
-        AnimatedContent(
-            targetState = selected?.subscriptionId,
-            transitionSpec = {
-                val from = state.sims.indexOfFirst { it.subscriptionId == initialState }
-                val to = state.sims.indexOfFirst { it.subscriptionId == targetState }
-                val direction = if (to >= from) AnimatedContentTransitionScope.SlideDirection.Left else AnimatedContentTransitionScope.SlideDirection.Right
-                (slideIntoContainer(direction, tween(210)) + fadeIn(tween(150)))
-                    .togetherWith(slideOutOfContainer(direction, tween(210)) + fadeOut(tween(130)))
-            },
-            label = "liveMapSimPager",
-            modifier = Modifier.fillMaxSize()
-        ) { targetSubscriptionId ->
-        val mapSelected = state.sims.firstOrNull { it.subscriptionId == targetSubscriptionId } ?: selected
-        val mapVisibleSamples = remember(liveSamples, state.settings.recordScope, mapSelected?.simSlotIndex) {
-            if (state.settings.recordScope == RecordScope.BOTH_SIMS || mapSelected == null) liveSamples
-            else liveSamples.filter { it.simSlot == mapSelected.simSlotIndex + 1 }
-        }
-        val currentLat = state.location.latitude.toDoubleOrNull()
-        val currentLon = state.location.longitude.toDoubleOrNull()
-        val currentPoint = if (state.location.isValid && currentLat != null && currentLon != null) GeoPoint(currentLat, currentLon) else null
-        val currentSample = if (currentPoint != null && mapSelected != null) {
-            val c = mapSelected.servingCell
-            TrackSample(
-                timestampMs = System.currentTimeMillis(),
-                simSlot = mapSelected.simSlotIndex + 1, subscriptionId = mapSelected.subscriptionId, operator = c.operator,
-                rat = c.rat, displayRat = c.displayRat, mcc = c.mcc, mnc = c.mnc, tac = c.tac, cellId = c.cellId,
-                pci = c.pci, arfcn = c.arfcn, rsrp = c.rsrp, rsrq = c.rsrq, sinr = c.sinr,
-                band = c.band, bandwidth = c.bandwidth, rssi = c.rssi, timingAdvance = c.timingAdvance,
-                csiRsrp = c.csiRsrp, csiRsrq = c.csiRsrq, csiSinr = c.csiSinr,
-                latitude = currentLat, longitude = currentLon, altitude = state.location.altitude, accuracy = state.location.accuracy,
-                speedKmh = state.location.speedKmh, bearing = state.location.bearing, locationValid = true
-            )
-        } else null
-        val valid = mapVisibleSamples.filter { it.locationValid && it.latitude != null && it.longitude != null }
-        if (valid.isEmpty() && currentPoint == null) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(if (state.isRecording) "Waiting for GPS track..." else "Start recording to build a live track")
-            }
-        } else {
-            Column(Modifier.fillMaxSize()) {
-                RatLegend((valid.map { normalizedRat(it) } + listOfNotNull(mapSelected?.servingCell?.displayRat?.takeIf { it.isNotBlank() })).distinct())
-                OsmTrackMap(
-                    samples = valid,
-                    modifier = Modifier.fillMaxWidth().weight(1f),
-                    currentPoint = currentPoint,
-                    currentLabel = mapSelected?.servingCell?.let { "${it.operator} · ${it.displayRat.ifBlank { it.rat }} · ${valueWithUnit(it.rsrp, "dBm")}" },
-                    currentSample = currentSample,
-                    liveFollow = state.isRecording,
-                    detailFields = state.settings.mapDetailFields
-                )
-            }
-        }
     }
-        }
-
 }
 
 private enum class DetailTab { SUMMARY, MAP, SAMPLES }

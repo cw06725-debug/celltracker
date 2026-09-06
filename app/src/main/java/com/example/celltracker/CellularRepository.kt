@@ -8,6 +8,7 @@ import android.telephony.CellInfoLte
 import android.telephony.CellInfoNr
 import android.telephony.CellIdentityNr
 import android.telephony.CellSignalStrengthNr
+import android.telephony.CellSignalStrengthLte
 import android.telephony.SubscriptionInfo
 import android.telephony.SubscriptionManager
 import android.telephony.TelephonyManager
@@ -81,7 +82,14 @@ class CellularRepository(private val context: Context) {
             servingRaw.rat == "LTE" -> "LTE"
             else -> servingRaw.rat
         }
-        val serving = servingRaw.copy(displayRat = displayRat)
+        val serving = if (servingRaw.rat == "LTE" && servingRaw.sinr == "--") {
+            servingRaw.copy(
+                displayRat = displayRat,
+                sinr = readLteSinrFallback(tm)
+            )
+        } else {
+            servingRaw.copy(displayRat = displayRat)
+        }
         val neighbors = parsed.filterNot { it.registered }.map { neighbor ->
             neighbor.copy(displayRat = if (neighbor.rat == "NR") "NR" else neighbor.rat)
         }
@@ -165,6 +173,34 @@ class CellularRepository(private val context: Context) {
             )
         }
         else -> null
+    }
+
+    /**
+     * LTE SINR is inconsistently populated in CellInfo on some vendor builds.
+     * Try the latest SignalStrength snapshot as a second public-API source, then
+     * parse the framework/vendor toString as a compatibility fallback.
+     */
+    private fun readLteSinrFallback(tm: TelephonyManager): String {
+        val latest = runCatching { tm.signalStrength }.getOrNull()
+        val lte = runCatching { latest?.getCellSignalStrengths(CellSignalStrengthLte::class.java)?.firstOrNull() }.getOrNull()
+        val direct = lte?.rssnr
+        if (direct != null && direct != CellInfo.UNAVAILABLE) return direct.toString()
+
+        // Some Transsion/vendor frameworks keep rssnr in the object string while
+        // the public getter is reported unavailable. Use it only when it is a sane
+        // LTE RSSNR value, and otherwise keep showing -- rather than invent data.
+        val candidates = listOfNotNull(lte?.toString(), latest?.toString())
+        val patterns = listOf(
+            Regex("(?:rssnr|rssnrDb|sinr)\\s*[=:]\\s*(-?\\d+)", RegexOption.IGNORE_CASE),
+            Regex("mRssnr\\s*=\\s*(-?\\d+)", RegexOption.IGNORE_CASE)
+        )
+        for (text in candidates) {
+            for (pattern in patterns) {
+                val value = pattern.find(text)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: continue
+                if (value in -20..30) return value.toString()
+            }
+        }
+        return "--"
     }
 
     private fun intValue(v: Int): String = if (v == CellInfo.UNAVAILABLE) "--" else v.toString()
