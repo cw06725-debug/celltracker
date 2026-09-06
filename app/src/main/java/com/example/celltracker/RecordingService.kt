@@ -42,7 +42,8 @@ class RecordingService : Service() {
             val subId = intent.getIntExtra(EXTRA_MARK_SUBSCRIPTION_ID, markTargetSubscriptionId.takeIf { it >= 0 } ?: targetSubscriptionId)
             val eventType = intent.getStringExtra(EXTRA_EVENT_TYPE).orEmpty().ifBlank { "General" }
             val eventNote = intent.getStringExtra(EXTRA_EVENT_NOTE).orEmpty()
-            scope.launch { appendMarker(subId, eventType, eventNote) }
+            val screenshotPath = intent.getStringExtra(EXTRA_SCREENSHOT_PATH).orEmpty()
+            scope.launch { appendMarker(subId, eventType, eventNote, screenshotPath) }
             return START_NOT_STICKY
         }
         if (recordingJob?.isActive != true) {
@@ -72,7 +73,7 @@ class RecordingService : Service() {
             FileWriter(file, false).use { it.appendLine(CSV_HEADER) }
             val started = System.currentTimeMillis(); val perSim = mutableMapOf<Int, Long>()
             val initialLocation = LocationStore.latest.value
-            RecordingState.status.value = RecordingStatus(true, started, 0, emptyMap(), file.absolutePath, markTargetSubscriptionId, initialLocation.isValid, locationAge(initialLocation))
+            RecordingState.status.value = RecordingStatus(true, started, 0, emptyMap(), file.absolutePath, markTargetSubscriptionId, initialLocation.isValid, locationAge(initialLocation), taskName)
             getSharedPreferences("celltracker_recording", MODE_PRIVATE).edit().putString("latest_path", file.absolutePath).apply()
             val overlaySettings = settingsRepository.load()
             if (overlaySettings.floatingWindowEnabled && overlaySettings.floatingAutoShowDuringRecording && android.provider.Settings.canDrawOverlays(this@RecordingService)) {
@@ -86,13 +87,13 @@ class RecordingService : Service() {
                 FileWriter(file, true).use { w -> sims.forEach { sim ->
                     val c=sim.servingCell; w.appendLine(csvLine(cycleStart,c,locationSnapshot,false,"","")); perSim[c.subscriptionId]=(perSim[c.subscriptionId]?:0)+1
                 }}
-                RecordingState.status.value = RecordingStatus(true, started, perSim.values.sum(), perSim.toMap(), file.absolutePath, markTargetSubscriptionId, locationSnapshot.isValid, locationAge(locationSnapshot))
+                RecordingState.status.value = RecordingStatus(true, started, perSim.values.sum(), perSim.toMap(), file.absolutePath, markTargetSubscriptionId, locationSnapshot.isValid, locationAge(locationSnapshot), taskName)
                 val spent=System.currentTimeMillis()-cycleStart; delay((settingsRepository.load().recordIntervalMs-spent).coerceAtLeast(0))
             }
         }
     }
 
-    private suspend fun appendMarker(subscriptionId: Int, eventType: String, eventNote: String) {
+    private suspend fun appendMarker(subscriptionId: Int, eventType: String, eventNote: String, screenshotPath: String = "") {
         val status = RecordingState.status.value
         val path = status.latestPath ?: return
         if (!status.isRecording) return
@@ -101,7 +102,7 @@ class RecordingService : Service() {
         val locationSnapshot = LocationStore.latest.value
         val markerId = "M" + SimpleDateFormat("yyyyMMddHHmmssSSS", Locale.US).format(Date())
         FileWriter(File(path), true).use { w ->
-            w.appendLine(csvLine(System.currentTimeMillis(), sim.servingCell, locationSnapshot, true, eventType, eventNote, markerId, "MANUAL"))
+            w.appendLine(csvLine(System.currentTimeMillis(), sim.servingCell, locationSnapshot, true, eventType, eventNote, markerId, "MANUAL", screenshotPath))
         }
     }
 
@@ -121,10 +122,11 @@ class RecordingService : Service() {
         const val EXTRA_MARK_SUBSCRIPTION_ID="mark_subscription_id"
         const val EXTRA_EVENT_TYPE="event_type"
         const val EXTRA_EVENT_NOTE="event_note"
+        const val EXTRA_SCREENSHOT_PATH="screenshot_path"
         const val EXTRA_TASK_NAME="task_name"
         const val CSV_HEADER="timestamp,sim_slot,subscription_id,operator,rat,display_rat,mcc,mnc,tac,cell_id,pci,arfcn,rsrp,rsrq,sinr,band,bandwidth,rssi,timing_advance,csi_rsrp,csi_rsrq,csi_sinr,cqi,signal_level,asu_level,carrier_aggregation,data_rat,voice_rat,roaming,latitude,longitude,altitude,accuracy,speed_kmh,bearing,location_valid,is_marker,marker_id,event_source,event_type,event_note,screenshot,data_sim_subscription_id,data_network"
-        fun csvLine(timestamp:Long,c:CellData,l:LocationData,isMarker:Boolean,eventType:String,eventNote:String,markerId:String="",eventSource:String="MANUAL"):String{
-            val time=SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS",Locale.US).format(Date(timestamp)); val v=listOf(time,(c.simSlotIndex+1).toString(),c.subscriptionId.toString(),c.operator,c.rat,c.displayRat,c.mcc,c.mnc,c.tac,c.cellId,c.pci,c.arfcn,c.rsrp,c.rsrq,c.sinr,c.band,c.bandwidth,c.rssi,c.timingAdvance,c.csiRsrp,c.csiRsrq,c.csiSinr,c.cqi,c.level,c.asuLevel,c.carrierAggregation,c.dataRat,c.voiceRat,c.roaming,l.latitude,l.longitude,l.altitude,l.accuracy,l.speedKmh,l.bearing,l.isValid.toString(),isMarker.toString(),markerId,eventSource,eventType,eventNote,"",NetworkStore.dataSimSubscriptionId.takeIf { it >= 0 }?.toString().orEmpty(),NetworkStore.dataNetwork)
+        fun csvLine(timestamp:Long,c:CellData,l:LocationData,isMarker:Boolean,eventType:String,eventNote:String,markerId:String="",eventSource:String="MANUAL",screenshotPath:String=""):String{
+            val time=SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS",Locale.US).format(Date(timestamp)); val v=listOf(time,(c.simSlotIndex+1).toString(),c.subscriptionId.toString(),c.operator,c.rat,c.displayRat,c.mcc,c.mnc,c.tac,c.cellId,c.pci,c.arfcn,c.rsrp,c.rsrq,c.sinr,c.band,c.bandwidth,c.rssi,c.timingAdvance,c.csiRsrp,c.csiRsrq,c.csiSinr,c.cqi,c.level,c.asuLevel,c.carrierAggregation,c.dataRat,c.voiceRat,c.roaming,l.latitude,l.longitude,l.altitude,l.accuracy,l.speedKmh,l.bearing,l.isValid.toString(),isMarker.toString(),markerId,eventSource,eventType,eventNote,screenshotPath,NetworkStore.dataSimSubscriptionId.takeIf { it >= 0 }?.toString().orEmpty(),NetworkStore.dataNetwork)
             return v.joinToString(","){ escapeCsv(it) }
         }
         private fun sanitizeTaskName(value: String): String = value

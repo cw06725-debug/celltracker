@@ -172,14 +172,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val app = getApplication<Application>()
         if (!_state.value.isRecording) return
         val selectedId = _state.value.recordingMarkTargetSubscriptionId ?: _state.value.markTargetSubscriptionId ?: _state.value.selectedSubscriptionId ?: return
-        val intent = Intent(app, RecordingService::class.java).apply {
-            action = RecordingService.ACTION_MARK
+        val settings = _state.value.settings
+        val intent = Intent(app, if (settings.floatingCaptureScreenshotOnMark && ScreenCaptureService.isReady) ScreenCaptureService::class.java else RecordingService::class.java).apply {
+            action = if (settings.floatingCaptureScreenshotOnMark && ScreenCaptureService.isReady) ScreenCaptureService.ACTION_CAPTURE_MARK else RecordingService.ACTION_MARK
             putExtra(RecordingService.EXTRA_MARK_SUBSCRIPTION_ID, selectedId)
             putExtra(RecordingService.EXTRA_EVENT_TYPE, issueType)
             putExtra(RecordingService.EXTRA_EVENT_NOTE, note)
         }
         ContextCompat.startForegroundService(app, intent)
-        val settings = _state.value.settings
         if (settings.toastOnMark) {
             runCatching { Toast.makeText(app, "Marked: $issueType", Toast.LENGTH_SHORT).show() }
         }

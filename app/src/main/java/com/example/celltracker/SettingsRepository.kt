@@ -18,6 +18,9 @@ class SettingsRepository(context: Context) {
         floatingOpacity = prefs.getFloat("floating_opacity", 0.80f).coerceIn(0.20f, 1.00f),
         floatingStartCompact = prefs.getBoolean("floating_start_compact", false),
         floatingRememberPosition = prefs.getBoolean("floating_remember_position", true),
+        floatingCaptureScreenshotOnMark = prefs.getBoolean("floating_capture_screenshot", true),
+        floatingExpandedFields = prefs.getStringSet("floating_expanded_fields", null)?.mapNotNull { runCatching { FloatingField.valueOf(it) }.getOrNull() }?.toSet() ?: AppSettings().floatingExpandedFields,
+        floatingCompactFields = prefs.getStringSet("floating_compact_fields", null)?.mapNotNull { runCatching { FloatingField.valueOf(it) }.getOrNull() }?.toSet() ?: AppSettings().floatingCompactFields,
         recordScope = enumValueOrDefault(prefs.getString("record_scope", null), RecordScope.CURRENT_SIM),
         mapDetailFields = prefs.getStringSet("map_detail_fields", null)?.mapNotNull { runCatching { MapDetailField.valueOf(it) }.getOrNull() }?.toSet()
             ?: AppSettings().mapDetailFields,
@@ -38,6 +41,9 @@ class SettingsRepository(context: Context) {
             .putFloat("floating_opacity", settings.floatingOpacity.coerceIn(0.20f, 1.00f))
             .putBoolean("floating_start_compact", settings.floatingStartCompact)
             .putBoolean("floating_remember_position", settings.floatingRememberPosition)
+            .putBoolean("floating_capture_screenshot", settings.floatingCaptureScreenshotOnMark)
+            .putStringSet("floating_expanded_fields", settings.floatingExpandedFields.map { it.name }.toSet())
+            .putStringSet("floating_compact_fields", settings.floatingCompactFields.map { it.name }.toSet())
             .putString("record_scope", settings.recordScope.name)
             .putStringSet("map_detail_fields", settings.mapDetailFields.map { it.name }.toSet())
             .putString("issue_types", settings.issueTypes.joinToString("\u001F"))

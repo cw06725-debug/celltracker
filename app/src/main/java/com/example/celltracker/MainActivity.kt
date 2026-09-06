@@ -97,6 +97,18 @@ class MainActivity : ComponentActivity() {
                         runCatching { startService(Intent(this@MainActivity, FloatingOverlayService::class.java)) }
                     }
                 }
+                var capturePermissionRequestedForRecording by remember { mutableStateOf(false) }
+                val capturePermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+                    val data = result.data
+                    if (result.resultCode == Activity.RESULT_OK && data != null && state.isRecording) {
+                        val intent = Intent(this@MainActivity, ScreenCaptureService::class.java).apply {
+                            action = ScreenCaptureService.ACTION_INIT
+                            putExtra(ScreenCaptureService.EXTRA_RESULT_CODE, result.resultCode)
+                            putExtra(ScreenCaptureService.EXTRA_RESULT_DATA, data)
+                        }
+                        ContextCompat.startForegroundService(this@MainActivity, intent)
+                    }
+                }
 
                 LaunchedEffect(Unit) {
                     val permissions = mutableListOf(
@@ -119,6 +131,17 @@ class MainActivity : ComponentActivity() {
                             Uri.parse("package:$packageName")
                         )
                         overlayPermissionLauncher.launch(intent)
+                    }
+                }
+
+                LaunchedEffect(state.isRecording, state.settings.floatingCaptureScreenshotOnMark) {
+                    if (!state.isRecording) {
+                        capturePermissionRequestedForRecording = false
+                        runCatching { stopService(Intent(this@MainActivity, ScreenCaptureService::class.java)) }
+                    } else if (state.settings.floatingCaptureScreenshotOnMark && !ScreenCaptureService.isReady && !capturePermissionRequestedForRecording) {
+                        capturePermissionRequestedForRecording = true
+                        val mgr = getSystemService(android.media.projection.MediaProjectionManager::class.java)
+                        capturePermissionLauncher.launch(mgr.createScreenCaptureIntent())
                     }
                 }
 
@@ -574,6 +597,7 @@ private fun ExportSuccessDialog(
                 Text("Saved to Downloads/CellTracker", style = MaterialTheme.typography.bodyMedium)
                 result.excelName?.let { Text("Excel: $it", style = MaterialTheme.typography.bodySmall) }
                 result.kmlName?.let { Text("KML: $it", style = MaterialTheme.typography.bodySmall) }
+                if (result.screenshotNames.isNotEmpty()) Text("Screenshots: ${result.screenshotNames.size}", style = MaterialTheme.typography.bodySmall)
             }
         },
         confirmButton = {
@@ -603,7 +627,7 @@ private fun openExportedFile(context: android.content.Context, uriString: String
 }
 
 private fun shareExportedFiles(context: android.content.Context, result: ExportResult) {
-    val uris = (result.exportedFileUris + listOfNotNull(result.summaryUri, result.excelUri, result.kmlUri)).distinct().map { Uri.parse(it) }
+    val uris = (result.exportedFileUris + listOfNotNull(result.summaryUri, result.excelUri, result.kmlUri) + result.screenshotUris).distinct().map { Uri.parse(it) }
     if (uris.isEmpty()) return
     val intent = if (uris.size == 1) {
         Intent(Intent.ACTION_SEND).apply { type = "*/*"; putExtra(Intent.EXTRA_STREAM, uris.first()) }
@@ -612,6 +636,22 @@ private fun shareExportedFiles(context: android.content.Context, result: ExportR
     }.apply { addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK) }
     runCatching { context.startActivity(Intent.createChooser(intent, "Share CellTracker export").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
         .onFailure { Toast.makeText(context, "Unable to share exported files", Toast.LENGTH_SHORT).show() }
+}
+
+private fun openLocalScreenshot(context: android.content.Context, path: String) {
+    val file = java.io.File(path)
+    if (!file.exists()) {
+        Toast.makeText(context, "Screenshot file not found", Toast.LENGTH_SHORT).show()
+        return
+    }
+    runCatching {
+        val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "image/png")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(intent)
+    }.onFailure { Toast.makeText(context, "Unable to open screenshot", Toast.LENGTH_SHORT).show() }
 }
 
 @Composable
@@ -1006,6 +1046,10 @@ private fun RecordingSummary(item: RecordingItem, samples: List<TrackSample>, on
                         Text("SIM ${marker.simSlot} · ${marker.operator} · ${normalizedRat(marker)}", style = MaterialTheme.typography.bodySmall)
                         Text("RSRP ${valueWithUnit(marker.rsrp, "dBm")} · PCI ${marker.pci} · ${marker.band}", style = MaterialTheme.typography.bodySmall)
                         Text("Tap to view on Map", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                        if (marker.screenshot.isNotBlank()) {
+                            val ctx = LocalContext.current
+                            AssistChip(onClick = { openLocalScreenshot(ctx, marker.screenshot) }, label = { Text("Open screenshot") })
+                        }
                     }
                 }
             }
@@ -1280,6 +1324,10 @@ private fun OsmTrackMap(
                         }
                     }
                     if (sample.isMarker && sample.eventNote.isNotBlank()) Text("Note: ${sample.eventNote}", style = MaterialTheme.typography.bodySmall)
+                    if (sample.isMarker && sample.screenshot.isNotBlank()) {
+                        val ctx = LocalContext.current
+                        AssistChip(onClick = { openLocalScreenshot(ctx, sample.screenshot) }, label = { Text("Open screenshot") })
+                    }
                 }
             }
         }
@@ -1314,7 +1362,15 @@ private fun RecordingSamples(samples: List<TrackSample>, onMarkerClick: (TrackSa
                     Text("${s.operator} · PCI ${s.pci} · ARFCN ${s.arfcn}", style = MaterialTheme.typography.bodySmall)
                     Text("RSRP ${valueWithUnit(s.rsrp, "dBm")} · RSRQ ${valueWithUnit(s.rsrq, "dB")} · SINR ${valueWithUnit(s.sinr, "dB")}", style = MaterialTheme.typography.bodySmall)
                     Text(if (s.locationValid) "${formatCoord(s.latitude)}, ${formatCoord(s.longitude)}" else "Location --", style = MaterialTheme.typography.bodySmall)
-                    if (s.isMarker) AssistChip(onClick = { onMarkerClick(s) }, label = { Text("${if (s.eventType.isBlank()) "Marker" else s.eventType} · View on Map") })
+                    if (s.isMarker) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            AssistChip(onClick = { onMarkerClick(s) }, label = { Text("${if (s.eventType.isBlank()) "Marker" else s.eventType} · View on Map") })
+                            if (s.screenshot.isNotBlank()) {
+                                val ctx = LocalContext.current
+                                AssistChip(onClick = { openLocalScreenshot(ctx, s.screenshot) }, label = { Text("Screenshot") })
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1577,6 +1633,22 @@ private fun SettingsScreen(settings: AppSettings, onUpdate: (AppSettings) -> Uni
                     Text("Only the background transparency changes; text and MARK stay clear.", style = MaterialTheme.typography.bodySmall)
                     SettingSwitch("Start in compact mode", draft.floatingStartCompact) { applySetting(draft.copy(floatingStartCompact = it)) }
                     SettingSwitch("Remember position", draft.floatingRememberPosition) { applySetting(draft.copy(floatingRememberPosition = it)) }
+                    SettingSwitch("Capture screenshot when marking", draft.floatingCaptureScreenshotOnMark) { applySetting(draft.copy(floatingCaptureScreenshotOnMark = it)) }
+                    Text("Screenshots are captured only when a marker is created. Android will ask for screen-capture permission when recording starts.", style = MaterialTheme.typography.bodySmall)
+                    HorizontalDivider()
+                    Text("Expanded mode fields", style = MaterialTheme.typography.titleMedium)
+                    FloatingField.entries.forEach { field ->
+                        SettingSwitch(field.label, field in draft.floatingExpandedFields) { checked ->
+                            applySetting(draft.copy(floatingExpandedFields = if (checked) draft.floatingExpandedFields + field else draft.floatingExpandedFields - field))
+                        }
+                    }
+                    HorizontalDivider()
+                    Text("Compact mode fields", style = MaterialTheme.typography.titleMedium)
+                    FloatingField.entries.forEach { field ->
+                        SettingSwitch(field.label, field in draft.floatingCompactFields) { checked ->
+                            applySetting(draft.copy(floatingCompactFields = if (checked) draft.floatingCompactFields + field else draft.floatingCompactFields - field))
+                        }
+                    }
                     HorizontalDivider()
                     Text(if (overlayGranted) "Overlay permission: Granted" else "Overlay permission: Required", style = MaterialTheme.typography.bodyMedium)
                     if (!overlayGranted) {
@@ -1585,6 +1657,10 @@ private fun SettingsScreen(settings: AppSettings, onUpdate: (AppSettings) -> Uni
                             permissionLauncher.launch(intent)
                         }) { Text("Grant overlay permission") }
                     }
+                    OutlinedButton(onClick = {
+                        runCatching { context.startActivity(Intent(android.provider.Settings.ACTION_USAGE_ACCESS_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                    }) { Text("Usage access for screenshot app names") }
+                    Text("Usage access is optional. If granted, screenshot names can include the foreground app name; otherwise CellTracker uses 'Screen'.", style = MaterialTheme.typography.bodySmall)
                     Text("The window uses the recording Mark Target SIM and can be dragged, collapsed and used to create issue markers while another app is on screen.", style = MaterialTheme.typography.bodySmall)
                 }
                 "map" -> Column(Modifier.padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {

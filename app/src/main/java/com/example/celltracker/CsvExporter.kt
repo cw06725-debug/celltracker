@@ -25,7 +25,9 @@ data class ExportResult(
     val excelUri: String? = null,
     val excelName: String? = null,
     val kmlUri: String? = null,
-    val kmlName: String? = null
+    val kmlName: String? = null,
+    val screenshotUris: List<String> = emptyList(),
+    val screenshotNames: List<String> = emptyList()
 ) {
     val primaryFileUri: String? get() = summaryUri ?: excelUri ?: exportedFileUris.firstOrNull()
     val primaryMimeType: String get() = if (summaryUri != null) "text/html" else if (excelUri != null) "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" else "text/csv"
@@ -69,6 +71,11 @@ object CsvExporter {
             buildKml(source)
         ).toString()
 
+        val screenshotFiles = collectScreenshotFiles(source)
+        val screenshotUris = screenshotFiles.mapNotNull { file ->
+            runCatching { saveBytesToDownloads(context, file.name, "image/png", file.readBytes()).toString() }.getOrNull()
+        }
+
         val rawDescription = if (mode == CsvExportMode.SEPARATE_BY_SIM) {
             "${rawUris.size} SIM CSV files"
         } else {
@@ -82,8 +89,22 @@ object CsvExporter {
             excelUri = excelUri,
             excelName = excelName,
             kmlUri = kmlUri,
-            kmlName = kmlName
+            kmlName = kmlName,
+            screenshotUris = screenshotUris,
+            screenshotNames = screenshotFiles.map { it.name }
         )
+    }
+
+    private fun collectScreenshotFiles(source: File): List<File> {
+        val lines = source.readLines()
+        if (lines.isEmpty()) return emptyList()
+        val headers = parseCsvLine(lines.first())
+        val idx = headers.indexOf("screenshot")
+        if (idx < 0) return emptyList()
+        return lines.drop(1).mapNotNull { line ->
+            val f = parseCsvLine(line)
+            f.getOrNull(idx)?.takeIf { it.isNotBlank() }?.let(::File)?.takeIf { it.exists() }
+        }.distinctBy { it.absolutePath }
     }
 
     private fun exportSeparate(context: Context, source: File): List<String> {
@@ -170,9 +191,9 @@ object CsvExporter {
         if (issueCounts.isEmpty()) summary += listOf("No marked issues", "0") else issueCounts.forEach { summary += listOf(it.key, it.value.toString()) }
         summary += emptyList<String>()
         summary += listOf("Marked Issue Details")
-        val issueHeaders = listOf("Time","Issue","SIM","Operator","RAT","Band","CA / EN-DC","RSRP","RSRQ","SINR","RSSI","CQI","PCI","ARFCN","Data RAT","DataNet","Latitude","Longitude","Note")
+        val issueHeaders = listOf("Time","Issue","SIM","Operator","RAT","Band","CA / EN-DC","RSRP","RSRQ","SINR","RSSI","CQI","PCI","ARFCN","Data RAT","DataNet","Latitude","Longitude","Note","Screenshot")
         summary += issueHeaders
-        events.forEach { r -> summary += listOf(f(r,"timestamp"),f(r,"event_type"),f(r,"sim_slot"),f(r,"operator"),f(r,"display_rat").ifBlank{f(r,"rat")},f(r,"band"),f(r,"carrier_aggregation"),f(r,"rsrp"),f(r,"rsrq"),f(r,"sinr"),f(r,"rssi"),f(r,"cqi"),f(r,"pci"),f(r,"arfcn"),f(r,"data_rat"),f(r,"data_network"),f(r,"latitude"),f(r,"longitude"),f(r,"event_note")) }
+        events.forEach { r -> summary += listOf(f(r,"timestamp"),f(r,"event_type"),f(r,"sim_slot"),f(r,"operator"),f(r,"display_rat").ifBlank{f(r,"rat")},f(r,"band"),f(r,"carrier_aggregation"),f(r,"rsrp"),f(r,"rsrq"),f(r,"sinr"),f(r,"rssi"),f(r,"cqi"),f(r,"pci"),f(r,"arfcn"),f(r,"data_rat"),f(r,"data_network"),f(r,"latitude"),f(r,"longitude"),f(r,"event_note"),File(f(r,"screenshot")).name.takeIf { f(r,"screenshot").isNotBlank() }.orEmpty()) }
 
         fun xml(v:String)=v.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace("\"","&quot;")
         fun colName(n:Int):String { var x=n+1; var out=""; while(x>0){ val r=(x-1)%26; out=('A'.code+r).toChar()+out; x=(x-1)/26 }; return out }

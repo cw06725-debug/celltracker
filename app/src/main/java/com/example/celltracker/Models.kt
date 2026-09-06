@@ -61,6 +61,12 @@ enum class MarkerAction(val label: String) {
 }
 
 enum class RecordScope { CURRENT_SIM, BOTH_SIMS }
+enum class FloatingField(val label: String) {
+    MARK_TARGET("Mark Target SIM"), OPERATOR("Operator"), RAT("RAT"), RSRP("RSRP"), RSRQ("RSRQ"), SINR("SINR"),
+    RSSI("RSSI"), BAND("Band"), PCI("PCI"), ARFCN("ARFCN"), CA("CA / EN-DC"), DATANET("DataNet"),
+    DATA_SIM("Data SIM"), CELL_ID("Cell ID / NCI"), TAC("TAC"), SPEED("Speed"), GPS_ACCURACY("GPS Accuracy"), RECORDING("Recording Status")
+}
+
 
 enum class MapDetailField(val label: String) {
     TIME("Time"), SIM("SIM"), OPERATOR("Operator"), RAT("RAT"), RSRP("RSRP"), RSRQ("RSRQ"), SINR("SINR"),
@@ -100,6 +106,9 @@ data class AppSettings(
     val floatingOpacity: Float = 0.80f,
     val floatingStartCompact: Boolean = false,
     val floatingRememberPosition: Boolean = true,
+    val floatingCaptureScreenshotOnMark: Boolean = true,
+    val floatingExpandedFields: Set<FloatingField> = setOf(FloatingField.MARK_TARGET, FloatingField.OPERATOR, FloatingField.RAT, FloatingField.RSRP, FloatingField.SINR, FloatingField.BAND, FloatingField.PCI, FloatingField.DATANET, FloatingField.RECORDING),
+    val floatingCompactFields: Set<FloatingField> = setOf(FloatingField.MARK_TARGET, FloatingField.RSRP, FloatingField.RECORDING),
     val recordScope: RecordScope = RecordScope.CURRENT_SIM,
     val mapDetailFields: Set<MapDetailField> = setOf(MapDetailField.TIME, MapDetailField.SIM, MapDetailField.OPERATOR, MapDetailField.RAT, MapDetailField.RSRP, MapDetailField.RSRQ, MapDetailField.SINR, MapDetailField.PCI, MapDetailField.ARFCN, MapDetailField.BAND, MapDetailField.CA, MapDetailField.CQI, MapDetailField.LATITUDE, MapDetailField.LONGITUDE),
     val issueTypes: List<String> = listOf("Call Drop", "No Audio", "VoLTE Lost", "No Signal", "No Data", "Slow Data", "Video Stuck", "Handover Issue", "Poor Voice Quality", "Other")

@@ -208,12 +208,44 @@ class FloatingOverlayService : Service() {
         val c = sim.servingCell
         val simNo = sim.simSlotIndex + 1
         lastTargetSimNo = simNo
-        headerText.text = "S$simNo · ${c.operator.ifBlank { "--" }} · ${c.displayRat.ifBlank { c.rat }}"
-        primaryText.text = "RSRP ${unit(c.rsrp, "dBm")}   SINR ${unit(c.sinr, "dB")}"
-        secondaryText.text = "RSRQ ${unit(c.rsrq, "dB")} · ${c.band} · PCI ${c.pci}"
-        val dataNet = NetworkStore.dataNetwork.ifBlank { "--" }
-        dataText.text = "Data $dataNet · REC · Mark→S$simNo"
-        if (compact) headerText.text = "S$simNo  ${c.rsrp}${if (c.rsrp == "--") "" else " dBm"}  ●"
+        val settings = settingsRepository.load()
+        val selected = if (compact) settings.floatingCompactFields else settings.floatingExpandedFields
+        val ordered = FloatingField.entries.filter { it in selected }
+        fun value(field: FloatingField): String = when (field) {
+            FloatingField.MARK_TARGET -> "S$simNo"
+            FloatingField.OPERATOR -> c.operator.ifBlank { "--" }
+            FloatingField.RAT -> c.displayRat.ifBlank { c.rat }
+            FloatingField.RSRP -> "RSRP ${unit(c.rsrp, "dBm")}"
+            FloatingField.RSRQ -> "RSRQ ${unit(c.rsrq, "dB")}"
+            FloatingField.SINR -> "SINR ${unit(c.sinr, "dB")}"
+            FloatingField.RSSI -> "RSSI ${unit(c.rssi, "dBm")}"
+            FloatingField.BAND -> "Band ${c.band}"
+            FloatingField.PCI -> "PCI ${c.pci}"
+            FloatingField.ARFCN -> "ARFCN ${c.arfcn}"
+            FloatingField.CA -> "CA ${c.carrierAggregation}"
+            FloatingField.DATANET -> "Data ${NetworkStore.dataNetwork.ifBlank { "--" }}"
+            FloatingField.DATA_SIM -> {
+                val d = NetworkStore.dataSimSubscriptionId
+                if (d < 0) "Data SIM --" else if (d == c.subscriptionId) "Data SIM S$simNo" else "Data SIM $d"
+            }
+            FloatingField.CELL_ID -> "Cell ${c.cellId}"
+            FloatingField.TAC -> "TAC ${c.tac}"
+            FloatingField.SPEED -> "Speed ${LocationStore.latest.value.speedKmh} km/h"
+            FloatingField.GPS_ACCURACY -> "GPS ±${LocationStore.latest.value.accuracy} m"
+            FloatingField.RECORDING -> "REC"
+        }
+        if (compact) {
+            headerText.text = ordered.joinToString(" · ") { value(it) }.ifBlank { "S$simNo · REC" }
+            return
+        }
+        val tokens = ordered.map { value(it) }
+        headerText.text = tokens.take(3).joinToString(" · ").ifBlank { "S$simNo · ${c.operator}" }
+        primaryText.text = tokens.drop(3).take(3).joinToString("   ")
+        secondaryText.text = tokens.drop(6).take(3).joinToString(" · ")
+        dataText.text = tokens.drop(9).joinToString(" · ")
+        primaryText.visibility = if (primaryText.text.isBlank()) View.GONE else View.VISIBLE
+        secondaryText.visibility = if (secondaryText.text.isBlank()) View.GONE else View.VISIBLE
+        dataText.visibility = if (dataText.text.isBlank()) View.GONE else View.VISIBLE
     }
 
     private fun showIssueMenu() {
@@ -262,14 +294,29 @@ class FloatingOverlayService : Service() {
     private fun submitMark(issue: String) {
         val subId = RecordingState.status.value.markTargetSubscriptionId
         if (subId < 0) return
-        val intent = Intent(this, RecordingService::class.java).apply {
-            action = RecordingService.ACTION_MARK
-            putExtra(RecordingService.EXTRA_MARK_SUBSCRIPTION_ID, subId)
-            putExtra(RecordingService.EXTRA_EVENT_TYPE, issue)
-            putExtra(RecordingService.EXTRA_EVENT_NOTE, "")
-        }
-        ContextCompat.startForegroundService(this, intent)
         val settings = settingsRepository.load()
+        if (settings.floatingCaptureScreenshotOnMark && ScreenCaptureService.isReady) {
+            overlayView?.visibility = View.INVISIBLE
+            val capture = Intent(this, ScreenCaptureService::class.java).apply {
+                action = ScreenCaptureService.ACTION_CAPTURE_MARK
+                putExtra(RecordingService.EXTRA_MARK_SUBSCRIPTION_ID, subId)
+                putExtra(RecordingService.EXTRA_EVENT_TYPE, issue)
+                putExtra(RecordingService.EXTRA_EVENT_NOTE, "")
+            }
+            ContextCompat.startForegroundService(this, capture)
+            scope.launch {
+                delay(450)
+                withContext(Dispatchers.Main) { overlayView?.visibility = View.VISIBLE }
+            }
+        } else {
+            val intent = Intent(this, RecordingService::class.java).apply {
+                action = RecordingService.ACTION_MARK
+                putExtra(RecordingService.EXTRA_MARK_SUBSCRIPTION_ID, subId)
+                putExtra(RecordingService.EXTRA_EVENT_TYPE, issue)
+                putExtra(RecordingService.EXTRA_EVENT_NOTE, "")
+            }
+            ContextCompat.startForegroundService(this, intent)
+        }
         if (settings.toastOnMark) runCatching { Toast.makeText(this, "Marked: $issue", Toast.LENGTH_SHORT).show() }
         if (settings.vibrateOnMark) runCatching {
             val vibrator = getSystemService(Vibrator::class.java)

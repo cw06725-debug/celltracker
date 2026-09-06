@@ -10,7 +10,8 @@ data class RecordingStatus(
     val latestPath: String? = null,
     val markTargetSubscriptionId: Int = -1,
     val locationValid: Boolean = false,
-    val locationAgeMs: Long = Long.MAX_VALUE
+    val locationAgeMs: Long = Long.MAX_VALUE,
+    val taskName: String = ""
 )
 
 object RecordingState {
