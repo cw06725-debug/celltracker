@@ -32,17 +32,68 @@ object CallSetupExporter {
         val i=d.item
         fun e(s:String)=s.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
         fun l(v:Double?)=v?.let{String.format(Locale.US,"%.1f ms",it)}?:"--"
-        val lat=d.attempts.mapNotNull{it.setupLatencyMs?.toDouble()}.sorted()
+        fun dt(v:Long)=SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS",Locale.getDefault()).format(Date(v))
+
+        // Prefer the actual attempt rows for report KPIs so the exported Summary stays
+        // consistent with the table even if older session metadata was partially written.
+        val attempts=d.attempts
+        val total=attempts.size
+        val success=attempts.count{it.result=="SUCCESS"}
+        val failure=(total-success).coerceAtLeast(0)
+        val successRate=if(total==0)0.0 else success*100.0/total
+        val lat=attempts.mapNotNull{it.setupLatencyMs?.toDouble()}.sorted()
+        val avg=lat.takeIf{it.isNotEmpty()}?.average()
         fun pct(q:Double)=lat.takeIf{it.isNotEmpty()}?.get(kotlin.math.ceil((lat.size-1)*q).toInt().coerceIn(0,lat.lastIndex))
+
+        fun metric(label:String,value:String)=
+            "<div class='metric'><div class='k'>${e(label)}</div><div class='v'>${e(value)}</div></div>"
+
         return buildString {
-        append("<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width'><style>body{font-family:sans-serif;margin:18px;color:#1f2937}.g{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}.c{border:1px solid #ddd;border-radius:12px;padding:12px;margin:10px 0}.k{color:#667085;font-size:12px}.v{font-weight:600}table{border-collapse:collapse;width:100%;font-size:13px}th,td{padding:7px;border-bottom:1px solid #ddd;text-align:left}</style></head><body><h1>CellTracker Call Setup Summary</h1><div class='c g'>")
-        listOf("Task" to i.taskName,"DUT A" to "${i.deviceA} / ${i.operatorA}","DUT B" to "${i.deviceB} / ${i.operatorB}","Direction" to i.direction,"Attempts" to i.attempts.toString(),"Success / Failure" to "${i.success} / ${i.failure}","Success Rate" to String.format(Locale.US,"%.1f%%",i.successRate),"Avg / Min / Max" to "${l(i.averageMs)} / ${l(lat.minOrNull())} / ${l(lat.maxOrNull())}","P50 / P90 / P95" to "${l(pct(.5))} / ${l(i.p90Ms)} / ${l(i.p95Ms)}","HIGH latency" to d.events.count{it.type=="HIGH_CALL_SETUP_LATENCY"}.toString(),"Timeout" to d.events.count{it.type=="CALL_SETUP_TIMEOUT"}.toString(),"Status" to i.status).forEach{(k,v)->append("<div><div class='k'>${e(k)}</div><div class='v'>${e(v)}</div></div>")}
-        append("</div><div class='c'><table><tr><th>#</th><th>Direction</th><th>Result</th><th>Setup</th><th>Confidence</th><th>Detail</th></tr>")
-        d.attempts.forEach{append("<tr><td>${it.attemptNumber}</td><td>${e(it.direction)}</td><td>${e(it.result)}</td><td>${l(it.setupLatencyMs?.toDouble())}</td><td>${e(it.confidence)}</td><td>${e(it.failureDetail)}</td></tr>")}
-        append("</table></div>")
-        append("<div class='c'><h2>Events</h2><table><tr><th>Time</th><th>Type</th><th>Direction</th><th>Attempt</th><th>Detail</th></tr>")
-        d.events.forEach{ev->append("<tr><td>${e(SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS",Locale.getDefault()).format(Date(ev.timestampMs)))}</td><td>${e(ev.type)}</td><td>${e(ev.direction)}</td><td>${e(ev.attemptId)}</td><td>${e(ev.detail)}</td></tr>")}
-        append("</table></div></body></html>")
+            append("<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>")
+            append("<style>")
+            append("*{box-sizing:border-box}body{font-family:system-ui,-apple-system,Segoe UI,sans-serif;margin:0;background:#f6f7fb;color:#1f2937}")
+            append(".wrap{max-width:980px;margin:0 auto;padding:16px}.title{font-size:26px;font-weight:750;margin:4px 0 16px}")
+            append(".card{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px;margin:12px 0;box-shadow:0 1px 2px rgba(0,0,0,.03)}")
+            append(".section{font-size:17px;font-weight:700;margin:0 0 10px}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}")
+            append(".metric{background:#f9fafb;border-radius:10px;padding:10px;min-width:0}.k{color:#667085;font-size:12px;margin-bottom:3px}.v{font-weight:650;overflow-wrap:anywhere}")
+            append(".tablewrap{overflow-x:auto;-webkit-overflow-scrolling:touch}table{border-collapse:collapse;width:100%;min-width:700px;font-size:13px}")
+            append("th,td{padding:8px 9px;border-bottom:1px solid #e5e7eb;text-align:left;vertical-align:top;white-space:nowrap}th{background:#f9fafb;position:sticky;top:0}")
+            append("td.detail{white-space:normal;min-width:180px}.ok{font-weight:700}.muted{color:#667085}")
+            append("@media(max-width:560px){.wrap{padding:12px}.title{font-size:23px}.grid{grid-template-columns:1fr}.card{padding:12px}table{font-size:12px}}")
+            append("</style></head><body><div class='wrap'>")
+            append("<div class='title'>CellTracker Call Setup Summary</div>")
+
+            append("<div class='card'><div class='section'>Session</div><div class='grid'>")
+            append(metric("Task",i.taskName))
+            append(metric("Direction",i.direction))
+            append(metric("DUT A","${i.deviceA} / ${i.operatorA}"))
+            append(metric("DUT B","${i.deviceB} / ${i.operatorB}"))
+            append(metric("Start",dt(i.startedAt)))
+            append(metric("End",if(i.endedAt>0)dt(i.endedAt) else "--"))
+            append(metric("Status",i.status))
+            append("</div></div>")
+
+            append("<div class='card'><div class='section'>Performance</div><div class='grid'>")
+            append(metric("Attempts",total.toString()))
+            append(metric("Success / Failure","$success / $failure"))
+            append(metric("Success Rate",String.format(Locale.US,"%.1f%%",successRate)))
+            append(metric("Average Setup",l(avg)))
+            append(metric("Min / Max","${l(lat.minOrNull())} / ${l(lat.maxOrNull())}"))
+            append(metric("P50 / P90 / P95","${l(pct(.5))} / ${l(pct(.9))} / ${l(pct(.95))}"))
+            append(metric("High Latency Events",d.events.count{it.type=="HIGH_CALL_SETUP_LATENCY"}.toString()))
+            append(metric("Timeout Events",d.events.count{it.type=="CALL_SETUP_TIMEOUT"}.toString()))
+            append("</div></div>")
+
+            append("<div class='card'><div class='section'>Attempts</div><div class='tablewrap'><table><tr><th>#</th><th>Direction</th><th>Result</th><th>Setup</th><th>Confidence</th><th>Detail</th></tr>")
+            attempts.forEach{
+                append("<tr><td>${it.attemptNumber}</td><td>${e(it.direction)}</td><td class='ok'>${e(it.result)}</td><td>${l(it.setupLatencyMs?.toDouble())}</td><td>${e(it.confidence)}</td><td class='detail'>${e(it.failureDetail.ifBlank{"--"})}</td></tr>")
+            }
+            append("</table></div></div>")
+
+            append("<div class='card'><div class='section'>Events</div><div class='tablewrap'><table><tr><th>Time</th><th>Type</th><th>Direction</th><th>Attempt</th><th>Detail</th></tr>")
+            d.events.forEach{ev->append("<tr><td>${e(dt(ev.timestampMs))}</td><td>${e(ev.type)}</td><td>${e(ev.direction)}</td><td>${e(ev.attemptId)}</td><td class='detail'>${e(ev.detail.ifBlank{"--"})}</td></tr>")}
+            append("</table></div></div>")
+            append("</div></body></html>")
         }
     }
 

@@ -200,7 +200,19 @@ fun CallSetupScreen(
                 item{LiveTestPanel(link,test)}
             }
             item{Text("Call Setup History",style=MaterialTheme.typography.titleMedium)}
-            if(history.isEmpty())item{Text("No saved Call Setup sessions",style=MaterialTheme.typography.bodySmall)}else items(history,key={it.path}){h->Card(Modifier.fillMaxWidth()){Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){Column(Modifier.fillMaxWidth().clickable{onOpenDetail(h.path)}){Text(h.taskName,style=MaterialTheme.typography.titleSmall);Text("${h.deviceA} ↔ ${h.deviceB} · ${h.direction}",style=MaterialTheme.typography.bodySmall);Text("${h.attempts} attempts · Success ${String.format(Locale.US,"%.1f%%",h.successRate)} · Avg ${ms(h.averageMs)}",style=MaterialTheme.typography.bodySmall)};OutlinedButton(onClick={onExport(h.path)},modifier=Modifier.fillMaxWidth()){Text("Export Report")}}}}
+            if(history.isEmpty())item{Text("No saved Call Setup sessions",style=MaterialTheme.typography.bodySmall)}else items(history,key={it.path}){h->
+                Card(Modifier.fillMaxWidth()){
+                    Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+                        Text(h.taskName,style=MaterialTheme.typography.titleSmall)
+                        Text("${h.deviceA} ↔ ${h.deviceB} · ${h.direction}",style=MaterialTheme.typography.bodySmall)
+                        Text("${h.attempts} attempts · Success ${String.format(Locale.US,"%.1f%%",h.successRate)} · Avg ${ms(h.averageMs)}",style=MaterialTheme.typography.bodySmall)
+                        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                            Button(onClick={onOpenDetail(h.path)},modifier=Modifier.weight(1f)){Text("View Details")}
+                            OutlinedButton(onClick={onExport(h.path)},modifier=Modifier.weight(1f)){Text("Export Report")}
+                        }
+                    }
+                }
+            }
         }
     }
 }
