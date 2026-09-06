@@ -59,7 +59,13 @@ class RecordingService : Service() {
         recordingJob = scope.launch {
             val dir = File(getExternalFilesDir(null), "recordings").apply { mkdirs() }
             val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-            val scopeName = if (bothSims) "DualSIM" else "SIM"
+            val initialSims = runCatching { cellular.readAllSims() }.getOrDefault(emptyList())
+            val scopeName = if (bothSims) {
+                "DualSIM"
+            } else {
+                val slot = initialSims.firstOrNull { it.subscriptionId == targetSubscriptionId }?.servingCell?.simSlotIndex
+                if (slot != null && slot >= 0) "SIM${slot + 1}" else "SIM"
+            }
             val safeTask = sanitizeTaskName(taskName)
             val taskPart = safeTask.takeIf { it.isNotBlank() }?.let { "_${it}" }.orEmpty()
             val file = File(dir, "CellTracker${taskPart}_${scopeName}_$stamp.csv")

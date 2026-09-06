@@ -1,14 +1,13 @@
-# CellTracker v0.6.1
+# CellTracker v0.6.2
 
-Hotfix and recording naming update.
+Changes:
+- Restyled 1-minute signal trend controls to compact Cellular-Z-like metric tiles; removed arrow glyphs and added chart grid.
+- Replaced map Start/End/Current/Issue icons with small color-coded circle markers.
+- Fixed single-SIM recording filenames to include the actual slot (SIM1/SIM2) instead of generic SIM.
+- Recording history display-name parser updated for SIM1/SIM2 filenames.
 
-## Changes
-- Fix compileSdk 34 build failure caused by direct reference to hidden `TelephonyManager.NETWORK_TYPE_LTE_CA`.
-- Preserve LTE-CA compatibility detection with local Android network type value 19 plus registered LTE-cell heuristic.
-- Add optional task name dialog before starting a recording.
-- Task name is included in the recording filename and inherited by CSV/HTML/XLSX/KML exports.
-- Recent recordings show the task name for easier identification.
-- Remove an accidental duplicate export dialog block.
-
-Filename example:
-`CellTracker_Zong_5G_Drive_Test_DualSIM_20260906_115900.csv`
+Marker colors:
+- Start: green
+- End: red
+- Current location: blue
+- Issue marker: orange

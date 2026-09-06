@@ -2,6 +2,7 @@ package com.example.celltracker
 
 import android.Manifest
 import android.graphics.Color as AndroidColor
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
 import android.app.Activity
@@ -22,6 +23,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
@@ -1107,7 +1109,8 @@ private fun OsmTrackMap(
             mapView.overlays.add(Marker(mapView).apply {
                 position = GeoPoint(sample.latitude!!, sample.longitude!!)
                 title = "Start"
-                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                icon = circleMarkerDrawable(context, AndroidColor.rgb(76, 175, 80), 14)
+                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
                 setOnMarkerClickListener { _, _ -> selectedIsCurrent = false; selectedSample = sample; true }
             })
         }
@@ -1115,7 +1118,8 @@ private fun OsmTrackMap(
             mapView.overlays.add(Marker(mapView).apply {
                 position = GeoPoint(sample.latitude!!, sample.longitude!!)
                 title = "End"
-                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                icon = circleMarkerDrawable(context, AndroidColor.rgb(244, 67, 54), 14)
+                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
                 setOnMarkerClickListener { _, _ -> selectedIsCurrent = false; selectedSample = sample; true }
             })
         }
@@ -1126,6 +1130,7 @@ private fun OsmTrackMap(
                 position = point
                 title = "Current location"
                 snippet = currentLabel ?: "Live GPS"
+                icon = circleMarkerDrawable(context, AndroidColor.rgb(33, 150, 243), 16)
                 setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
                 setOnMarkerClickListener { _, _ -> selectedIsCurrent = true; selectedSample = currentSample; true }
             })
@@ -1157,9 +1162,7 @@ private fun OsmTrackMap(
                 position = GeoPoint(sample.latitude!!, sample.longitude!!)
                 title = "⚑ ${sample.eventType.ifBlank { "Issue" }}"
                 snippet = "SIM ${sample.simSlot} · ${sample.operator} · ${normalizedRat(sample)} · RSRP ${sample.rsrp} dBm"
-                icon = ContextCompat.getDrawable(context, android.R.drawable.star_big_on)?.mutate()?.also {
-                    DrawableCompat.setTint(it, AndroidColor.rgb(255, 152, 0))
-                }
+                icon = circleMarkerDrawable(context, AndroidColor.rgb(255, 152, 0), 16)
                 setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
                 setOnMarkerClickListener { _, _ -> selectedIsCurrent = false; selectedSample = sample; true }
             })
@@ -1285,15 +1288,32 @@ private fun SignalTrendSection(cell: CellData, tick: String) {
     Spacer(Modifier.height(8.dp))
     Text("Signal trend · last 1 min", style = MaterialTheme.typography.labelLarge)
     Row(
-        modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         SignalMetric.entries.forEach { item ->
-            FilterChip(
-                selected = metric == item,
-                onClick = { metric = item },
-                label = { Text("↗ ${item.label}") }
-            )
+            val liveValue = when (item) {
+                SignalMetric.RSRP -> cell.rsrp
+                SignalMetric.RSRQ -> cell.rsrq
+                SignalMetric.SINR -> cell.sinr
+                SignalMetric.RSSI -> cell.rssi
+            }
+            val selected = metric == item
+            Surface(
+                modifier = Modifier.weight(1f).clickable { metric = item },
+                shape = MaterialTheme.shapes.small,
+                color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface,
+                border = BorderStroke(1.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant)
+            ) {
+                Column(Modifier.padding(vertical = 6.dp, horizontal = 4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(item.label, style = MaterialTheme.typography.labelMedium)
+                    Text(
+                        if (liveValue == "--") "--" else "$liveValue ${item.unit}",
+                        style = MaterialTheme.typography.labelSmall,
+                        maxLines = 1
+                    )
+                }
+            }
         }
     }
     val values = points.mapNotNull { point ->
@@ -1319,18 +1339,27 @@ private fun SignalTrendSection(cell: CellData, tick: String) {
             Text("Now ${String.format(Locale.US, "%.1f", latest)} ${metric.unit}", style = MaterialTheme.typography.labelSmall)
             Text("${String.format(Locale.US, "%.1f", max)} ${metric.unit}", style = MaterialTheme.typography.labelSmall)
         }
-        Canvas(Modifier.fillMaxWidth().height(120.dp).padding(top = 6.dp)) {
+        Canvas(Modifier.fillMaxWidth().height(132.dp).padding(top = 8.dp)) {
             val start = values.first().first
             val end = values.last().first
             val timeSpan = (end - start).coerceAtLeast(1L).toFloat()
             val valueSpan = (max - min).coerceAtLeast(1f)
+            val gridColor = lineColor.copy(alpha = 0.16f)
+            repeat(4) { i ->
+                val y = size.height * i / 3f
+                drawLine(gridColor, start = androidx.compose.ui.geometry.Offset(0f, y), end = androidx.compose.ui.geometry.Offset(size.width, y), strokeWidth = 1f)
+            }
+            repeat(4) { i ->
+                val x = size.width * i / 3f
+                drawLine(gridColor, start = androidx.compose.ui.geometry.Offset(x, 0f), end = androidx.compose.ui.geometry.Offset(x, size.height), strokeWidth = 1f)
+            }
             val path = Path()
             values.forEachIndexed { index, (time, value) ->
                 val x = ((time - start).toFloat() / timeSpan) * size.width
                 val y = size.height - ((value - min) / valueSpan) * size.height
                 if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
             }
-            drawPath(path, lineColor, style = Stroke(width = 4f))
+            drawPath(path, lineColor, style = Stroke(width = 3f))
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text("60 s ago", style = MaterialTheme.typography.labelSmall)
@@ -1562,6 +1591,16 @@ private fun normalizedRat(s: TrackSample): String {
     }
 }
 
+private fun circleMarkerDrawable(context: android.content.Context, color: Int, sizeDp: Int): GradientDrawable {
+    val px = (sizeDp * context.resources.displayMetrics.density).toInt().coerceAtLeast(8)
+    return GradientDrawable().apply {
+        shape = GradientDrawable.OVAL
+        setColor(color)
+        setStroke((2 * context.resources.displayMetrics.density).toInt().coerceAtLeast(1), AndroidColor.WHITE)
+        setSize(px, px)
+    }
+}
+
 private fun ratColor(rat: String): Int = when {
     rat.contains("NSA", true) -> AndroidColor.rgb(0, 150, 136)
     rat.contains("NR", true) || rat.contains("5G", true) -> AndroidColor.rgb(76, 175, 80)
@@ -1576,7 +1615,7 @@ private fun recordingDisplayName(fileName: String): String {
     val prefix = "CellTracker_"
     if (!base.startsWith(prefix)) return base
     val body = base.removePrefix(prefix)
-    val match = Regex("^(.*)_(DualSIM|SIM)_\\d{8}_\\d{6}$").matchEntire(body)
+    val match = Regex("^(.*)_(DualSIM|SIM(?:1|2)?)_\\d{8}_\\d{6}$").matchEntire(body)
     val task = match?.groupValues?.getOrNull(1).orEmpty()
     return if (task.isBlank()) "Untitled recording" else task.replace('_', ' ')
 }
