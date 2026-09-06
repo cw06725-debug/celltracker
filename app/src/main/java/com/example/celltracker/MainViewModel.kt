@@ -131,16 +131,29 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         ContextCompat.startForegroundService(app, intent)
         val settings = _state.value.settings
-        if (settings.toastOnMark) Toast.makeText(app, "Marked: $issueType", Toast.LENGTH_SHORT).show()
+        if (settings.toastOnMark) {
+            runCatching { Toast.makeText(app, "Marked: $issueType", Toast.LENGTH_SHORT).show() }
+        }
         if (settings.vibrateOnMark) {
-            val vibrator = app.getSystemService(Vibrator::class.java)
-            if (Build.VERSION.SDK_INT >= 26) vibrator?.vibrate(VibrationEffect.createOneShot(60L, VibrationEffect.DEFAULT_AMPLITUDE))
-            else @Suppress("DEPRECATION") vibrator?.vibrate(60L)
+            runCatching {
+                val vibrator = app.getSystemService(Vibrator::class.java)
+                if (Build.VERSION.SDK_INT >= 26) {
+                    vibrator?.vibrate(VibrationEffect.createOneShot(60L, VibrationEffect.DEFAULT_AMPLITUDE))
+                } else {
+                    @Suppress("DEPRECATION")
+                    vibrator?.vibrate(60L)
+                }
+            }
         }
         if (settings.soundOnMark) {
-            ToneGenerator(AudioManager.STREAM_NOTIFICATION, 70).apply {
-                startTone(ToneGenerator.TONE_PROP_BEEP, 100)
-                viewModelScope.launch { delay(150); release() }
+            runCatching {
+                ToneGenerator(AudioManager.STREAM_NOTIFICATION, 70).apply {
+                    startTone(ToneGenerator.TONE_PROP_BEEP, 100)
+                    viewModelScope.launch {
+                        delay(150)
+                        runCatching { release() }
+                    }
+                }
             }
         }
     }
