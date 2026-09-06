@@ -437,7 +437,7 @@ private fun MainScreen(
                                     Text(SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(item.startedAt)), style = MaterialTheme.typography.labelLarge)
                                     Text("View ›", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                                 }
-                                Text(recordingDisplayName(item.fileName), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
+                                Text(recordingDisplayName(item.name), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
                                 Text("${item.simSummary} · ${formatElapsed(item.durationMs)} · ${item.totalSamples} samples", style = MaterialTheme.typography.bodySmall)
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     TextButton(onClick = {
