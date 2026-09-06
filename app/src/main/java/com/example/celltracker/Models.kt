@@ -128,6 +128,7 @@ data class SignalTrendPoint(
 
 
 data class PingTestConfig(
+    val taskName: String = "Ping_8.8.8.8",
     val host: String = "8.8.8.8",
     val count: Int = 20,
     val intervalMs: Long = 1000L,
@@ -141,26 +142,108 @@ data class PingSample(
     val timestampMs: Long,
     val latencyMs: Double? = null,
     val success: Boolean = false,
-    val message: String = ""
+    val message: String = "",
+    val consecutiveFailures: Int = 0,
+    val eventSource: String = "",
+    val eventType: String = "",
+    val snapshot: PingNetworkSnapshot = PingNetworkSnapshot()
+)
+
+data class PingNetworkSnapshot(
+    val subscriptionId: Int = -1,
+    val simSlot: Int = -1,
+    val operator: String = "--",
+    val rat: String = "--",
+    val displayRat: String = "--",
+    val mcc: String = "--",
+    val mnc: String = "--",
+    val tac: String = "--",
+    val cellId: String = "--",
+    val pci: String = "--",
+    val arfcn: String = "--",
+    val band: String = "--",
+    val bandwidth: String = "--",
+    val rsrp: String = "--",
+    val rsrq: String = "--",
+    val sinr: String = "--",
+    val rssi: String = "--",
+    val carrierAggregation: String = "--",
+    val dataSimSubscriptionId: Int? = null,
+    val dataNetwork: String = "--",
+    val latitude: Double? = null,
+    val longitude: Double? = null,
+    val speedKmh: String = "--",
+    val gpsAccuracy: String = "--"
 )
 
 data class PingTestState(
     val isRunning: Boolean = false,
     val config: PingTestConfig = PingTestConfig(),
     val startedAt: Long = 0L,
+    val endedAt: Long = 0L,
     val completed: Int = 0,
     val successCount: Int = 0,
     val failureCount: Int = 0,
     val samples: List<PingSample> = emptyList(),
     val statusMessage: String = "Ready",
-    val resultPath: String? = null
+    val resultPath: String? = null,
+    val recordingPath: String? = null,
+    val consecutiveFailures: Int = 0,
+    val selectedSubscriptionId: Int? = null,
+    val dataSimSubscriptionId: Int? = null,
+    val dataNetwork: String = "--"
 ) {
     val successRate: Double get() = if (completed <= 0) 0.0 else successCount * 100.0 / completed
     val packetLossRate: Double get() = if (completed <= 0) 0.0 else failureCount * 100.0 / completed
     val averageLatencyMs: Double? get() = samples.mapNotNull { it.latencyMs }.takeIf { it.isNotEmpty() }?.average()
     val minLatencyMs: Double? get() = samples.mapNotNull { it.latencyMs }.minOrNull()
     val maxLatencyMs: Double? get() = samples.mapNotNull { it.latencyMs }.maxOrNull()
+    val currentLatencyMs: Double? get() = samples.lastOrNull()?.latencyMs
+    val p50LatencyMs: Double? get() = percentile(0.50)
+    val p90LatencyMs: Double? get() = percentile(0.90)
+    val p95LatencyMs: Double? get() = percentile(0.95)
+    val highPingCount: Int get() = samples.count { it.eventType == "HIGH_PING" }
+    val timeoutEventCount: Int get() = samples.count { it.eventType == "PING_TIMEOUT" }
+    val durationMs: Long get() {
+        if (startedAt <= 0L) return 0L
+        val end = if (isRunning) System.currentTimeMillis() else endedAt.takeIf { it > 0L } ?: samples.lastOrNull()?.timestampMs ?: startedAt
+        return (end - startedAt).coerceAtLeast(0L)
+    }
+
+    private fun percentile(p: Double): Double? {
+        val values = samples.mapNotNull { it.latencyMs }.sorted()
+        if (values.isEmpty()) return null
+        val index = kotlin.math.ceil((values.size - 1) * p).toInt().coerceIn(0, values.lastIndex)
+        return values[index]
+    }
 }
+
+data class PingHistoryItem(
+    val path: String,
+    val taskName: String,
+    val host: String,
+    val startedAt: Long,
+    val endedAt: Long,
+    val packetCount: Int,
+    val receivedCount: Int,
+    val averageLatencyMs: Double?,
+    val minLatencyMs: Double?,
+    val maxLatencyMs: Double?,
+    val p50LatencyMs: Double?,
+    val p90LatencyMs: Double?,
+    val p95LatencyMs: Double?,
+    val highPingCount: Int,
+    val timeoutEventCount: Int,
+    val highLatencyThresholdMs: Double,
+    val recordingPath: String? = null,
+    val status: String = "Completed"
+) {
+    val durationMs: Long get() = (endedAt - startedAt).coerceAtLeast(0L)
+    val successRate: Double get() = if (packetCount <= 0) 0.0 else receivedCount * 100.0 / packetCount
+    val packetLossRate: Double get() = 100.0 - successRate
+}
+
+data class PingDetail(val item: PingHistoryItem, val samples: List<PingSample>)
 data class AppState(
     val sims: List<SimCellState> = emptyList(),
     val selectedSubscriptionId: Int? = null,
@@ -181,6 +264,12 @@ data class AppState(
     val exportResult: ExportResult? = null,
     val signalTrendBySubscription: Map<Int, List<SignalTrendPoint>> = emptyMap(),
     val pingTest: PingTestState = PingTestState(),
+    val pingHistory: List<PingHistoryItem> = emptyList(),
+    val pingDetail: PingDetail? = null,
+    val deviceLink: DeviceLinkState = DeviceLinkState(),
+    val callSetup: CallSetupTestState = CallSetupTestState(),
+    val callHistory: List<CallSetupHistoryItem> = emptyList(),
+    val callDetail: CallSetupDetail? = null,
     val error: String? = null,
     val lastUpdated: String = "--"
 )

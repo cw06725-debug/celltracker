@@ -70,3 +70,38 @@ Version: 0.7.3 (versionCode 38)
 ## v0.7.3.2
 - Fixed overlay-started screenshot names falling back to `Untitled`: active task/session metadata is persisted by RecordingService and ScreenCaptureService resolves the task from memory, persisted session metadata, or the recording filename.
 - Fixed stale History/Recent recordings after START/STOP from the floating window. MainViewModel refreshes when an externally controlled recording stops, and the UI refreshes recordings again on resume.
+
+## v0.7.3.3
+- Fixed the floating window not appearing immediately after the first overlay permission grant. MainActivity now synchronizes the persisted floating-window settings whenever it resumes.
+- Improved foreground app detection for screenshot filenames with verified Usage Access, progressively wider UsageEvents windows, a 24-hour UsageStats fallback, launcher-app package visibility, and package-name suffix fallback when an application label cannot be resolved.
+
+## v0.8.0 — Ping Test Phase 2
+
+- Expanded Ping configuration with task name, persistent settings, interval, timeout, high-latency threshold and recording control.
+- Added a foreground Ping service with wake lock, live statistics, percentile latency, failure streaks and per-packet cellular/GPS snapshots.
+- Added deduplicated AUTO `HIGH_PING` and `PING_TIMEOUT` events linked to the active recording session.
+- Added Ping History and detail views for summary, packet samples, route/event map and RTT trend.
+- Added CSV, XLSX, HTML Summary and KML exports; CSV/XLSX preserve each Ping sample's network and GPS snapshot.
+
+Version: 0.8.0 (versionCode 42)
+
+## v0.9.0 — Bluetooth Dual-DUT Call Setup
+
+- Added reusable Classic Bluetooth RFCOMM Device Link with Controller/Agent modes, discovery, pairing, connection status, heartbeat, RTT/clock-offset estimation and automatic reconnect.
+- Added a framed, versioned JSON message protocol independent of Wi-Fi, cellular data, Internet and cloud services.
+- Added dual-DUT MO/MT Call Setup testing for A→B, B→A, bidirectional block and alternating directions.
+- Added public-API call-state monitoring, capability-aware auto answer/hang-up and explicit Semi-Auto fallback for restricted Android/ROM builds.
+- Requires two-ended confirmation for success and records `MEDIUM_PUBLIC_API` confidence instead of treating a dial request as a successful call.
+- Added per-attempt MO/MT timelines, network/GPS snapshots, automatic Recording/TestEvents, live statistics, History, Detail, Map and Trend.
+- Added Call Setup CSV, XLSX, HTML and KML exports.
+
+Version: 0.9.0.1 (versionCode 44)
+
+
+## v0.9.0.1 — Device Link foundation fixes
+- Clear filled Local SIM selection, persistent per-SIM phone identities, Save feedback and keyboard dismissal.
+- Best-effort public-API phone number detection by selected subscription.
+- True Controller ⇄ Agent switching with Bluetooth transport cleanup.
+- Agent RFCOMM listener + discoverability flow; Controller paired/nearby device UI and explicit Scan/Pair/Connect flow.
+- Expanded Device Link states and permission/Bluetooth/discovery/discoverability diagnostics.
+- Android 13+ discovery receiver exported for Bluetooth framework broadcasts.

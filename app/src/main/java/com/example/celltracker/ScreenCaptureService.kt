@@ -5,6 +5,7 @@ import android.app.usage.UsageStatsManager
 import android.app.usage.UsageEvents
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.PixelFormat
@@ -14,6 +15,7 @@ import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.IBinder
+import android.os.Process
 import android.util.DisplayMetrics
 import android.view.WindowManager
 import androidx.core.app.NotificationCompat
@@ -119,7 +121,7 @@ class ScreenCaptureService : Service() {
                 bitmap.recycle()
                 val dir = File(getExternalFilesDir(null), "screenshots").apply { mkdirs() }
                 val task = sanitize(resolveRecordingTaskName().ifBlank { "Untitled" })
-                val app = sanitize(foregroundAppLabel().ifBlank { "Screen" })
+                val app = sanitize(foregroundAppLabel())
                 val stamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
                 val file = File(dir, "${task}_${app}_$stamp.png")
                 FileOutputStream(file).use { cropped.compress(Bitmap.CompressFormat.PNG, 100, it) }
@@ -157,32 +159,70 @@ class ScreenCaptureService : Service() {
     }
 
     private fun foregroundAppLabel(): String {
+        if (!hasUsageAccess(this)) return "UnknownApp"
         return runCatching {
             val usm = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
             val end = System.currentTimeMillis()
-            val events = usm.queryEvents(end - 30_000L, end)
-            val event = UsageEvents.Event()
-            var latestPackage: String? = null
-            var latestTime = Long.MIN_VALUE
-            while (events.hasNextEvent()) {
-                events.getNextEvent(event)
-                val isForeground = event.eventType == UsageEvents.Event.MOVE_TO_FOREGROUND ||
-                    (Build.VERSION.SDK_INT >= 29 && event.eventType == UsageEvents.Event.ACTIVITY_RESUMED)
-                val pkg = event.packageName.orEmpty()
-                if (isForeground && pkg.isNotBlank() && pkg != packageName &&
-                    pkg != "com.android.systemui" && event.timeStamp >= latestTime) {
-                    latestPackage = pkg
-                    latestTime = event.timeStamp
-                }
+            // A tested app may remain foreground for minutes without emitting another resume
+            // event. Start narrow for accuracy, then widen until a valid external app is found.
+            val windows = longArrayOf(2 * 60_000L, 15 * 60_000L, 2 * 60 * 60_000L, 24 * 60 * 60_000L)
+            var foregroundPackage: String? = null
+            for (window in windows) {
+                foregroundPackage = latestForegroundPackage(usm, end - window, end)
+                if (foregroundPackage != null) break
             }
-            val pkg = latestPackage ?: run {
-                val stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, end - 30_000L, end)
-                stats.filter { it.packageName != packageName && it.packageName != "com.android.systemui" }
-                    .maxByOrNull { it.lastTimeUsed }?.packageName
-            } ?: return@runCatching "Screen"
-            val info = packageManager.getApplicationInfo(pkg, 0)
-            packageManager.getApplicationLabel(info).toString().ifBlank { "Screen" }
-        }.getOrDefault("Screen")
+            val pkg = foregroundPackage ?: latestUsageStatsPackage(usm, end - 24 * 60 * 60_000L, end)
+                ?: return@runCatching "UnknownApp"
+            applicationLabelOrPackageSuffix(pkg)
+        }.getOrDefault("UnknownApp")
+    }
+
+    private fun latestForegroundPackage(usm: UsageStatsManager, begin: Long, end: Long): String? {
+        val events = usm.queryEvents(begin, end)
+        val event = UsageEvents.Event()
+        var latestPackage: String? = null
+        var latestTime = Long.MIN_VALUE
+        while (events.hasNextEvent()) {
+            events.getNextEvent(event)
+            val isForeground = event.eventType == UsageEvents.Event.MOVE_TO_FOREGROUND ||
+                (Build.VERSION.SDK_INT >= 29 && event.eventType == UsageEvents.Event.ACTIVITY_RESUMED)
+            val pkg = event.packageName.orEmpty()
+            if (isForeground && isEligibleForegroundPackage(pkg) && event.timeStamp >= latestTime) {
+                latestPackage = pkg
+                latestTime = event.timeStamp
+            }
+        }
+        return latestPackage
+    }
+
+    private fun latestUsageStatsPackage(usm: UsageStatsManager, begin: Long, end: Long): String? {
+        return usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, begin, end)
+            .asSequence()
+            .filter { isEligibleForegroundPackage(it.packageName) }
+            .maxByOrNull { stats ->
+                if (Build.VERSION.SDK_INT >= 29) maxOf(stats.lastTimeUsed, stats.lastTimeVisible)
+                else stats.lastTimeUsed
+            }
+            ?.packageName
+    }
+
+    private fun isEligibleForegroundPackage(pkg: String): Boolean {
+        return pkg.isNotBlank() && pkg != packageName && pkg !in EXCLUDED_FOREGROUND_PACKAGES
+    }
+
+    private fun applicationLabelOrPackageSuffix(pkg: String): String {
+        val label = runCatching {
+            val info = if (Build.VERSION.SDK_INT >= 33) {
+                packageManager.getApplicationInfo(pkg, PackageManager.ApplicationInfoFlags.of(0))
+            } else {
+                @Suppress("DEPRECATION")
+                packageManager.getApplicationInfo(pkg, 0)
+            }
+            packageManager.getApplicationLabel(info).toString().trim()
+        }.getOrNull()
+        return label?.takeIf { it.isNotBlank() }
+            ?: pkg.substringAfterLast('.').takeIf { it.isNotBlank() }
+            ?: "UnknownApp"
     }
 
     private fun sendMark(subId: Int, eventType: String, eventNote: String, screenshotPath: String) {
@@ -226,5 +266,22 @@ class ScreenCaptureService : Service() {
         const val CHANNEL_ID = "celltracker_capture"
         const val NOTIFICATION_ID = 1002
         @Volatile var isReady: Boolean = false
+
+        private val EXCLUDED_FOREGROUND_PACKAGES = setOf(
+            "com.android.systemui",
+            "com.android.permissioncontroller",
+            "com.google.android.permissioncontroller"
+        )
+
+        fun hasUsageAccess(context: Context): Boolean {
+            val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
+            val mode = if (Build.VERSION.SDK_INT >= 29) {
+                appOps.unsafeCheckOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), context.packageName)
+            } else {
+                @Suppress("DEPRECATION")
+                appOps.checkOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), context.packageName)
+            }
+            return mode == AppOpsManager.MODE_ALLOWED
+        }
     }
 }

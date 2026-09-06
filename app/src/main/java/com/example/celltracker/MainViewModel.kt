@@ -1,6 +1,7 @@
 package com.example.celltracker
 
 import android.app.Application
+import android.annotation.SuppressLint
 import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
@@ -17,7 +18,6 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -33,14 +33,35 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val cellular = CellularRepository(app)
     private val location = LocationRepository(app)
     private val settingsRepository = SettingsRepository(app)
+    private val pingRepository = PingRepository(app)
+    private val callRepository = CallSetupRepository(app)
+    private val initialDeviceLink = DeviceLinkStore.link.value.let { current ->
+        val linkPrefs = app.getSharedPreferences("device_link", Application.MODE_PRIVATE)
+        val id = linkPrefs.getString("device_id", null) ?: java.util.UUID.randomUUID().toString().also { linkPrefs.edit().putString("device_id", it).apply() }
+        current.copy(localProfile = current.localProfile.copy(deviceId=id,phoneNumber=callRepository.loadLocalNumber(),simSlot=callRepository.loadLocalSimSlot()))
+    }.also { DeviceLinkStore.link.value = it }
 
-    private val _state = MutableStateFlow(AppState(settings = settingsRepository.load()))
+    private val initialPingState = PingTestStore.state.value.let {
+        if (it.isRunning || it.samples.isNotEmpty()) it else PingTestState(config = pingRepository.loadConfig())
+    }
+    private val _state = MutableStateFlow(
+        AppState(
+            settings = settingsRepository.load(),
+            pingTest = initialPingState,
+            pingHistory = pingRepository.loadHistory(),
+            callSetup = DeviceLinkStore.callTest.value.let { if (it.isRunning || it.attempts.isNotEmpty()) it else CallSetupTestState(config = callRepository.loadConfig()) },
+            deviceLink = initialDeviceLink,
+            callHistory = callRepository.loadHistory()
+        )
+    )
     val state: StateFlow<AppState> = _state.asStateFlow()
 
     private var cellJob: Job? = null
     private var locationJob: Job? = null
     private var recordingStatusJob: Job? = null
-    private var pingJob: Job? = null
+    private var pingStatusJob: Job? = null
+    private var deviceLinkJob: Job? = null
+    private var callTestJob: Job? = null
 
     fun start() {
         restartCellLoop()
@@ -77,7 +98,35 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
         }
-        _state.value = _state.value.copy(latestRecordingPath = latestPathFromPrefs(), recordings = loadRecordings())
+        if (pingStatusJob?.isActive != true) {
+            pingStatusJob = viewModelScope.launch {
+                var wasRunning = PingTestStore.state.value.isRunning
+                PingTestStore.state.collect { pingState ->
+                    _state.value = _state.value.copy(pingTest = pingState)
+                    if (wasRunning && !pingState.isRunning) {
+                        delay(150L)
+                        _state.value = _state.value.copy(pingHistory = pingRepository.loadHistory())
+                    }
+                    wasRunning = pingState.isRunning
+                }
+            }
+        }
+        if (deviceLinkJob?.isActive != true) deviceLinkJob = viewModelScope.launch {
+            DeviceLinkStore.link.collect { _state.value = _state.value.copy(deviceLink = it) }
+        }
+        if (callTestJob?.isActive != true) callTestJob = viewModelScope.launch {
+            var wasRunning = DeviceLinkStore.callTest.value.isRunning
+            DeviceLinkStore.callTest.collect { test ->
+                _state.value = _state.value.copy(callSetup = test)
+                if (wasRunning && !test.isRunning) { delay(150); _state.value = _state.value.copy(callHistory = callRepository.loadHistory()) }
+                wasRunning = test.isRunning
+            }
+        }
+        _state.value = _state.value.copy(
+            latestRecordingPath = latestPathFromPrefs(),
+            recordings = loadRecordings(),
+            pingHistory = pingRepository.loadHistory()
+        )
     }
 
     private fun restartCellLoop() {
@@ -232,6 +281,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         SubscriptionManager.getDefaultDataSubscriptionId().takeIf { it != SubscriptionManager.INVALID_SUBSCRIPTION_ID }
     }.getOrNull()
 
+    @SuppressLint("MissingPermission")
     private fun currentDataNetwork(): String {
         val app = getApplication<Application>()
         val cm = app.getSystemService(ConnectivityManager::class.java) ?: return "--"
@@ -257,174 +307,120 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun startPingTest(config: PingTestConfig) {
-        if (pingJob?.isActive == true) return
+        if (PingTestStore.state.value.isRunning) return
         val host = config.host.trim().ifBlank { "8.8.8.8" }
+        val taskName = config.taskName.trim().ifBlank { "Ping_$host" }
         val safeConfig = config.copy(
+            taskName = taskName,
             host = host,
             count = config.count.coerceIn(1, 10_000),
-            intervalMs = config.intervalMs.coerceIn(500L, 60_000L),
-            timeoutMs = config.timeoutMs.coerceIn(500L, 10_000L),
+            intervalMs = config.intervalMs.coerceIn(250L, 60_000L),
+            timeoutMs = config.timeoutMs.coerceIn(250L, 60_000L),
             highLatencyThresholdMs = config.highLatencyThresholdMs.coerceIn(1.0, 60_000.0)
         )
-        val shouldAutoRecord = safeConfig.autoRecord && !_state.value.isRecording
-        val pingResultFile = createPingResultFile(host)
-        _state.value = _state.value.copy(
-            pingTest = PingTestState(
-                isRunning = true,
-                config = safeConfig,
-                startedAt = System.currentTimeMillis(),
-                statusMessage = if (shouldAutoRecord) "Starting recording…" else "Running",
-                resultPath = pingResultFile.absolutePath
-            )
-        )
-        pingJob = viewModelScope.launch {
-            if (shouldAutoRecord) {
-                val taskHost = host.replace(Regex("[^A-Za-z0-9._-]"), "_").take(28)
-                startRecording("Ping_$taskHost")
-                delay(700L)
-            }
-            var consecutiveFailures = 0
-            try {
-                for (seq in 1..safeConfig.count) {
-                    val startedAt = System.currentTimeMillis()
-                    val result = runSinglePing(host, safeConfig.timeoutMs)
-                    val sample = PingSample(
-                        sequence = seq,
-                        timestampMs = startedAt,
-                        latencyMs = result.first,
-                        success = result.first != null,
-                        message = result.second
-                    )
-                    consecutiveFailures = if (sample.success) 0 else consecutiveFailures + 1
-                    appendPingResult(pingResultFile, host, sample)
-                    val previous = _state.value.pingTest
-                    val nextSamples = (previous.samples + sample).takeLast(5000)
-                    val successCount = nextSamples.count { it.success }
-                    val failureCount = nextSamples.size - successCount
-                    _state.value = _state.value.copy(
-                        pingTest = previous.copy(
-                            isRunning = true,
-                            completed = nextSamples.size,
-                            successCount = successCount,
-                            failureCount = failureCount,
-                            samples = nextSamples,
-                            statusMessage = if (sample.success) "Reply ${formatPingLatency(sample.latencyMs)}" else "Timeout / failed"
-                        )
-                    )
-                    if (sample.latencyMs != null && sample.latencyMs >= safeConfig.highLatencyThresholdMs) {
-                        markAutoEvent(
-                            "HIGH_PING",
-                            "Target=$host, RTT=${formatPingLatency(sample.latencyMs)}, threshold=${String.format(Locale.US, "%.0f ms", safeConfig.highLatencyThresholdMs)}"
-                        )
-                    }
-                    if (!sample.success && consecutiveFailures == 3) {
-                        markAutoEvent("PING_TIMEOUT", "Target=$host, 3 consecutive ping failures")
-                    }
-                    if (seq < safeConfig.count) {
-                        val spent = System.currentTimeMillis() - startedAt
-                        delay((safeConfig.intervalMs - spent).coerceAtLeast(0L))
-                    }
-                }
-                val current = _state.value.pingTest
-                _state.value = _state.value.copy(
-                    pingTest = current.copy(
-                        isRunning = false,
-                        statusMessage = if (current.completed >= safeConfig.count) "Completed" else "Stopped"
-                    )
-                )
-            } catch (e: CancellationException) {
-                val current = _state.value.pingTest
-                _state.value = _state.value.copy(pingTest = current.copy(isRunning = false, statusMessage = "Stopped"))
-                throw e
-            } catch (e: Exception) {
-                val current = _state.value.pingTest
-                _state.value = _state.value.copy(
-                    pingTest = current.copy(isRunning = false, statusMessage = "Error: ${e.message ?: "Ping failed"}")
-                )
-            } finally {
-                if (shouldAutoRecord) stopRecording()
-            }
-        }
-    }
-
-    fun stopPingTest() {
-        pingJob?.cancel()
-        pingJob = null
-        val current = _state.value.pingTest
-        _state.value = _state.value.copy(pingTest = current.copy(isRunning = false, statusMessage = "Stopped"))
-    }
-
-    fun clearPingResults() {
-        if (_state.value.pingTest.isRunning) return
-        _state.value = _state.value.copy(pingTest = PingTestState(config = _state.value.pingTest.config))
-    }
-
-    private fun createPingResultFile(host: String): File {
-        val dir = File(getApplication<Application>().getExternalFilesDir(null), "ping_results").apply { mkdirs() }
-        val safeHost = host.replace(Regex("[^A-Za-z0-9._-]"), "_").take(32).ifBlank { "target" }
-        val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-        return File(dir, "Ping_${safeHost}_$stamp.csv").apply {
-            writeText("sequence,timestamp,host,success,latency_ms,message,data_network,sim_slot,operator,rat,rsrp,rsrq,sinr,band,pci\n")
-        }
-    }
-
-    private fun appendPingResult(file: File, host: String, sample: PingSample) {
-        runCatching {
-            val snapshot = _state.value
-            val sim = snapshot.sims.firstOrNull { it.subscriptionId == snapshot.selectedSubscriptionId } ?: snapshot.sims.firstOrNull()
-            val c = sim?.servingCell
-            val timestamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US).format(Date(sample.timestampMs))
-            val values = listOf(
-                sample.sequence.toString(), timestamp, host, sample.success.toString(), sample.latencyMs?.let { String.format(Locale.US, "%.3f", it) }.orEmpty(),
-                sample.message, snapshot.dataNetwork, sim?.let { (it.simSlotIndex + 1).toString() }.orEmpty(), c?.operator.orEmpty(),
-                c?.displayRat?.ifBlank { c.rat }.orEmpty(), c?.rsrp.orEmpty(), c?.rsrq.orEmpty(), c?.sinr.orEmpty(), c?.band.orEmpty(), c?.pci.orEmpty()
-            )
-            file.appendText(values.joinToString(",") { pingCsvEscape(it) } + "\n")
-        }
-    }
-
-    private fun pingCsvEscape(value: String): String {
-        val safe = value.replace("\"", "\"\"")
-        return if (safe.contains(',') || safe.contains('"') || safe.contains('\n')) "\"$safe\"" else safe
-    }
-
-    private suspend fun runSinglePing(host: String, timeoutMs: Long): Pair<Double?, String> = withContext(Dispatchers.IO) {
-        var process: Process? = null
-        try {
-            val timeoutSeconds = kotlin.math.ceil(timeoutMs / 1000.0).toInt().coerceAtLeast(1)
-            process = ProcessBuilder("/system/bin/ping", "-c", "1", "-W", timeoutSeconds.toString(), host)
-                .redirectErrorStream(true)
-                .start()
-            val output = process.inputStream.bufferedReader().use { it.readText() }
-            process.waitFor()
-            val latency = Regex("time[=<]([0-9.]+)\\s*ms", RegexOption.IGNORE_CASE)
-                .find(output)?.groupValues?.getOrNull(1)?.toDoubleOrNull()
-            latency to output.lineSequence().firstOrNull { it.contains("bytes from", true) || it.contains("timeout", true) || it.contains("unreachable", true) }.orEmpty()
-        } catch (e: Exception) {
-            null to (e.message ?: "Ping failed")
-        } finally {
-            runCatching { process?.destroy() }
-        }
-    }
-
-    private fun markAutoEvent(eventType: String, note: String) {
-        if (!_state.value.isRecording) return
+        pingRepository.saveConfig(safeConfig)
         val app = getApplication<Application>()
-        val subId = _state.value.recordingMarkTargetSubscriptionId
-            ?: _state.value.markTargetSubscriptionId
-            ?: _state.value.selectedSubscriptionId
-            ?: return
-        val intent = Intent(app, RecordingService::class.java).apply {
-            action = RecordingService.ACTION_MARK
-            putExtra(RecordingService.EXTRA_MARK_SUBSCRIPTION_ID, subId)
-            putExtra(RecordingService.EXTRA_EVENT_TYPE, eventType)
-            putExtra(RecordingService.EXTRA_EVENT_NOTE, note)
-            putExtra(RecordingService.EXTRA_EVENT_SOURCE, "AUTO")
+        val intent = Intent(app, PingTestService::class.java).apply {
+            action = PingTestService.ACTION_START
+            putExtra(PingTestService.EXTRA_TASK_NAME, safeConfig.taskName)
+            putExtra(PingTestService.EXTRA_HOST, safeConfig.host)
+            putExtra(PingTestService.EXTRA_COUNT, safeConfig.count)
+            putExtra(PingTestService.EXTRA_INTERVAL_MS, safeConfig.intervalMs)
+            putExtra(PingTestService.EXTRA_TIMEOUT_MS, safeConfig.timeoutMs)
+            putExtra(PingTestService.EXTRA_THRESHOLD_MS, safeConfig.highLatencyThresholdMs)
+            putExtra(PingTestService.EXTRA_AUTO_RECORD, safeConfig.autoRecord)
+            putExtra(PingTestService.EXTRA_SELECTED_SUBSCRIPTION_ID, _state.value.selectedSubscriptionId ?: -1)
         }
         ContextCompat.startForegroundService(app, intent)
     }
 
-    private fun formatPingLatency(value: Double?): String = if (value == null) "--" else String.format(Locale.US, "%.1f ms", value)
+    fun stopPingTest() {
+        if (!PingTestStore.state.value.isRunning) return
+        val app = getApplication<Application>()
+        app.startService(Intent(app, PingTestService::class.java).apply { action = PingTestService.ACTION_STOP })
+    }
+
+    fun clearPingResults() {
+        if (_state.value.pingTest.isRunning) return
+        val cleared = PingTestState(config = pingRepository.loadConfig())
+        PingTestStore.state.value = cleared
+        _state.value = _state.value.copy(pingTest = cleared)
+    }
+
+    fun openPingDetail(path: String) {
+        viewModelScope.launch {
+            val detail = withContext(Dispatchers.IO) { runCatching { pingRepository.loadDetail(path) }.getOrNull() }
+            _state.value = _state.value.copy(pingDetail = detail, error = if (detail == null) "Unable to load Ping detail" else null)
+        }
+    }
+
+    fun closePingDetail() {
+        _state.value = _state.value.copy(pingDetail = null)
+    }
+
+    fun exportPing(path: String) {
+        viewModelScope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) { PingExporter.export(getApplication(), path) }
+                _state.value = _state.value.copy(exportResult = result, error = null)
+            } catch (error: Exception) {
+                _state.value = _state.value.copy(error = error.message ?: "Ping export failed")
+            }
+        }
+    }
+
+    fun deviceLinkAction(action: String, address: String = "") {
+        val app = getApplication<Application>()
+        val intent = Intent(app, DeviceLinkService::class.java).apply {
+            this.action = action
+            putExtra(DeviceLinkService.EXTRA_ADDRESS, address)
+        }
+        app.startService(intent)
+    }
+
+
+    fun selectDeviceLocalSim(simSlot: Int) {
+        callRepository.saveLocalSimSlot(simSlot)
+        val number = callRepository.loadLocalNumber(simSlot)
+        getApplication<Application>().startService(Intent(getApplication(), DeviceLinkService::class.java).apply {
+            action = DeviceLinkService.ACTION_SAVE_PROFILE
+            putExtra(DeviceLinkService.EXTRA_PHONE, number)
+            putExtra(DeviceLinkService.EXTRA_SIM_SLOT, simSlot)
+        })
+    }
+
+    fun saveDeviceIdentity(phone: String, simSlot: Int) {
+        callRepository.saveLocalIdentity(phone, simSlot)
+        getApplication<Application>().startService(Intent(getApplication(), DeviceLinkService::class.java).apply {
+            action = DeviceLinkService.ACTION_SAVE_PROFILE
+            putExtra(DeviceLinkService.EXTRA_PHONE, phone)
+            putExtra(DeviceLinkService.EXTRA_SIM_SLOT, simSlot)
+        })
+    }
+
+    fun startCallSetup(config: CallSetupConfig) {
+        callRepository.saveConfig(config)
+        val app = getApplication<Application>()
+        ContextCompat.startForegroundService(app, Intent(app, DeviceLinkService::class.java).apply {
+            action = DeviceLinkService.ACTION_START_TEST
+            putExtra(DeviceLinkService.EXTRA_TASK, config.taskName)
+            putExtra(DeviceLinkService.EXTRA_DIRECTION, config.direction.name)
+            putExtra(DeviceLinkService.EXTRA_COUNT, config.callCount)
+            putExtra(DeviceLinkService.EXTRA_TIMEOUT, config.setupTimeoutMs)
+            putExtra(DeviceLinkService.EXTRA_HOLD, config.holdTimeMs)
+            putExtra(DeviceLinkService.EXTRA_INTERVAL, config.interCallIntervalMs)
+            putExtra(DeviceLinkService.EXTRA_THRESHOLD, config.highLatencyThresholdMs)
+            putExtra(DeviceLinkService.EXTRA_AUTO_RECORD, config.autoRecord)
+            putExtra(DeviceLinkService.EXTRA_A_SIM, config.aCallSimSlot)
+            putExtra(DeviceLinkService.EXTRA_B_SIM, config.bCallSimSlot)
+            putExtra(DeviceLinkService.EXTRA_MODE, config.automationMode.name)
+        })
+    }
+
+    fun stopCallSetup() = deviceLinkAction(DeviceLinkService.ACTION_STOP_TEST)
+    fun openCallDetail(path: String) { viewModelScope.launch { _state.value = _state.value.copy(callDetail = withContext(Dispatchers.IO) { callRepository.loadDetail(path) }) } }
+    fun closeCallDetail() { _state.value = _state.value.copy(callDetail = null) }
+    fun exportCallSetup(path: String) { viewModelScope.launch { try { _state.value = _state.value.copy(exportResult = withContext(Dispatchers.IO) { CallSetupExporter.export(getApplication(), path) }, error = null) } catch(e:Exception){ _state.value = _state.value.copy(error=e.message?:"Call Setup export failed") } } }
 
     fun deleteRecording(path: String) {
         File(path).delete()
@@ -465,7 +461,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun refreshRecordings() {
         _state.value = _state.value.copy(
             recordings = loadRecordings(),
-            latestRecordingPath = latestPathFromPrefs()
+            latestRecordingPath = latestPathFromPrefs(),
+            pingHistory = pingRepository.loadHistory(),
+            callHistory = callRepository.loadHistory()
         )
     }
 

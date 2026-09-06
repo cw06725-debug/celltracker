@@ -1,5 +1,6 @@
 package com.example.celltracker
 
+import android.annotation.SuppressLint
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
@@ -20,6 +21,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.resume
 
+@SuppressLint("MissingPermission")
 class CellularRepository(private val context: Context) {
     // LTE_CA is hidden from some public Android SDK stubs; AOSP uses network type 19.
     // Keep this compatibility value local so the project compiles with compileSdk 34.
@@ -264,4 +266,3 @@ class CellularRepository(private val context: Context) {
     }
     private fun bandwidthValue(khz: Int): String = if (khz == CellInfo.UNAVAILABLE || khz <= 0) "--" else String.format(java.util.Locale.US, "%.1f MHz", khz / 1000.0)
 }
-

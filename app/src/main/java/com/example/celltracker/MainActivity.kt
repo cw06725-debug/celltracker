@@ -82,6 +82,30 @@ import java.util.Date
 import java.util.Locale
 
 class MainActivity : ComponentActivity() {
+    override fun onResume() {
+        super.onResume()
+        syncFloatingOverlay()
+    }
+
+    /**
+     * Overlay permission is granted on a system screen, so returning to the app does not
+     * necessarily change any Compose state. Re-evaluate the persisted settings on every
+     * resume so the first permission grant can show the idle overlay immediately.
+     */
+    private fun syncFloatingOverlay() {
+        val settings = SettingsRepository(this).load()
+        val isRecording = RecordingState.status.value.isRecording
+        val shouldShow = settings.floatingWindowEnabled &&
+            ((isRecording && settings.floatingAutoShowDuringRecording) ||
+                (!isRecording && settings.floatingKeepWhenStopped))
+        val overlayIntent = Intent(this, FloatingOverlayService::class.java)
+        if (shouldShow && android.provider.Settings.canDrawOverlays(this)) {
+            runCatching { startService(overlayIntent) }
+        } else if (!settings.floatingWindowEnabled || (!isRecording && !settings.floatingKeepWhenStopped)) {
+            runCatching { stopService(overlayIntent) }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -107,6 +131,7 @@ class MainActivity : ComponentActivity() {
                 var showSettings by remember { mutableStateOf(false) }
                 var detailPath by remember { mutableStateOf<String?>(null) }
                 var showPingTest by remember { mutableStateOf(false) }
+                var showCallSetup by remember { mutableStateOf(false) }
                 val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { vm.start() }
                 var overlayPermissionRequestedForRecording by remember { mutableStateOf(false) }
                 val overlayPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
@@ -173,9 +198,10 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                BackHandler(enabled = showSettings || detailPath != null || showPingTest) {
+                BackHandler(enabled = showSettings || detailPath != null || showPingTest || showCallSetup) {
                     when {
                         detailPath != null -> detailPath = null
+                        showCallSetup -> showCallSetup = false
                         showPingTest -> showPingTest = false
                         showSettings -> showSettings = false
                     }
@@ -187,6 +213,7 @@ class MainActivity : ComponentActivity() {
                 // back crash. Capturing the path here keeps the outgoing screen valid.
                 val rootDestination: RootDestination = when {
                     detailPath != null -> RootDestination.Detail(detailPath!!)
+                    showCallSetup -> RootDestination.CallSetup
                     showPingTest -> RootDestination.PingTest
                     showSettings -> RootDestination.Settings
                     else -> RootDestination.Main
@@ -216,12 +243,32 @@ class MainActivity : ComponentActivity() {
                     )
                     RootDestination.PingTest -> PingTestScreen(
                         state = state.pingTest,
+                        history = state.pingHistory,
+                        detail = state.pingDetail,
                         selectedSim = state.sims.firstOrNull { it.subscriptionId == state.selectedSubscriptionId } ?: state.sims.firstOrNull(),
                         dataNetwork = state.dataNetwork,
                         onBack = { showPingTest = false },
                         onStart = vm::startPingTest,
                         onStop = vm::stopPingTest,
-                        onClear = vm::clearPingResults
+                        onClear = vm::clearPingResults,
+                        onOpenHistory = vm::openPingDetail,
+                        onCloseDetail = vm::closePingDetail,
+                        onExport = vm::exportPing
+                    )
+                    RootDestination.CallSetup -> CallSetupScreen(
+                        link = state.deviceLink,
+                        test = state.callSetup,
+                        history = state.callHistory,
+                        detail = state.callDetail,
+                        onBack = { showCallSetup = false },
+                        onLinkAction = vm::deviceLinkAction,
+                        onSelectLocalSim = vm::selectDeviceLocalSim,
+                        onSaveIdentity = vm::saveDeviceIdentity,
+                        onStartTest = vm::startCallSetup,
+                        onStopTest = vm::stopCallSetup,
+                        onOpenDetail = vm::openCallDetail,
+                        onCloseDetail = vm::closeCallDetail,
+                        onExport = vm::exportCallSetup
                     )
                     RootDestination.Settings -> SettingsScreen(
                         settings = state.settings,
@@ -243,6 +290,7 @@ class MainActivity : ComponentActivity() {
                         onOpenRecording = { detailPath = it },
                         onSettings = { showSettings = true },
                         onPingTest = { showPingTest = true },
+                        onCallSetup = { showCallSetup = true },
                         onDismissMessage = vm::clearMessage
                     )
                 }
@@ -262,6 +310,7 @@ private sealed interface RootDestination {
     data object Main : RootDestination
     data object Settings : RootDestination
     data object PingTest : RootDestination
+    data object CallSetup : RootDestination
     data class Detail(val path: String) : RootDestination
 }
 
@@ -282,6 +331,7 @@ private fun MainScreen(
     onOpenRecording: (String) -> Unit,
     onSettings: () -> Unit,
     onPingTest: () -> Unit,
+    onCallSetup: () -> Unit,
     onDismissMessage: () -> Unit
 ) {
     var neighborsExpanded by remember { mutableStateOf(false) }
@@ -474,6 +524,14 @@ private fun MainScreen(
                     Field("Avg latency", state.pingTest.averageLatencyMs?.let { String.format(Locale.US, "%.1f ms", it) } ?: "--")
                 }
                 Button(onClick = onPingTest) { Text(if (state.pingTest.isRunning) "Open Ping Test" else "Configure Ping Test") }
+                HorizontalDivider(Modifier.padding(vertical = 10.dp))
+                Text("Dual-DUT Call Setup", style = MaterialTheme.typography.titleSmall)
+                Text("Bluetooth-linked MO/MT setup success rate with two-ended state validation.", style = MaterialTheme.typography.bodySmall)
+                Field("Device Link", state.deviceLink.status.name)
+                if (state.callSetup.attempts.isNotEmpty() || state.callSetup.isRunning) {
+                    Field("Call attempts", "${state.callSetup.attempts.size} · Success ${String.format(Locale.US, "%.1f%%", state.callSetup.successRate)}")
+                }
+                Button(onClick = onCallSetup) { Text(if (state.callSetup.isRunning) "Open Call Setup Test" else "Configure Call Setup") }
             }
 
             InfoCard("Recording") {
@@ -640,29 +698,33 @@ private fun MainScreen(
 @Composable
 private fun PingTestScreen(
     state: PingTestState,
+    history: List<PingHistoryItem>,
+    detail: PingDetail?,
     selectedSim: SimCellState?,
     dataNetwork: String,
     onBack: () -> Unit,
     onStart: (PingTestConfig) -> Unit,
     onStop: () -> Unit,
-    onClear: () -> Unit
+    onClear: () -> Unit,
+    onOpenHistory: (String) -> Unit,
+    onCloseDetail: () -> Unit,
+    onExport: (String) -> Unit
 ) {
-    var host by remember(state.isRunning) { mutableStateOf(state.config.host) }
-    var count by remember(state.isRunning) { mutableStateOf(state.config.count.toString()) }
-    var interval by remember(state.isRunning) { mutableStateOf(state.config.intervalMs.toString()) }
-    var timeout by remember(state.isRunning) { mutableStateOf(state.config.timeoutMs.toString()) }
-    var threshold by remember(state.isRunning) { mutableStateOf(state.config.highLatencyThresholdMs.toInt().toString()) }
-    var autoRecord by remember(state.isRunning) { mutableStateOf(state.config.autoRecord) }
-
-    val latencies = state.samples.mapNotNull { it.latencyMs }.sorted()
-    fun percentile(p: Double): String {
-        if (latencies.isEmpty()) return "--"
-        val index = kotlin.math.ceil((latencies.size - 1) * p).toInt().coerceIn(0, latencies.lastIndex)
-        return String.format(Locale.US, "%.1f ms", latencies[index])
+    if (detail != null) {
+        BackHandler { onCloseDetail() }
+        PingDetailScreen(detail = detail, onBack = onCloseDetail, onExport = { onExport(detail.item.path) })
+        return
     }
-    fun latencyText(v: Double?): String = v?.let { String.format(Locale.US, "%.1f ms", it) } ?: "--"
-    val context = LocalContext.current
 
+    var taskName by remember(state.isRunning, state.config) { mutableStateOf(state.config.taskName) }
+    var host by remember(state.isRunning, state.config) { mutableStateOf(state.config.host) }
+    var count by remember(state.isRunning, state.config) { mutableStateOf(state.config.count.toString()) }
+    var interval by remember(state.isRunning, state.config) { mutableStateOf(state.config.intervalMs.toString()) }
+    var timeout by remember(state.isRunning, state.config) { mutableStateOf(state.config.timeoutMs.toString()) }
+    var threshold by remember(state.isRunning, state.config) { mutableStateOf(state.config.highLatencyThresholdMs.toInt().toString()) }
+    var autoRecord by remember(state.isRunning, state.config) { mutableStateOf(state.config.autoRecord) }
+
+    fun latencyText(v: Double?): String = v?.let { String.format(Locale.US, "%.1f ms", it) } ?: "--"
     Scaffold(
         topBar = {
             TopAppBar(
@@ -684,8 +746,23 @@ private fun PingTestScreen(
             item {
                 InfoCard("Test target") {
                     OutlinedTextField(
+                        value = taskName,
+                        onValueChange = { if (!state.isRunning && it.length <= 64) taskName = it },
+                        enabled = !state.isRunning,
+                        singleLine = true,
+                        label = { Text("Task Name") },
+                        placeholder = { Text("Ping_<host>") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
                         value = host,
-                        onValueChange = { if (!state.isRunning && it.length <= 80) host = it },
+                        onValueChange = { value ->
+                            if (!state.isRunning && value.length <= 80) {
+                                val oldDefault = "Ping_${host.trim().ifBlank { "8.8.8.8" }}"
+                                host = value
+                                if (taskName.isBlank() || taskName == oldDefault) taskName = "Ping_${value.trim().ifBlank { "8.8.8.8" }}"
+                            }
+                        },
                         enabled = !state.isRunning,
                         singleLine = true,
                         label = { Text("Host / IP") },
@@ -740,22 +817,35 @@ private fun PingTestScreen(
             item {
                 InfoCard("Current network") {
                     val c = selectedSim?.servingCell
-                    Field("SIM", selectedSim?.let { "SIM ${it.simSlotIndex + 1} · ${c?.operator ?: "--"}" } ?: "--")
+                    val lastSnapshot = state.samples.lastOrNull()?.snapshot
+                    Field("Current SIM", selectedSim?.let { "SIM ${it.simSlotIndex + 1} · ${c?.operator ?: "--"}" } ?: "--")
+                    Field(
+                        "Data SIM",
+                        lastSnapshot?.simSlot?.takeIf { it >= 0 }?.let { slot ->
+                            "SIM ${slot + 1}${state.dataSimSubscriptionId?.let { " · Sub $it" } ?: ""}"
+                        } ?: state.dataSimSubscriptionId?.let { "Sub $it" } ?: "--"
+                    )
                     Field("RAT", c?.displayRat?.ifBlank { c.rat } ?: "--")
                     Field("RSRP", c?.rsrp?.let { valueWithUnit(it, "dBm") } ?: "--")
                     Field("SINR", c?.sinr?.let { valueWithUnit(it, "dB") } ?: "--")
-                    Field("DataNet", dataNetwork)
+                    Field("DataNet", state.dataNetwork.takeIf { it != "--" } ?: dataNetwork)
                 }
             }
             item {
                 InfoCard("Result") {
                     Field("Status", state.statusMessage)
+                    Field("Sent / Received", "${state.completed} / ${state.successCount}")
                     Field("Progress", "${state.completed} / ${state.config.count}")
                     Field("Success rate", if (state.completed > 0) String.format(Locale.US, "%.1f%%", state.successRate) else "--")
                     Field("Packet loss", if (state.completed > 0) String.format(Locale.US, "%.1f%%", state.packetLossRate) else "--")
+                    Field("Current RTT", latencyText(state.currentLatencyMs))
                     Field("Average", latencyText(state.averageLatencyMs))
                     Field("Min / Max", if (state.samples.isEmpty()) "--" else "${latencyText(state.minLatencyMs)} / ${latencyText(state.maxLatencyMs)}")
-                    Field("P50 / P90 / P95", if (latencies.isEmpty()) "--" else "${percentile(0.50)} / ${percentile(0.90)} / ${percentile(0.95)}")
+                    Field("P50 / P90 / P95", "${latencyText(state.p50LatencyMs)} / ${latencyText(state.p90LatencyMs)} / ${latencyText(state.p95LatencyMs)}")
+                    Field("Consecutive failures", state.consecutiveFailures.toString())
+                    Field("Started", state.startedAt.takeIf { it > 0L }?.let { SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(it)) } ?: "--")
+                    Field("Duration", formatElapsed(state.durationMs))
+                    Field("Auto events", "HIGH_PING ${state.highPingCount} · PING_TIMEOUT ${state.timeoutEventCount}")
                     if (state.isRunning) {
                         Button(onClick = onStop) { Text("Stop Ping Test") }
                     } else {
@@ -763,6 +853,7 @@ private fun PingTestScreen(
                             onClick = {
                                 onStart(
                                     PingTestConfig(
+                                        taskName = taskName.trim(),
                                         host = host.trim().ifBlank { "8.8.8.8" },
                                         count = count.toIntOrNull() ?: 20,
                                         intervalMs = interval.toLongOrNull() ?: 1000L,
@@ -774,7 +865,7 @@ private fun PingTestScreen(
                             }
                         ) { Text("Start Ping Test") }
                         if (!state.resultPath.isNullOrBlank() && state.samples.isNotEmpty()) {
-                            OutlinedButton(onClick = { shareLocalFile(context, state.resultPath, "text/csv", "Share Ping result") }) { Text("Share Ping CSV") }
+                            OutlinedButton(onClick = { onExport(state.resultPath) }) { Text("Export CSV / XLSX / HTML / KML") }
                         }
                     }
                     Text("High latency creates AUTO/HIGH_PING markers. Three consecutive failures create an AUTO/PING_TIMEOUT marker.", style = MaterialTheme.typography.bodySmall)
@@ -796,7 +887,23 @@ private fun PingTestScreen(
                             Column(horizontalAlignment = Alignment.End) {
                                 Text(if (sample.success) latencyText(sample.latencyMs) else "Timeout", style = MaterialTheme.typography.labelLarge)
                                 Text(if (sample.success) "Success" else "Failed", style = MaterialTheme.typography.bodySmall, color = if (sample.success) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
+                                if (sample.eventType.isNotBlank()) Text(sample.eventType, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                             }
+                        }
+                    }
+                }
+            }
+            item { HorizontalDivider(); Text("Ping History", style = MaterialTheme.typography.titleMedium) }
+            if (history.isEmpty()) {
+                item { Text("No saved Ping sessions", style = MaterialTheme.typography.bodySmall) }
+            } else {
+                items(history, key = { it.path }) { item ->
+                    Card(Modifier.fillMaxWidth().clickable { onOpenHistory(item.path) }) {
+                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(item.taskName, style = MaterialTheme.typography.titleSmall)
+                            Text("${item.host} · ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(item.startedAt))}", style = MaterialTheme.typography.bodySmall)
+                            Text("${formatElapsed(item.durationMs)} · ${item.packetCount} packets · Success ${String.format(Locale.US, "%.1f%%", item.successRate)}", style = MaterialTheme.typography.bodySmall)
+                            Text("Avg ${latencyText(item.averageLatencyMs)} · P90 ${latencyText(item.p90LatencyMs)} · Events ${item.highPingCount + item.timeoutEventCount}", style = MaterialTheme.typography.bodySmall)
                         }
                     }
                 }
@@ -804,6 +911,139 @@ private fun PingTestScreen(
         }
     }
 }
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PingDetailScreen(detail: PingDetail, onBack: () -> Unit, onExport: () -> Unit) {
+    var tab by remember(detail.item.path) { mutableIntStateOf(0) }
+    val tabs = listOf("Summary", "Samples", "Map", "Trend")
+    fun latency(value: Double?) = value?.let { String.format(Locale.US, "%.1f ms", it) } ?: "--"
+    Scaffold(topBar = {
+        TopAppBar(
+            title = { Text(detail.item.taskName) },
+            navigationIcon = { TextButton(onClick = onBack) { Text("Back") } },
+            actions = { TextButton(onClick = onExport) { Text("Export") } }
+        )
+    }) { padding ->
+        Column(Modifier.padding(padding).fillMaxSize()) {
+            TabRow(selectedTabIndex = tab) {
+                tabs.forEachIndexed { index, label -> Tab(selected = tab == index, onClick = { tab = index }, text = { Text(label) }) }
+            }
+            when (tab) {
+                0 -> LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    item { InfoCard("Test information") {
+                        Field("Task Name", detail.item.taskName); Field("Host", detail.item.host); Field("Status", detail.item.status)
+                        Field("Start", SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault()).format(Date(detail.item.startedAt)))
+                        Field("End", SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault()).format(Date(detail.item.endedAt)))
+                        Field("Duration", formatElapsed(detail.item.durationMs)); Field("Packets", detail.item.packetCount.toString())
+                    } }
+                    item { InfoCard("Latency summary") {
+                        Field("Success rate", String.format(Locale.US, "%.1f%%", detail.item.successRate))
+                        Field("Packet loss", String.format(Locale.US, "%.1f%%", detail.item.packetLossRate))
+                        Field("Avg / Min / Max", "${latency(detail.item.averageLatencyMs)} / ${latency(detail.item.minLatencyMs)} / ${latency(detail.item.maxLatencyMs)}")
+                        Field("P50 / P90 / P95", "${latency(detail.item.p50LatencyMs)} / ${latency(detail.item.p90LatencyMs)} / ${latency(detail.item.p95LatencyMs)}")
+                        Field("Threshold", latency(detail.item.highLatencyThresholdMs))
+                        Field("HIGH_PING", detail.item.highPingCount.toString()); Field("PING_TIMEOUT", detail.item.timeoutEventCount.toString())
+                    } }
+                }
+                1 -> LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(detail.samples, key = { it.sequence }) { sample ->
+                        val s = sample.snapshot
+                        Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text("#${sample.sequence} · ${if (sample.success) latency(sample.latencyMs) else "Timeout"}${if (sample.eventType.isNotBlank()) " · ${sample.eventType}" else ""}", style = MaterialTheme.typography.titleSmall)
+                            Text(SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()).format(Date(sample.timestampMs)), style = MaterialTheme.typography.bodySmall)
+                            Text("SIM ${s.simSlot + 1} · ${s.operator} · ${s.displayRat} · Band ${s.band} · PCI ${s.pci}", style = MaterialTheme.typography.bodySmall)
+                            Text("RSRP ${s.rsrp} · RSRQ ${s.rsrq} · SINR ${s.sinr} · Data ${s.dataNetwork}", style = MaterialTheme.typography.bodySmall)
+                            if (s.latitude != null && s.longitude != null) Text("GPS ${s.latitude}, ${s.longitude} · ${s.speedKmh} km/h · ±${s.gpsAccuracy} m", style = MaterialTheme.typography.bodySmall)
+                        } }
+                    }
+                }
+                2 -> PingMap(detail.samples)
+                else -> PingTrend(detail.samples, detail.item.highLatencyThresholdMs)
+            }
+        }
+    }
+}
+
+@Composable
+private fun PingMap(samples: List<PingSample>) {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val located = samples.filter { it.snapshot.latitude != null && it.snapshot.longitude != null }
+    if (located.isEmpty()) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("No valid GPS samples") }
+        return
+    }
+    val mapView = remember { MapView(context).apply { setMultiTouchControls(true) } }
+    DisposableEffect(lifecycleOwner, mapView) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) mapView.onResume()
+            if (event == Lifecycle.Event.ON_PAUSE) mapView.onPause()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        mapView.onResume()
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer); mapView.onPause(); mapView.onDetach() }
+    }
+    AndroidView(factory = { mapView }, modifier = Modifier.fillMaxSize(), update = { map ->
+        map.overlays.clear()
+        val points = located.map { GeoPoint(it.snapshot.latitude!!, it.snapshot.longitude!!) }
+        map.overlays.add(Polyline().apply { setPoints(points); outlinePaint.color = AndroidColor.rgb(255, 140, 0); outlinePaint.strokeWidth = 7f })
+        located.filter { it.eventType.isNotBlank() }.forEach { sample ->
+            val s = sample.snapshot
+            map.overlays.add(Marker(map).apply {
+                position = GeoPoint(s.latitude!!, s.longitude!!)
+                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                title = sample.eventType
+                snippet = "${SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()).format(Date(sample.timestampMs))} · RTT ${latencyForDisplay(sample.latencyMs)} · ${s.operator} ${s.displayRat} · RSRP ${s.rsrp} · SINR ${s.sinr}"
+            })
+        }
+        if (points.size == 1) {
+            map.controller.setCenter(points.first())
+            map.controller.setZoom(17.0)
+        } else {
+            val box = BoundingBox.fromGeoPoints(points)
+            map.zoomToBoundingBox(box, true, 80)
+        }
+        map.invalidate()
+    })
+}
+
+@Composable
+private fun PingTrend(samples: List<PingSample>, threshold: Double) {
+    if (samples.isEmpty()) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("No Ping samples") }
+        return
+    }
+    val values = samples.mapNotNull { it.latencyMs }
+    val top = maxOf(values.maxOrNull() ?: threshold, threshold, 1.0) * 1.15
+    Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("RTT over time", style = MaterialTheme.typography.titleMedium)
+        Text("Blue: RTT · Orange: high latency threshold · Red: timeout", style = MaterialTheme.typography.bodySmall)
+        Canvas(Modifier.fillMaxWidth().height(260.dp).background(MaterialTheme.colorScheme.surfaceVariant)) {
+            val count = samples.size.coerceAtLeast(2)
+            fun x(index: Int) = if (count <= 1) size.width / 2f else index.toFloat() / (count - 1) * size.width
+            fun y(value: Double) = size.height - (value / top).toFloat().coerceIn(0f, 1f) * size.height
+            drawLine(Color(0xFFFF9800), start = androidx.compose.ui.geometry.Offset(0f, y(threshold)), end = androidx.compose.ui.geometry.Offset(size.width, y(threshold)), strokeWidth = 3f)
+            var previous: Pair<Int, Double>? = null
+            samples.forEachIndexed { index, sample ->
+                val latency = sample.latencyMs
+                if (latency == null) {
+                    drawLine(Color.Red, androidx.compose.ui.geometry.Offset(x(index), 0f), androidx.compose.ui.geometry.Offset(x(index), size.height), strokeWidth = 3f)
+                    previous = null
+                } else {
+                    previous?.let { (previousIndex, previousValue) ->
+                        drawLine(Color(0xFF1976D2), androidx.compose.ui.geometry.Offset(x(previousIndex), y(previousValue)), androidx.compose.ui.geometry.Offset(x(index), y(latency)), strokeWidth = 4f)
+                    }
+                    drawCircle(if (latency >= threshold) Color(0xFFFF9800) else Color(0xFF1976D2), radius = 5f, center = androidx.compose.ui.geometry.Offset(x(index), y(latency)))
+                    previous = index to latency
+                }
+            }
+        }
+        Text("Scale 0–${String.format(Locale.US, "%.0f", top)} ms · Threshold ${String.format(Locale.US, "%.0f", threshold)} ms", style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+private fun latencyForDisplay(value: Double?): String = value?.let { String.format(Locale.US, "%.1f ms", it) } ?: "Timeout"
 
 @Composable
 private fun ExportSuccessDialog(
@@ -1889,8 +2129,12 @@ private fun SettingsScreen(settings: AppSettings, onUpdate: (AppSettings) -> Uni
                 "floating" -> Column(Modifier.padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     val context = LocalContext.current
                     var overlayGranted by remember { mutableStateOf(android.provider.Settings.canDrawOverlays(context)) }
+                    var usageAccessGranted by remember { mutableStateOf(ScreenCaptureService.hasUsageAccess(context)) }
                     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
                         overlayGranted = android.provider.Settings.canDrawOverlays(context)
+                    }
+                    val usageAccessLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+                        usageAccessGranted = ScreenCaptureService.hasUsageAccess(context)
                     }
                     SettingSwitch("Enable floating window", draft.floatingWindowEnabled) { applySetting(draft.copy(floatingWindowEnabled = it)) }
                     SettingSwitch("Auto show while recording", draft.floatingAutoShowDuringRecording) { applySetting(draft.copy(floatingAutoShowDuringRecording = it)) }
@@ -1943,9 +2187,14 @@ private fun SettingsScreen(settings: AppSettings, onUpdate: (AppSettings) -> Uni
                         }) { Text("Grant overlay permission") }
                     }
                     OutlinedButton(onClick = {
-                        runCatching { context.startActivity(Intent(android.provider.Settings.ACTION_USAGE_ACCESS_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                        runCatching { usageAccessLauncher.launch(Intent(android.provider.Settings.ACTION_USAGE_ACCESS_SETTINGS)) }
                     }) { Text("Usage access for screenshot app names") }
-                    Text("Usage access is optional. If granted, screenshot names can include the foreground app name; otherwise CellTracker uses 'Screen'.", style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        if (usageAccessGranted) "Usage access: Granted"
+                        else "Usage access: Required for reliable foreground app names",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text("When usage access is available, screenshot names use the most recent foreground app. If its display label cannot be read, CellTracker keeps a recognizable package-name suffix instead of using 'Screen'.", style = MaterialTheme.typography.bodySmall)
                     Text("The window uses the recording Mark Target SIM and can be dragged, collapsed and used to create issue markers while another app is on screen.", style = MaterialTheme.typography.bodySmall)
                 }
                 "map" -> Column(Modifier.padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
