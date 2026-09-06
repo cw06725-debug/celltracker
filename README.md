@@ -1,11 +1,13 @@
-# CellTracker v0.6.3
+# CellTracker v0.6.3.1
 
-UI/gesture refinement release.
+Signal Trend stability and inspection update.
 
-- Map gesture isolation: dragging inside the map pans the map only; horizontal swipes on the controls/header outside the map can still switch SIM/page.
-- Live Map keeps animated SIM switching from the top area and tabs.
-- Recording Detail Map keeps map pan gestures while the controls/header can switch Summary / Map / Samples.
-- Signal Trend redesigned with a real left-side Y axis, metric-specific fixed ranges, grid lines, and a 60-second X axis.
-- RSRP/RSRQ/SINR/RSSI cards remain compact and arrow-free.
+## Changes
+- Signal Trend samples are now stored in MainViewModel/AppState per subscription instead of inside the page Composable.
+- SIM1 and SIM2 each keep their own rolling 60-second RSRP/RSRQ/SINR/RSSI history.
+- Switching SIM pages, Map/History, or recomposing the cellular page no longer resets the trend.
+- Tap or horizontally drag on a trend chart to inspect the nearest sample.
+- Selected sample shows timestamp and metric value, with a vertical cursor and point marker.
+- Double tap the chart to clear the historical selection and return to live view.
 
-Next milestone: v0.7.x floating window, overlay Mark and screenshot capture.
+Version: 0.6.3.1 (31)

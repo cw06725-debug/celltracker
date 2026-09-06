@@ -28,6 +28,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -48,6 +49,7 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
@@ -334,7 +336,7 @@ private fun MainScreen(
                 if (c.cqi != "--") Field("CQI", c.cqi)
                 if (c.level != "--") Field("Signal level", "${c.level} / 4")
                 if (c.asuLevel != "--") Field("ASU", c.asuLevel)
-                SignalTrendSection(c, state.lastUpdated)
+                SignalTrendSection(c, state.signalTrendBySubscription[c.subscriptionId].orEmpty())
             }
 
             Card(modifier = Modifier.fillMaxWidth()) {
@@ -1299,34 +1301,16 @@ private fun RecordingSamples(samples: List<TrackSample>, onMarkerClick: (TrackSa
     }
 }
 
-private data class SignalTrendPoint(
-    val timeMs: Long,
-    val rsrp: Float?,
-    val rsrq: Float?,
-    val sinr: Float?,
-    val rssi: Float?
-)
-
 private enum class SignalMetric(val label: String, val unit: String) {
     RSRP("RSRP", "dBm"), RSRQ("RSRQ", "dB"), SINR("SINR", "dB"), RSSI("RSSI", "dBm")
 }
 
 @Composable
-private fun SignalTrendSection(cell: CellData, tick: String) {
+private fun SignalTrendSection(cell: CellData, points: List<SignalTrendPoint>) {
     var metric by remember(cell.subscriptionId) { mutableStateOf(SignalMetric.RSRP) }
-    val points = remember(cell.subscriptionId) { mutableStateListOf<SignalTrendPoint>() }
-    LaunchedEffect(cell.subscriptionId, tick) {
-        val now = System.currentTimeMillis()
-        points += SignalTrendPoint(
-            now,
-            cell.rsrp.toFloatOrNull(),
-            cell.rsrq.toFloatOrNull(),
-            cell.sinr.toFloatOrNull(),
-            cell.rssi.toFloatOrNull()
-        )
-        while (points.isNotEmpty() && now - points.first().timeMs > 60_000L) points.removeAt(0)
-        while (points.size > 180) points.removeAt(0)
-    }
+    var selectedTimeMs by remember(cell.subscriptionId) { mutableStateOf<Long?>(null) }
+    var chartWidthPx by remember { mutableStateOf(1) }
+
     Spacer(Modifier.height(8.dp))
     HorizontalDivider()
     Spacer(Modifier.height(8.dp))
@@ -1344,7 +1328,7 @@ private fun SignalTrendSection(cell: CellData, tick: String) {
             }
             val selected = metric == item
             Surface(
-                modifier = Modifier.weight(1f).clickable { metric = item },
+                modifier = Modifier.weight(1f).clickable { metric = item; selectedTimeMs = null },
                 shape = MaterialTheme.shapes.small,
                 color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface,
                 border = BorderStroke(1.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant)
@@ -1360,6 +1344,7 @@ private fun SignalTrendSection(cell: CellData, tick: String) {
             }
         }
     }
+
     val values = points.mapNotNull { point ->
         val value = when (metric) {
             SignalMetric.RSRP -> point.rsrp
@@ -1369,6 +1354,7 @@ private fun SignalTrendSection(cell: CellData, tick: String) {
         }
         value?.let { point.timeMs to it }
     }
+
     if (values.size < 2) {
         Box(Modifier.fillMaxWidth().height(150.dp), contentAlignment = Alignment.Center) {
             Text("Collecting ${metric.label} trend…", style = MaterialTheme.typography.bodySmall)
@@ -1382,11 +1368,36 @@ private fun SignalTrendSection(cell: CellData, tick: String) {
         }
         val lineColor = MaterialTheme.colorScheme.primary
         val gridColor = lineColor.copy(alpha = 0.14f)
+        val markerColor = MaterialTheme.colorScheme.tertiary
         val now = System.currentTimeMillis()
         val windowStart = now - 60_000L
+        val visibleValues = values.filter { it.first >= windowStart }
         val axisValues = generateSequence(axisMax) { previous ->
             (previous - axisStep).takeIf { it >= axisMin }
         }.toList().let { ticks -> if (ticks.lastOrNull() != axisMin) ticks + axisMin else ticks }
+
+        val selectedPoint = selectedTimeMs?.let { target -> visibleValues.minByOrNull { kotlin.math.abs(it.first - target) } }
+        if (selectedPoint != null) {
+            val timeText = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(selectedPoint.first))
+            Surface(
+                modifier = Modifier.padding(top = 8.dp),
+                shape = MaterialTheme.shapes.small,
+                color = MaterialTheme.colorScheme.surfaceVariant
+            ) {
+                Text(
+                    "$timeText  ·  ${metric.label} ${String.format(Locale.US, "%.0f", selectedPoint.second)} ${metric.unit}",
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                )
+            }
+        }
+
+        fun selectByX(x: Float) {
+            if (visibleValues.isEmpty() || chartWidthPx <= 0) return
+            val fraction = (x / chartWidthPx.toFloat()).coerceIn(0f, 1f)
+            val targetTime = windowStart + (fraction * 60_000f).toLong()
+            selectedTimeMs = visibleValues.minByOrNull { kotlin.math.abs(it.first - targetTime) }?.first
+        }
 
         Row(Modifier.fillMaxWidth().height(158.dp).padding(top = 10.dp)) {
             Column(
@@ -1402,7 +1413,24 @@ private fun SignalTrendSection(cell: CellData, tick: String) {
                     )
                 }
             }
-            Canvas(Modifier.weight(1f).fillMaxHeight()) {
+            Canvas(
+                Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .onSizeChanged { chartWidthPx = it.width.coerceAtLeast(1) }
+                    .pointerInput(visibleValues, metric) {
+                        detectTapGestures(
+                            onTap = { offset -> selectByX(offset.x) },
+                            onDoubleTap = { selectedTimeMs = null }
+                        )
+                    }
+                    .pointerInput(visibleValues, metric) {
+                        detectHorizontalDragGestures(
+                            onDragStart = { offset -> selectByX(offset.x) },
+                            onHorizontalDrag = { change, _ -> selectByX(change.position.x) }
+                        )
+                    }
+            ) {
                 axisValues.forEach { tickValue ->
                     val y = size.height - ((tickValue - axisMin) / (axisMax - axisMin)) * size.height
                     drawLine(gridColor, start = androidx.compose.ui.geometry.Offset(0f, y), end = androidx.compose.ui.geometry.Offset(size.width, y), strokeWidth = 1f)
@@ -1413,13 +1441,21 @@ private fun SignalTrendSection(cell: CellData, tick: String) {
                 }
                 val path = Path()
                 var started = false
-                values.filter { it.first >= windowStart }.forEach { (time, value) ->
+                visibleValues.forEach { (time, value) ->
                     val x = ((time - windowStart).toFloat() / 60_000f).coerceIn(0f, 1f) * size.width
                     val normalized = ((value.coerceIn(axisMin, axisMax) - axisMin) / (axisMax - axisMin)).coerceIn(0f, 1f)
                     val y = size.height - normalized * size.height
                     if (!started) { path.moveTo(x, y); started = true } else path.lineTo(x, y)
                 }
                 if (started) drawPath(path, lineColor, style = Stroke(width = 3f))
+
+                selectedPoint?.let { (time, value) ->
+                    val x = ((time - windowStart).toFloat() / 60_000f).coerceIn(0f, 1f) * size.width
+                    val normalized = ((value.coerceIn(axisMin, axisMax) - axisMin) / (axisMax - axisMin)).coerceIn(0f, 1f)
+                    val y = size.height - normalized * size.height
+                    drawLine(markerColor.copy(alpha = 0.7f), androidx.compose.ui.geometry.Offset(x, 0f), androidx.compose.ui.geometry.Offset(x, size.height), strokeWidth = 2f)
+                    drawCircle(markerColor, radius = 7f, center = androidx.compose.ui.geometry.Offset(x, y))
+                }
             }
         }
         Row(Modifier.fillMaxWidth().padding(start = 48.dp), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -1427,7 +1463,7 @@ private fun SignalTrendSection(cell: CellData, tick: String) {
             Text("Now", style = MaterialTheme.typography.labelSmall)
         }
         Text(
-            "${metric.label} · ${metric.unit}",
+            if (selectedPoint == null) "${metric.label} · ${metric.unit} · Tap/drag chart to inspect" else "Double tap chart to return to live",
             style = MaterialTheme.typography.labelSmall,
             modifier = Modifier.padding(start = 48.dp, top = 2.dp)
         )

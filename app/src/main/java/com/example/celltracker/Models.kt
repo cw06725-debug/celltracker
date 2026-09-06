@@ -100,6 +100,15 @@ data class AppSettings(
     val issueTypes: List<String> = listOf("Call Drop", "No Audio", "VoLTE Lost", "No Signal", "No Data", "Slow Data", "Video Stuck", "Handover Issue", "Poor Voice Quality", "Other")
 )
 
+
+data class SignalTrendPoint(
+    val timeMs: Long,
+    val rsrp: Float?,
+    val rsrq: Float?,
+    val sinr: Float?,
+    val rssi: Float?
+)
+
 data class AppState(
     val sims: List<SimCellState> = emptyList(),
     val selectedSubscriptionId: Int? = null,
@@ -118,6 +127,7 @@ data class AppState(
     val recordingLocationAgeMs: Long = Long.MAX_VALUE,
     val recordings: List<RecordingItem> = emptyList(),
     val exportResult: ExportResult? = null,
+    val signalTrendBySubscription: Map<Int, List<SignalTrendPoint>> = emptyMap(),
     val error: String? = null,
     val lastUpdated: String = "--"
 )

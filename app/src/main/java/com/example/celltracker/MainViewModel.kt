@@ -80,13 +80,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     val dataNet = currentDataNetwork()
                     NetworkStore.dataSimSubscriptionId = dataSim ?: -1
                     NetworkStore.dataNetwork = dataNet
+                    val now = System.currentTimeMillis()
+                    val trends = appendSignalTrends(_state.value.signalTrendBySubscription, sims, now)
                     _state.value = _state.value.copy(
                         sims = sims,
                         selectedSubscriptionId = selectedId,
                         markTargetSubscriptionId = _state.value.markTargetSubscriptionId?.takeIf { id -> sims.any { it.subscriptionId == id } } ?: selectedId,
                         dataSimSubscriptionId = dataSim,
                         dataNetwork = dataNet,
-                        lastUpdated = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date()),
+                        signalTrendBySubscription = trends,
+                        lastUpdated = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(now)),
                         error = null
                     )
                 } catch (e: Exception) {
@@ -102,6 +105,30 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 delay((_state.value.settings.uiRefreshMs - elapsed).coerceAtLeast(50L))
             }
         }
+    }
+
+    private fun appendSignalTrends(
+        existing: Map<Int, List<SignalTrendPoint>>,
+        sims: List<SimCellState>,
+        now: Long
+    ): Map<Int, List<SignalTrendPoint>> {
+        val cutoff = now - 60_000L
+        val next = existing.mapValues { (_, points) -> points.filter { it.timeMs >= cutoff }.takeLast(180) }.toMutableMap()
+        sims.forEach { sim ->
+            val c = sim.servingCell
+            val point = SignalTrendPoint(
+                timeMs = now,
+                rsrp = c.rsrp.toFloatOrNull(),
+                rsrq = c.rsrq.toFloatOrNull(),
+                sinr = c.sinr.toFloatOrNull(),
+                rssi = c.rssi.toFloatOrNull()
+            )
+            val updated = (next[sim.subscriptionId].orEmpty() + point)
+                .filter { it.timeMs >= cutoff }
+                .takeLast(180)
+            next[sim.subscriptionId] = updated
+        }
+        return next
     }
 
     fun selectSubscription(id: Int) {
