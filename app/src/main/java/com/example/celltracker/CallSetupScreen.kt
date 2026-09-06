@@ -71,14 +71,13 @@ fun CallSetupScreen(
         permissionLauncher.launch(p.toTypedArray())
         onLinkAction(DeviceLinkService.ACTION_REFRESH,"")
     }
-    var phone by remember(link.localProfile.phoneNumber){mutableStateOf(link.localProfile.phoneNumber)}
+    val identityRepo=remember{CallSetupRepository(context)}
+    val activeSlots=remember(permissionEpoch,link.localProfile.subscriptionId){activeSimSlots(context)}
     var localSim by remember(link.localProfile.simSlot){mutableIntStateOf(link.localProfile.simSlot)}
-    var autoDetectTried by remember{mutableStateOf(false)}
-    LaunchedEffect(phone,localSim,permissionEpoch){
-        if(!autoDetectTried && phone.isBlank()){
-            autoDetectTried=true
-            detectPhoneNumber(context,localSim)?.let{ phone=it }
-        }
+    val phoneBySlot=remember{mutableStateMapOf(0 to identityRepo.loadLocalNumber(0),1 to identityRepo.loadLocalNumber(1))}
+    LaunchedEffect(activeSlots){
+        if(activeSlots.isNotEmpty() && localSim !in activeSlots){ localSim=activeSlots.first(); onSelectLocalSim(localSim) }
+        activeSlots.forEach{slot-> if(phoneBySlot[slot].isNullOrBlank()) detectPhoneNumber(context,slot)?.let{phoneBySlot[slot]=it} }
     }
     var task by remember(test.config.taskName){mutableStateOf(test.config.taskName)}
     var count by remember(test.config.callCount){mutableStateOf(test.config.callCount.toString())}
@@ -91,6 +90,8 @@ fun CallSetupScreen(
     var mode by remember(test.config.automationMode){mutableStateOf(test.config.automationMode)}
     var aSim by remember(test.config.aCallSimSlot){mutableIntStateOf(test.config.aCallSimSlot)}
     var bSim by remember(test.config.bCallSimSlot){mutableIntStateOf(test.config.bCallSimSlot)}
+    LaunchedEffect(activeSlots){if(activeSlots.isNotEmpty()&&aSim !in activeSlots)aSim=activeSlots.first()}
+    LaunchedEffect(link.peerProfile){val slots=listOf(0,1).filter{!link.peerProfile?.phoneForSlot(it).isNullOrBlank()};if(slots.isNotEmpty()&&bSim !in slots)bSim=slots.first()}
     Scaffold(
         topBar={TopAppBar(title={Text("Device Link + Call Setup")},navigationIcon={TextButton(onClick=onBack){Text("Back")}})},
         snackbarHost={SnackbarHost(snackbar)}
@@ -98,10 +99,13 @@ fun CallSetupScreen(
         LazyColumn(Modifier.padding(pad).fillMaxSize(),contentPadding=PaddingValues(14.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
             item{CCard("Local DUT"){
                 CField("Device",link.localProfile.deviceName);CField("Device ID",link.localProfile.deviceId.take(12));CField("CellTracker",link.localProfile.appVersion)
-                OutlinedTextField(phone,{phone=it.filter{ch->ch.isDigit()||ch=='+'||ch=='#'||ch=='*'}.take(24)},label={Text("This DUT phone number")},singleLine=true,modifier=Modifier.fillMaxWidth(),enabled=!test.isRunning)
+                if(activeSlots.isEmpty()) Text("No active SIM detected. Check SIM/phone permissions.",style=MaterialTheme.typography.bodySmall)
+                else activeSlots.forEach{slot->
+                    OutlinedTextField(phoneBySlot[slot].orEmpty(),{v->phoneBySlot[slot]=v.filter{ch->ch.isDigit()||ch=='+'||ch=='#'||ch=='*'}.take(24)},label={Text("SIM ${slot+1} phone number")},singleLine=true,modifier=Modifier.fillMaxWidth(),enabled=!test.isRunning)
+                }
                 Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)){
                     Text("Local SIM")
-                    listOf(0,1).forEach{slot->
+                    activeSlots.forEach{slot->
                         if(localSim==slot) Button(onClick={localSim=slot;onSelectLocalSim(slot)},enabled=!test.isRunning){Text("SIM ${slot+1}")}
                         else OutlinedButton(onClick={localSim=slot;onSelectLocalSim(slot)},enabled=!test.isRunning){Text("SIM ${slot+1}")}
                     }
@@ -109,15 +113,14 @@ fun CallSetupScreen(
                 Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
                     OutlinedButton(onClick={
                         val detected=detectPhoneNumber(context,localSim)
-                        if(detected!=null){phone=detected;uiScope.launch{snackbar.showSnackbar("Phone number detected for SIM ${localSim+1}")}}
+                        if(detected!=null){phoneBySlot[localSim]=detected;uiScope.launch{snackbar.showSnackbar("Phone number detected for SIM ${localSim+1}")}}
                         else uiScope.launch{snackbar.showSnackbar("Phone number unavailable; please enter it manually")}
-                    },enabled=!test.isRunning){Text("Auto Detect")}
+                    },enabled=!test.isRunning&&activeSlots.isNotEmpty()){Text("Auto Detect")}
                     Button(onClick={
-                        onSaveIdentity(phone,localSim)
-                        focusManager.clearFocus(force=true)
-                        keyboardController?.hide()
-                        uiScope.launch{snackbar.showSnackbar("Saved")}
-                    },enabled=!test.isRunning){Text("Save")}
+                        activeSlots.forEach{slot->identityRepo.saveLocalIdentity(phoneBySlot[slot].orEmpty(),slot)}
+                        onSaveIdentity(phoneBySlot[localSim].orEmpty(),localSim)
+                        focusManager.clearFocus(force=true);keyboardController?.hide();uiScope.launch{snackbar.showSnackbar("Saved")}
+                    },enabled=!test.isRunning&&activeSlots.isNotEmpty()){Text("Save")}
                 }
             }}
             item{CCard("Bluetooth Device Link"){
@@ -153,7 +156,7 @@ fun CallSetupScreen(
                 }
                 if(link.status==DeviceLinkStatus.CONNECTED)Button(onClick={onLinkAction(DeviceLinkService.ACTION_DISCONNECT,"")},enabled=!test.isRunning){Text("Disconnect")}
             }}
-            if(link.role==DeviceLinkRole.CONTROLLER){
+            if(link.role==DeviceLinkRole.CONTROLLER && link.status!=DeviceLinkStatus.CONNECTED){
                 item{Text("Paired devices",style=MaterialTheme.typography.titleMedium)}
                 if(link.pairedDevices.isEmpty())item{Text("No paired devices",style=MaterialTheme.typography.bodySmall)}else items(link.pairedDevices,key={"paired-${it.address}"}){d->DeviceRow(d,onConnect={onLinkAction(DeviceLinkService.ACTION_CONNECT,d.address)},onPair=null,enabled=!test.isRunning)}
                 item{Text("Nearby devices",style=MaterialTheme.typography.titleMedium)}
@@ -167,11 +170,17 @@ fun CallSetupScreen(
                     NumberPair("Call Count",count,{count=digits(it,3)},"Setup Timeout (s)",timeout,{timeout=digits(it,3)},!test.isRunning)
                     NumberPair("Hold Time (s)",hold,{hold=digits(it,4)},"Inter-call (s)",interval,{interval=digits(it,4)},!test.isRunning)
                     OutlinedTextField(threshold,{threshold=digits(it,3)},label={Text("High Setup Latency (s)")},singleLine=true,enabled=!test.isRunning,modifier=Modifier.fillMaxWidth())
-                    Row(verticalAlignment=Alignment.CenterVertically){Text("A Call SIM");SimChips(aSim,{aSim=it},!test.isRunning);Spacer(Modifier.width(12.dp));Text("B Call SIM");SimChips(bSim,{bSim=it},!test.isRunning)}
+                    val aSlots=activeSlots.ifEmpty{listOf(localSim)}
+                    val bSlots=listOf(0,1).filter{!link.peerProfile?.phoneForSlot(it).isNullOrBlank()}.ifEmpty{listOf(link.peerProfile?.simSlot?:0)}
+                    Row(verticalAlignment=Alignment.CenterVertically){Text("A Call SIM");SimChips(aSim,{aSim=it},!test.isRunning,aSlots);Spacer(Modifier.width(12.dp));Text("B Call SIM");SimChips(bSim,{bSim=it},!test.isRunning,bSlots)}
                     Row(verticalAlignment=Alignment.CenterVertically){Checkbox(autoRecord,{autoRecord=it},enabled=!test.isRunning);Text("Auto Record on both DUTs")}
                     Row(verticalAlignment=Alignment.CenterVertically){Checkbox(mode==AutomationMode.SEMI_AUTO,{mode=if(it)AutomationMode.SEMI_AUTO else AutomationMode.AUTO_WHEN_AVAILABLE},enabled=!test.isRunning);Text("Force Semi-Auto mode")}
                     Text("Public Android call APIs are used. If auto answer/hang-up is unavailable, manually operate the Phone app; state detection and results continue automatically.",style=MaterialTheme.typography.bodySmall)
-                    if(test.isRunning)Button(onClick=onStopTest){Text("STOP TEST")}else Button(onClick={onStartTest(CallSetupConfig(task.ifBlank{"CallSetup"},direction,count.toIntOrNull()?:10,(timeout.toLongOrNull()?:30)*1000,(hold.toLongOrNull()?:10)*1000,(interval.toLongOrNull()?:10)*1000,(threshold.toLongOrNull()?:8)*1000,autoRecord,aSim,bSim,mode))},enabled=link.status==DeviceLinkStatus.CONNECTED&&phone.isNotBlank()&&!link.peerProfile?.phoneNumber.isNullOrBlank()){Text("Start Call Setup Test")}
+                    val selectedANumber=phoneBySlot[aSim].orEmpty()
+                    val selectedBNumber=link.peerProfile?.phoneForSlot(bSim).orEmpty()
+                    val canStart=link.status==DeviceLinkStatus.CONNECTED&&selectedANumber.isNotBlank()&&selectedBNumber.isNotBlank()
+                    if(test.isRunning)Button(onClick=onStopTest){Text("STOP TEST")}else Button(onClick={onStartTest(CallSetupConfig(task.ifBlank{"CallSetup"},direction,count.toIntOrNull()?:10,(timeout.toLongOrNull()?:30)*1000,(hold.toLongOrNull()?:10)*1000,(interval.toLongOrNull()?:10)*1000,(threshold.toLongOrNull()?:8)*1000,autoRecord,aSim,bSim,mode))},enabled=canStart){Text("Start Call Setup Test")}
+                    if(!test.isRunning&&!canStart) Text(when{link.status!=DeviceLinkStatus.CONNECTED->"Connect DUT B first.";selectedANumber.isBlank()->"Save DUT A SIM ${aSim+1} phone number first.";else->"Save DUT B SIM ${bSim+1} phone number on the Agent first."},style=MaterialTheme.typography.bodySmall)
                 }}
                 item{LiveTestPanel(link,test)}
             }
@@ -187,6 +196,12 @@ private fun bluetoothPermissionsGranted(context:Context):Boolean = if(Build.VERS
 }else ContextCompat.checkSelfPermission(context,Manifest.permission.ACCESS_FINE_LOCATION)==PackageManager.PERMISSION_GRANTED
 
 @Suppress("DEPRECATION")
+private fun activeSimSlots(context:Context):List<Int> = runCatching {
+    if(ContextCompat.checkSelfPermission(context,Manifest.permission.READ_PHONE_STATE)!=PackageManager.PERMISSION_GRANTED) return@runCatching emptyList()
+    val sm=context.getSystemService(SubscriptionManager::class.java)
+    @Suppress("MissingPermission") sm.activeSubscriptionInfoList.orEmpty().map{it.simSlotIndex}.filter{it>=0}.distinct().sorted()
+}.getOrDefault(emptyList())
+
 private fun detectPhoneNumber(context:Context,simSlot:Int):String?{
     val readGranted=ContextCompat.checkSelfPermission(context,Manifest.permission.READ_PHONE_NUMBERS)==PackageManager.PERMISSION_GRANTED ||
         ContextCompat.checkSelfPermission(context,Manifest.permission.READ_PHONE_STATE)==PackageManager.PERMISSION_GRANTED
@@ -213,7 +228,7 @@ private fun detectPhoneNumber(context:Context,simSlot:Int):String?{
 @Composable private fun CCard(title:String,content:@Composable ColumnScope.()->Unit){Card(Modifier.fillMaxWidth()){Column(Modifier.padding(14.dp),verticalArrangement=Arrangement.spacedBy(7.dp)){Text(title,style=MaterialTheme.typography.titleMedium);content()}}}
 @Composable private fun CField(k:String,v:String){Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Text(k,style=MaterialTheme.typography.bodySmall);Text(v,style=MaterialTheme.typography.bodySmall)}}
 @Composable private fun NumberPair(a:String,av:String,ac:(String)->Unit,b:String,bv:String,bc:(String)->Unit,e:Boolean){Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){OutlinedTextField(av,ac,label={Text(a)},singleLine=true,enabled=e,modifier=Modifier.weight(1f));OutlinedTextField(bv,bc,label={Text(b)},singleLine=true,enabled=e,modifier=Modifier.weight(1f))}}
-@Composable private fun SimChips(v:Int,set:(Int)->Unit,e:Boolean){Row{listOf(0,1).forEach{s->FilterChip(v==s,{set(s)},label={Text("${s+1}")},enabled=e);Spacer(Modifier.width(4.dp))}}}
+@Composable private fun SimChips(v:Int,set:(Int)->Unit,e:Boolean,slots:List<Int> = listOf(0,1)){Row{slots.forEach{s->if(v==s) Button(onClick={set(s)},enabled=e,contentPadding=PaddingValues(horizontal=12.dp,vertical=6.dp)){Text("SIM ${s+1}")} else OutlinedButton(onClick={set(s)},enabled=e,contentPadding=PaddingValues(horizontal=12.dp,vertical=6.dp)){Text("SIM ${s+1}")};Spacer(Modifier.width(4.dp))}}}
 private fun digits(s:String,n:Int)=s.filter{it.isDigit()}.take(n)
 private fun ms(v:Double?)=v?.let{String.format(Locale.US,"%.1f ms",it)}?:"--"
 private fun date(v:Long)=SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS",Locale.getDefault()).format(Date(v))

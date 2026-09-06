@@ -29,8 +29,12 @@ data class DeviceProfile(
     val voiceRat: String = "--",
     val signal: String = "--",
     val batteryPercent: Int = -1,
-    val appVersion: String = BuildConfig.VERSION_NAME
-)
+    val appVersion: String = BuildConfig.VERSION_NAME,
+    val phoneNumberSim1: String = "",
+    val phoneNumberSim2: String = ""
+) {
+    fun phoneForSlot(slot: Int): String = when(slot) { 0 -> phoneNumberSim1.ifBlank { if(simSlot==0) phoneNumber else "" }; 1 -> phoneNumberSim2.ifBlank { if(simSlot==1) phoneNumber else "" }; else -> "" }
+}
 
 data class DeviceLinkState(
     val role: DeviceLinkRole = DeviceLinkRole.CONTROLLER,
