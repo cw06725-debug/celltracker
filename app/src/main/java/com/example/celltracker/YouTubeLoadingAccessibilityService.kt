@@ -47,6 +47,8 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
     private var lockedContentBottom = 0
     private var overlayStatus: TextView? = null
     private var semiSawPlayback = false
+    private var semiPendingClickMs = 0L
+    private var semiPendingTitle = ""
 
     override fun onServiceConnected() {
         activeInstance = this
@@ -60,26 +62,45 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         if (event == null || !running || !config.semiAuto) return
         if (event.packageName?.toString() != "com.google.android.youtube") return
 
+        val now = System.currentTimeMillis()
         val root = rootInActiveWindow
+        val playbackPage = looksLikePlaybackPage(root)
+
         if (t0 > 0L) {
-            if (looksLikePlaybackPage(root)) semiSawPlayback = true
-            if (semiSawPlayback && looksLikeCreatorPage(root) && !looksLikePlaybackPage(root) &&
-                System.currentTimeMillis() - t0 > 300L) {
+            if (playbackPage) semiSawPlayback = true
+            if (semiSawPlayback && looksLikeCreatorPage(root) && !playbackPage && now - t0 > 300L) {
                 completeSemiAttempt("PASS", "MANUAL_BACK", overlayStatus, performBack = false)
             }
             return
         }
 
+        // Semi-auto must be tolerant of OEM / YouTube accessibility differences.  Some builds
+        // emit TYPE_VIEW_CLICKED from a thumbnail child, some from the card parent, and some only
+        // expose the watch-page transition.  Keep the most recent plausible YouTube click as T0,
+        // then commit it when the player page becomes visible.
         if (event.eventType == android.view.accessibility.AccessibilityEvent.TYPE_VIEW_CLICKED) {
-            val src = event.source ?: return
-            if (isLikelyManualMediaClick(src)) {
-                seq++
-                currentTitle = nodeLabel(src).ifBlank { descendantLabels(src).firstOrNull().orEmpty() }.take(160)
-                if (currentTitle.isBlank()) currentTitle = "Manual media $seq"
-                t0 = System.currentTimeMillis()
-                semiSawPlayback = false
-                overlayStatus?.text = "SEMI · #$seq started · tap LOADED / BACK when ready"
+            val src = event.source
+            if (src == null || isPotentialSemiMediaTrigger(src) || playbackPage) {
+                semiPendingClickMs = now
+                semiPendingTitle = src?.let {
+                    nodeLabel(it).ifBlank { descendantLabels(it).firstOrNull().orEmpty() }
+                }.orEmpty().take(160)
             }
+        }
+
+        if (playbackPage && t0 == 0L) {
+            // Normally the click event arrives first.  If YouTube suppressed it, use the first
+            // observed playback-page event as a fallback rather than leaving semi-auto unusable.
+            val pendingAge = if (semiPendingClickMs > 0L) now - semiPendingClickMs else Long.MAX_VALUE
+            val startMs = if (pendingAge in 0..10_000L) semiPendingClickMs else now
+            seq++
+            currentTitle = semiPendingTitle.ifBlank { "Manual media $seq" }
+            t0 = startMs
+            semiSawPlayback = true
+            val source = if (pendingAge in 0..10_000L) "click" else "page transition fallback"
+            overlayStatus?.text = "SEMI · #$seq timing · T0 from $source · tap LOADED when ready"
+            semiPendingClickMs = 0L
+            semiPendingTitle = ""
         }
     }
     override fun onInterrupt() {}
@@ -103,13 +124,18 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             setPadding(8, 0, 8, 8)
         }
         overlayStatus = status
-        val row = LinearLayout(this)
+        val rowTop = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val rowBottom = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         val start = Button(this).apply { text = "START" }
-        val loaded = Button(this).apply { text = "LOADED / BACK"; visibility = View.GONE }
+        val loaded = Button(this).apply { text = "LOADED"; visibility = View.GONE }
         val ad = Button(this).apply { text = "AD / SKIP"; visibility = View.GONE }
         val stop = Button(this).apply { text = "STOP"; visibility = View.GONE }
-        row.addView(start); row.addView(loaded); row.addView(ad); row.addView(stop)
-        box.addView(header); box.addView(status); box.addView(row)
+        val weighted = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        rowTop.addView(start, weighted)
+        rowTop.addView(loaded, weighted)
+        rowBottom.addView(ad, weighted)
+        rowBottom.addView(stop, weighted)
+        box.addView(header); box.addView(status); box.addView(rowTop); box.addView(rowBottom)
 
         val lp = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -136,7 +162,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         start.setOnClickListener {
             if (running) {
                 if (config.semiAuto) {
-                    status.text = if (t0 > 0L) "SEMI · #$seq timing… tap LOADED / BACK" else "SEMI AUTO · tap the next YouTube video manually"
+                    status.text = if (t0 > 0L) "SEMI · #$seq timing… tap LOADED" else "SEMI AUTO · tap the next YouTube video manually"
                 } else if (t0 > 0L) {
                     status.text = "Video $seq/${config.count} is already loading…"
                 } else {
@@ -181,6 +207,8 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         running = true; seq = 0
         testedContentKeys.clear()
         autoScrollCount = 0
+        semiPendingClickMs = 0L
+        semiPendingTitle = ""
         sessionMode = detectCreatorMode(rootInActiveWindow)
         val initialBounds = creatorContentBounds(rootInActiveWindow) ?: safeContentBounds()
         if (!config.semiAuto && sessionMode == null) {
@@ -337,6 +365,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
     private fun stopTest(state: String, status: TextView) {
         if (!running && file == null) return
         running = false; t0 = 0; semiSawPlayback = false
+        semiPendingClickMs = 0L; semiPendingTitle = ""
         val f = file; file = null
         if (f != null) repo.finish(f, 0, System.currentTimeMillis(), state, RecordingState.status.value.latestPath)
         if (recordingStarted) { stopService(Intent(this, RecordingService::class.java)); recordingStarted = false }
@@ -494,15 +523,23 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         return mediaCount >= 3
     }
 
-    private fun isLikelyManualMediaClick(node: AccessibilityNodeInfo): Boolean {
+    private fun isPotentialSemiMediaTrigger(node: AccessibilityNodeInfo): Boolean {
         val r = Rect(); node.getBoundsInScreen(r)
-        val b = safeContentBounds()
-        if (r.isEmpty || r.centerY() !in b.top..b.bottom) return false
+        val dm = resources.displayMetrics
+        if (r.isEmpty) return false
+        // Creator cards can sit above/below the old fixed content bounds after scrolling.  Only
+        // exclude system/top chrome and YouTube bottom navigation here; playback transition will
+        // be the final confirmation that this click was really a media item.
+        if (r.centerY() < (dm.heightPixels * 0.10f).toInt() ||
+            r.centerY() > (dm.heightPixels * 0.93f).toInt()) return false
         val text = (nodeLabel(node) + " " + descendantLabels(node).joinToString(" ")).lowercase()
-        val blocked = listOf("subscribe", "share", "comments", "like", "search", "sort", "more",
-            "订阅", "分享", "评论", "搜索", "排序", "更多", "首页", "我的")
+        val blocked = listOf(
+            "subscribe", "subscriptions", "share", "comments", "comment", "like", "search",
+            "sort", "more", "home", "library", "you", "settings", "cast", "notifications",
+            "订阅", "分享", "评论", "点赞", "搜索", "排序", "更多", "首页", "我的", "设置", "投屏", "通知"
+        )
         if (blocked.any { text.contains(it) }) return false
-        return r.width() >= (resources.displayMetrics.widthPixels * 0.18f).toInt() || node.isClickable
+        return true
     }
 
     private data class MediaCandidate(
