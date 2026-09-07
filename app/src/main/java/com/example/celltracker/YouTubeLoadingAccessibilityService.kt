@@ -41,6 +41,10 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
     private var recordingStarted = false
     private val testedContentKeys = linkedSetOf<String>()
     private var autoScrollCount = 0
+    private enum class CreatorMode { VIDEOS, SHORTS }
+    private var sessionMode: CreatorMode? = null
+    private var lockedContentTop = 0
+    private var lockedContentBottom = 0
 
     override fun onServiceConnected() {
         activeInstance = this
@@ -140,6 +144,17 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         running = true; seq = 0
         testedContentKeys.clear()
         autoScrollCount = 0
+        sessionMode = detectCreatorMode(rootInActiveWindow)
+        val initialBounds = creatorContentBounds(rootInActiveWindow)
+        if (sessionMode == null || initialBounds == null) {
+            running = false
+            file?.delete()
+            file = null
+            status.text = "START failed · select creator Videos or Shorts tab"
+            return false
+        }
+        lockedContentTop = initialBounds.top
+        lockedContentBottom = initialBounds.bottom
         if (config.autoRecord && !RecordingState.status.value.isRecording) {
             val sub = SubscriptionManager.getDefaultDataSubscriptionId()
             ContextCompat.startForegroundService(this, Intent(this, RecordingService::class.java)
@@ -172,12 +187,10 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             }
 
             val root = rootInActiveWindow
-            val content = creatorContentBounds(root)
-            if (content == null) {
-                status.text = "Creator content area not found · stay on Videos or Shorts tab and tap RETRY"
-                return
-            }
-            val candidates = mediaCandidates(root, content)
+            // The creator header/tab row scrolls off-screen.  After START the mode and safe
+            // content viewport are locked for the whole session; never require the header again.
+            val content = ContentBounds(lockedContentTop, lockedContentBottom)
+            val candidates = mediaCandidates(root, content, sessionMode ?: return)
             val candidate = candidates.firstOrNull { it.key !in testedContentKeys }
             if (candidate != null) {
                 currentTitle = candidate.title.take(160)
@@ -196,11 +209,15 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                 status.text = "Video $seq/${config.count} · AUTO DETECTING…"
                 scope.launch {
                     val thisSeq = seq
-                    delay(900)
+                    delay(700)
                     var readyHits = 0
                     while (running && seq == thisSeq && System.currentTimeMillis() - t0 < config.timeoutMs) {
                         delay(300)
-                        readyHits = if (isVideoPageReady(rootInActiveWindow)) readyHits + 1 else 0
+                        val elapsed = System.currentTimeMillis() - t0
+                        // Do not count navigation/UI chrome as loaded.  Require a real watch/Shorts
+                        // player signature and evidence that playback has started.  Three consecutive
+                        // hits suppress transition-animation false positives.
+                        readyHits = if (elapsed >= 1200 && isPlaybackActuallyStarted(rootInActiveWindow, sessionMode)) readyHits + 1 else 0
                         if (readyHits >= 3) {
                             completeAttempt("PASS", "AUTO", status)
                             return@launch
@@ -285,6 +302,37 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             v.equals("Courses", true) || v == "课程" || v.equals("Posts", true) || v == "帖子"
     }
 
+    private fun detectCreatorMode(root: AccessibilityNodeInfo?): CreatorMode? {
+        if (root == null) return null
+        var videosSelected = false
+        var shortsSelected = false
+        fun walk(n: AccessibilityNodeInfo) {
+            val t = nodeLabel(n)
+            if (isVideosLabel(t) && (n.isSelected || n.isFocused)) videosSelected = true
+            if ((t.equals("Shorts", true) || t == "短视频") && (n.isSelected || n.isFocused)) shortsSelected = true
+            for (i in 0 until n.childCount) n.getChild(i)?.let(::walk)
+        }
+        walk(root)
+        if (shortsSelected) return CreatorMode.SHORTS
+        if (videosSelected) return CreatorMode.VIDEOS
+        // YouTube builds often omit selected/focused. Infer from visible card geometry only at START.
+        val b = creatorContentBounds(root) ?: return null
+        val w = resources.displayMetrics.widthPixels
+        var narrow = 0; var wide = 0
+        fun geom(n: AccessibilityNodeInfo) {
+            if (n.isClickable) {
+                val r=Rect(); n.getBoundsInScreen(r)
+                if (!r.isEmpty && r.top >= b.top && r.bottom <= b.bottom && r.height() >= 140) {
+                    if (r.width() in (w*.20f).toInt()..(w*.55f).toInt()) narrow++
+                    if (r.width() >= (w*.55f).toInt()) wide++
+                }
+            }
+            for(i in 0 until n.childCount) n.getChild(i)?.let(::geom)
+        }
+        geom(root)
+        return if (narrow >= 2 && narrow > wide) CreatorMode.SHORTS else CreatorMode.VIDEOS
+    }
+
     /**
      * Find the creator content area without depending on YouTube exposing the selected-tab state.
      * Several YouTube builds do not mark Videos/Shorts as AccessibilityNodeInfo.isSelected.
@@ -336,7 +384,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
      * require the thumbnail itself to expose text: on several YouTube builds the clickable card
      * has no label while its title/metadata live in descendants or siblings.
      */
-    private fun mediaCandidates(root: AccessibilityNodeInfo?, bounds: ContentBounds): List<MediaCandidate> {
+    private fun mediaCandidates(root: AccessibilityNodeInfo?, bounds: ContentBounds, mode: CreatorMode): List<MediaCandidate> {
         if (root == null) return emptyList()
         val screenW = resources.displayMetrics.widthPixels
         val rejected = listOf(
@@ -350,13 +398,19 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         fun addCandidate(click: AccessibilityNodeInfo) {
             val cr = Rect(); click.getBoundsInScreen(cr)
             if (cr.isEmpty || cr.top < bounds.top || cr.bottom > bounds.bottom) return
-            val videoRow = cr.width() >= (screenW * 0.55f).toInt() && cr.height() in 90..720
+            val videoRow = cr.width() >= (screenW * 0.55f).toInt() && cr.height() in 120..720
             val shortTile = cr.width() in (screenW * 0.20f).toInt()..(screenW * 0.55f).toInt() && cr.height() >= 170
-            if (!videoRow && !shortTile) return
+            if (mode == CreatorMode.VIDEOS && !videoRow) return
+            if (mode == CreatorMode.SHORTS && !shortTile) return
             if (cr.width() > (screenW * 0.96f).toInt() && cr.height() < 120) return
 
             val labels = descendantLabels(click)
             val joined = labels.joinToString(" | ").trim()
+            val lower = joined.lowercase()
+            // YouTube mini-player survives Back and is clickable. Never treat it as creator media.
+            if (lower.contains("miniplayer") || lower.contains("mini player") ||
+                lower.contains("close player") || lower.contains("expand player") ||
+                lower.contains("迷你播放器") || lower.contains("关闭播放器")) return
             if (joined.isNotBlank() && rejected.any { bad -> joined.equals(bad, true) }) return
             val rectKey = "${cr.left / 16}:${cr.top / 16}:${cr.right / 16}:${cr.bottom / 16}"
             if (!seenRects.add(rectKey)) return
@@ -409,19 +463,33 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         return dispatchGesture(gesture, null, null)
     }
 
-    private fun isVideoPageReady(root: AccessibilityNodeInfo?): Boolean {
+    private fun isPlaybackActuallyStarted(root: AccessibilityNodeInfo?, mode: CreatorMode?): Boolean {
         if (root == null || root.packageName?.toString() != "com.google.android.youtube") return false
-        var meaningful = 0; var actions = 0; var loading = false
+        var hasShortsChrome = false
+        var hasWatchChrome = false
+        var playbackEvidence = false
+        var loading = false
         fun walk(n: AccessibilityNodeInfo) {
-            val t = ((n.contentDescription ?: n.text) ?: "").toString()
-            if (t.contains("loading", true) || t.contains("buffering", true) || t.contains("加载") || t.contains("缓冲")) loading = true
-            if (t.length > 3) meaningful++
-            if (t.contains("like", true) || t.contains("share", true) || t.contains("comments", true) || t.contains("subscribe", true) ||
-                t.contains("点赞") || t.contains("喜欢") || t.contains("分享") || t.contains("评论") || t.contains("订阅")) actions++
+            val t = nodeLabel(n).lowercase()
+            if (t.contains("loading") || t.contains("buffering") || t.contains("加载") || t.contains("缓冲")) loading = true
+            if (t.contains("comments") || t.contains("share") || t.contains("评论") || t.contains("分享")) hasShortsChrome = true
+            if (t.contains("full screen") || t.contains("fullscreen") || t.contains("全屏") ||
+                t.contains("more videos") || t.contains("更多视频")) hasWatchChrome = true
+            // A Pause control is the strongest accessibility evidence that YouTube's player is
+            // actively playing. Time/progress descriptions are a fallback used by some builds.
+            if (t == "pause" || t.contains("pause video") || t == "暂停" || t.contains("暂停视频") ||
+                Regex("\\b\\d{1,2}:\\d{2}\\s*/\\s*\\d{1,2}:\\d{2}\\b").containsMatchIn(t)) {
+                playbackEvidence = true
+            }
             for (i in 0 until n.childCount) n.getChild(i)?.let(::walk)
         }
         walk(root)
-        return !loading && meaningful >= 5 && actions >= 1
+        if (loading || !playbackEvidence) return false
+        return when (mode) {
+            CreatorMode.SHORTS -> hasShortsChrome
+            CreatorMode.VIDEOS -> hasWatchChrome || hasShortsChrome
+            null -> false
+        }
     }
 
     private suspend fun snapshot(): PingNetworkSnapshot {
