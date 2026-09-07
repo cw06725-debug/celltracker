@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.celltracker"
         minSdk = 29
         targetSdk = 34
-        versionCode = 57
-        versionName = "0.9.1.0"
+        versionCode = 58
+        versionName = "0.9.1.0.1"
     }
 
     buildFeatures {

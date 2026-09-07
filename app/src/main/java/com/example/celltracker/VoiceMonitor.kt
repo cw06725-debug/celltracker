@@ -20,10 +20,21 @@ object VoiceMonitor {
         runCatching {
             val am=context.getSystemService(AudioManager::class.java)
             am.mode=AudioManager.MODE_IN_COMMUNICATION
-            if(android.os.Build.VERSION.SDK_INT>=31) {
-                val target=am.availableCommunicationDevices.firstOrNull{it.type==AudioDeviceInfo.TYPE_BUILTIN_SPEAKER}
-                if(enabled && target!=null) am.setCommunicationDevice(target) else if(!enabled) am.clearCommunicationDevice()
-            } else @Suppress("DEPRECATION") run { am.isSpeakerphoneOn=enabled }
+            if (android.os.Build.VERSION.SDK_INT >= 31) {
+                val target = am.availableCommunicationDevices
+                    .firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
+                if (enabled) {
+                    if (target != null) {
+                        am.setCommunicationDevice(target)
+                    }
+                } else {
+                    am.clearCommunicationDevice()
+                }
+            } else {
+                @Suppress("DEPRECATION")
+                am.isSpeakerphoneOn = enabled
+            }
+            Unit
         }
     }
 
