@@ -262,7 +262,26 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             }
         }
         loaded.setOnClickListener {
-            if (running && t0 > 0) {
+            if (running && config.semiAuto && t0 == 0L && semiLastGestureElapsedMs > 0L) {
+                // Final semi-auto safety net: if YouTube actually opened the video but its page
+                // structure never became detectable, the tester's LOADED press is authoritative.
+                // Use the most recent retained content-area ACTION_DOWN as T0 instead of losing the sample.
+                val age = SystemClock.elapsedRealtime() - semiLastGestureElapsedMs
+                if (age in 0..30_000L) {
+                    seq++
+                    currentTitle = semiLastGestureTitle.ifBlank { "Manual media $seq" }
+                    t0 = semiLastGestureWallMs
+                    semiT0ElapsedMs = semiLastGestureElapsedMs
+                    semiT0Source = "OVERLAY_CONFIRMED_BY_LOADED"
+                    semiSawPlayback = true
+                    semiLastGestureWallMs = 0L
+                    semiLastGestureElapsedMs = 0L
+                    semiLastGestureTitle = ""
+                    completeSemiAttempt("PASS", "MANUAL_BUTTON", status, performBack = true)
+                } else {
+                    status.text = "SEMI · no recent video tap · tap video first"
+                }
+            } else if (running && t0 > 0) {
                 if (config.semiAuto) completeSemiAttempt("PASS", "MANUAL_BUTTON", status, performBack = true)
                 else completeAttempt("PASS", "MANUAL", status)
             } else status.text = if (config.semiAuto) "SEMI · tap a YouTube video first" else "Nothing is loading · LOADED ignored"
@@ -465,7 +484,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             val loadedWall = System.currentTimeMillis()
             val loadedElapsed = SystemClock.elapsedRealtime()
             val delay = (loadedElapsed - startElapsed).coerceAtLeast(0L)
-            val accurate = source == "ACCESSIBILITY_CLICK" || source == "OVERLAY_TOUCH_HIGH" || source == "OVERLAY_RECOVERED_TAP"
+            val accurate = source == "ACCESSIBILITY_CLICK" || source == "OVERLAY_TOUCH_HIGH" || source == "OVERLAY_RECOVERED_TAP" || source == "OVERLAY_CONFIRMED_BY_LOADED"
             val storedResult = when {
                 result == "AD" -> "AD"
                 accurate -> "PASS"
@@ -703,7 +722,10 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                                     // A slow video navigation can take several seconds before the
                                     // playback page is visible. Re-arming too early lets the next
                                     // accessibility/touch cycle erase the original T0 candidate.
-                                    delay(900)
+                                    // Re-arm quickly so a real tap immediately after a list scroll is captured.
+                                    // The previous gesture candidate is NOT cleared by re-arming; only a new ACTION_DOWN
+                                    // replaces it. This keeps slow-navigation recovery while avoiding a dead period after scroll.
+                                    delay(250)
                                     if (running && config.semiAuto && t0 == 0L && !looksLikePlaybackPage(rootInActiveWindow)) {
                                         installSemiTouchCapture()
                                     }

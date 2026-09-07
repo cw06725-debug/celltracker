@@ -58,6 +58,8 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.DrawableCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -2501,43 +2503,86 @@ private fun VideoLoadingScreen(onBack: () -> Unit) {
     preview?.let { d ->
         val values = d.samples.filter { it.result == "PASS" }.mapNotNull { it.delayMs }.sorted()
         fun pct(p: Double): Long? = if (values.isEmpty()) null else values[((values.size - 1) * p).toInt().coerceIn(0, values.lastIndex)]
-        AlertDialog(
-            onDismissRequest = { preview = null },
-            title = { Text("YouTube Test Result") },
-            text = {
-                Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Summary", style = MaterialTheme.typography.titleMedium)
-                    Text("Status: ${d.status}")
-                    Text("Attempts: ${d.samples.size} · Success: ${d.samples.count { it.result == "PASS" }} · Timeout: ${d.samples.count { it.result == "TIMEOUT" }} · AD: ${d.samples.count { it.result == "AD" }}")
-                    Text("Average: ${if (values.isEmpty()) "--" else String.format(Locale.US, "%.0f ms", values.average())} · Median: ${pct(.5)?.let { "$it ms" } ?: "--"}")
-                    Text("P90: ${pct(.9)?.let { "$it ms" } ?: "--"} · P95: ${pct(.95)?.let { "$it ms" } ?: "--"} · Min/Max: ${values.minOrNull()?.let { "$it ms" } ?: "--"} / ${values.maxOrNull()?.let { "$it ms" } ?: "--"}")
-                    HorizontalDivider()
-                    if (d.samples.any { it.snapshot.latitude != null && it.snapshot.longitude != null }) {
-                        Text("Map", style = MaterialTheme.typography.titleMedium)
-                        VideoLoadingMap(d.samples, d.recordingPath)
-                        HorizontalDivider()
+        var detailTab by remember(d.path) { mutableIntStateOf(0) }
+        val detailTabs = listOf("Summary", "Attempts", "Map")
+        Dialog(onDismissRequest = { preview = null }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+            Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                Scaffold(
+                    topBar = {
+                        TopAppBar(
+                            title = { Text("YouTube Test Result") },
+                            navigationIcon = { TextButton(onClick = { preview = null }) { Text("Back") } },
+                            actions = {
+                                TextButton(onClick = {
+                                    runCatching { VideoLoadingExporter.export(context, d.path) }.onSuccess { exportResult = it }
+                                }) { Text("Share") }
+                            }
+                        )
+                    },
+                    bottomBar = {
+                        Surface(tonalElevation = 3.dp) {
+                            Row(
+                                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                OutlinedButton(onClick = { deleteVideoPath = d.path }, modifier = Modifier.weight(1f)) { Text("Delete") }
+                                OutlinedButton(onClick = { preview = null }, modifier = Modifier.weight(1f)) { Text("Close") }
+                                Button(onClick = {
+                                    runCatching { VideoLoadingExporter.export(context, d.path) }.onSuccess { exportResult = it }
+                                }, modifier = Modifier.weight(1f)) { Text("Share") }
+                            }
+                        }
                     }
-                    Text("Attempts", style = MaterialTheme.typography.titleMedium)
-                    d.samples.forEach { a ->
-                        Text("#${a.sequence}  ${a.delayMs?.let { "$it ms" } ?: "TIMEOUT"}  ${a.result} · ${a.detection}", style = MaterialTheme.typography.bodyMedium)
-                        val timeFmt = remember { java.text.SimpleDateFormat("HH:mm:ss.SSS", Locale.US) }
-                        Text("Click ${if (a.startMs > 0) timeFmt.format(java.util.Date(a.startMs)) else "--"} · Loaded ${if (a.loadedMs > 0) timeFmt.format(java.util.Date(a.loadedMs)) else "--"}", style = MaterialTheme.typography.bodySmall)
-                        Text("T0 Source: ${a.t0Source.ifBlank { "LEGACY" }}", style = MaterialTheme.typography.bodySmall)
-                        Text(a.title.ifBlank { "Video ${a.sequence}" }, style = MaterialTheme.typography.bodySmall)
-                        Text("${a.snapshot.displayRat} · RSRP ${a.snapshot.rsrp} · SINR ${a.snapshot.sinr} · PCI ${a.snapshot.pci}", style = MaterialTheme.typography.bodySmall)
+                ) { p ->
+                    Column(Modifier.padding(p).fillMaxSize()) {
+                        Surface(modifier = Modifier.fillMaxWidth().zIndex(20f), color = MaterialTheme.colorScheme.surface, tonalElevation = 2.dp) {
+                            TabRow(selectedTabIndex = detailTab) {
+                                detailTabs.forEachIndexed { i, t -> Tab(selected = detailTab == i, onClick = { detailTab = i }, text = { Text(t) }) }
+                            }
+                        }
+                        Box(Modifier.fillMaxWidth().weight(1f).clipToBounds()) {
+                            when (detailTab) {
+                                0 -> LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    item {
+                                        Card(Modifier.fillMaxWidth()) {
+                                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                Text("Summary", style = MaterialTheme.typography.titleMedium)
+                                                Text("Status: ${d.status}")
+                                                Text("Attempts: ${d.samples.size} · Success: ${d.samples.count { it.result == "PASS" }} · Timeout: ${d.samples.count { it.result == "TIMEOUT" }} · AD: ${d.samples.count { it.result == "AD" }}")
+                                                Text("Average: ${if (values.isEmpty()) "--" else String.format(Locale.US, "%.0f ms", values.average())} · Median: ${pct(.5)?.let { "$it ms" } ?: "--"}")
+                                                Text("P90: ${pct(.9)?.let { "$it ms" } ?: "--"} · P95: ${pct(.95)?.let { "$it ms" } ?: "--"}")
+                                                Text("Min / Max: ${values.minOrNull()?.let { "$it ms" } ?: "--"} / ${values.maxOrNull()?.let { "$it ms" } ?: "--"}")
+                                            }
+                                        }
+                                    }
+                                }
+                                1 -> LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    items(d.samples, key = { it.sequence }) { a ->
+                                        Card(Modifier.fillMaxWidth()) {
+                                            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                                Text("#${a.sequence}  ${a.delayMs?.let { "$it ms" } ?: "TIMEOUT"}  ${a.result} · ${a.detection}", style = MaterialTheme.typography.titleSmall)
+                                                val timeFmt = java.text.SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
+                                                Text("Click ${if (a.startMs > 0) timeFmt.format(java.util.Date(a.startMs)) else "--"} · Loaded ${if (a.loadedMs > 0) timeFmt.format(java.util.Date(a.loadedMs)) else "--"}", style = MaterialTheme.typography.bodySmall)
+                                                Text("T0 Source: ${a.t0Source.ifBlank { "LEGACY" }}", style = MaterialTheme.typography.bodySmall)
+                                                Text(a.title.ifBlank { "Video ${a.sequence}" }, style = MaterialTheme.typography.bodySmall)
+                                                Text("${a.snapshot.displayRat} · RSRP ${a.snapshot.rsrp} · SINR ${a.snapshot.sinr} · PCI ${a.snapshot.pci}", style = MaterialTheme.typography.bodySmall)
+                                            }
+                                        }
+                                    }
+                                }
+                                else -> Box(Modifier.fillMaxSize().padding(8.dp).clipToBounds()) {
+                                    if (d.samples.any { it.snapshot.latitude != null && it.snapshot.longitude != null }) {
+                                        VideoLoadingMap(d.samples, d.recordingPath, Modifier.fillMaxSize())
+                                    } else {
+                                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("No GPS points") }
+                                    }
+                                }
+                            }
+                        }
                     }
-                }
-            },
-            confirmButton = { TextButton(onClick = {
-                runCatching { VideoLoadingExporter.export(context, d.path) }.onSuccess { exportResult = it }
-            }) { Text("Share") } },
-            dismissButton = {
-                Row {
-                    TextButton(onClick = { deleteVideoPath = d.path }) { Text("Delete") }
-                    TextButton(onClick = { preview = null }) { Text("Close") }
                 }
             }
-        )
+        }
     }
     deleteVideoPath?.let { path ->
         AlertDialog(
@@ -2587,12 +2632,12 @@ private fun TestMetadataDialog(initial: TestMetadata, options: TestMetadataOptio
     var input by remember{mutableStateOf("")}; Column(verticalArrangement=Arrangement.spacedBy(6.dp)){ Text(title,style=MaterialTheme.typography.titleMedium); values.forEach{v->Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){Text(v);TextButton(onClick={if(values.size>1)onChange(values-v)}){Text("Delete")}}}; Row(verticalAlignment=Alignment.CenterVertically){OutlinedTextField(input,{input=it},label={Text("Add $title")},modifier=Modifier.weight(1f),singleLine=true);TextButton(onClick={val v=input.trim();if(v.isNotEmpty()&&v !in values){onChange(values+v);input=""}}){Text("Add")}} }
 }
 
-@Composable private fun VideoLoadingMap(samples:List<VideoLoadingSample>, recordingPath:String?){
+@Composable private fun VideoLoadingMap(samples:List<VideoLoadingSample>, recordingPath:String?, modifier:Modifier = Modifier.fillMaxWidth().height(260.dp)){
     val context=LocalContext.current
     val route = remember(recordingPath) { recordingPath?.let { runCatching { RecordingDetailRepository.loadSamples(it) }.getOrDefault(emptyList()) } ?: emptyList() }
     val pts=samples.mapNotNull{s-> val la=s.snapshot.latitude;val lo=s.snapshot.longitude;if(la!=null&&lo!=null) Triple(s,la,lo) else null}
     if(pts.isEmpty()){Text("No GPS points");return}
-    AndroidView(factory={MapView(context).apply{setMultiTouchControls(true)}},modifier=Modifier.fillMaxWidth().height(260.dp),update={map->
+    AndroidView(factory={MapView(context).apply{setMultiTouchControls(true)}},modifier=modifier,update={map->
         map.overlays.clear();
         val routePts=route.filter{it.locationValid && it.latitude!=null && it.longitude!=null}.map{GeoPoint(it.latitude!!,it.longitude!!)}
         if(routePts.size>1){map.overlays.add(Polyline().apply{setPoints(routePts)})}

@@ -33,3 +33,9 @@ Version: 0.9.0.9 (versionCode 52)
 - Semi-auto touch capture now distinguishes tap vs swipe/long-press.
 - Swipe/scroll gestures are replayed to YouTube without creating T0 attempts.
 - Navigation/out-of-content taps do not create attempts.
+
+## v0.9.3.0.5
+- Semi-auto YouTube: re-arm touch capture quickly after scrolling so the next tap is not missed.
+- Preserve the last ambiguous media-area gesture as a T0 candidate; pressing LOADED can confirm it when YouTube playback-page detection is unreliable.
+- Added T0 source OVERLAY_CONFIRMED_BY_LOADED and include it in accurate statistics.
+- YouTube result preview redesigned to match Call Setup style with Summary / Attempts / Map tabs and a fixed bottom action bar, preventing MapView from covering buttons.
