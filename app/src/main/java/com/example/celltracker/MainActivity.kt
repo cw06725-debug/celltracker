@@ -2436,34 +2436,84 @@ private fun formatElapsed(ms: Long): String {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun VideoLoadingScreen(onBack:()->Unit){
- val context=LocalContext.current
- val repo=remember{VideoLoadingRepository(context)}
- var count by rememberSaveable{mutableStateOf(repo.loadConfig().count.toString())}
- var timeout by rememberSaveable{mutableStateOf((repo.loadConfig().timeoutMs/1000).toString())}
- var returnWait by rememberSaveable{mutableStateOf((repo.loadConfig().returnWaitMs/1000.0).toString())}
- var autoRecord by rememberSaveable{mutableStateOf(repo.loadConfig().autoRecord)}
- var history by remember{mutableStateOf(repo.history())}
- Scaffold(topBar={TopAppBar(title={Text("YouTube Video Loading")},navigationIcon={TextButton(onClick=onBack){Text("Back")}})}){pad->
-  Column(Modifier.padding(pad).padding(16.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)){
-   Text("Preparation",style=MaterialTheme.typography.titleMedium)
-   Text("On every DUT/REF: open YouTube → the same creator → Videos, and make sure the same first video is visible. Each phone measures its own T1−T0; simultaneous start is not required.",style=MaterialTheme.typography.bodySmall)
-   OutlinedTextField(count,{count=it.filter(Char::isDigit)},label={Text("Test count")},singleLine=true)
-   OutlinedTextField(timeout,{timeout=it.filter{c->c.isDigit()}},label={Text("Load timeout (s)")},singleLine=true)
-   OutlinedTextField(returnWait,{returnWait=it.filter{c->c.isDigit()||c=='.'}},label={Text("Return wait (s)")},singleLine=true)
-   Row(verticalAlignment=Alignment.CenterVertically){Checkbox(autoRecord,{autoRecord=it});Text("Auto Network Recording")}
-   Button(onClick={context.startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))}){Text("1. Enable CellTracker Accessibility")}
-   Button(onClick={
-    val cfg=VideoLoadingConfig((count.toIntOrNull()?:10).coerceIn(1,50),((timeout.toLongOrNull()?:15)*1000).coerceAtLeast(3000),(((returnWait.toDoubleOrNull()?:2.0)*1000).toLong()).coerceAtLeast(500),autoRecord)
-    repo.arm(cfg)
-    val launch=context.packageManager.getLaunchIntentForPackage("com.google.android.youtube")
-    if(launch!=null)context.startActivity(launch) else Toast.makeText(context,"YouTube is not installed",Toast.LENGTH_SHORT).show()
-   }){Text("2. PREPARE TEST / Open YouTube")}
-   Text("After the creator Videos page is ready, use the CellTracker floating START button. AUTO waits for the player + key page actions to be ready for 3 consecutive checks. If AUTO is late/wrong, tap LOADED at the moment you judge the whole page loaded; the report records Detection=MANUAL.",style=MaterialTheme.typography.bodySmall)
-   TextButton(onClick={history=repo.history()}){Text("Refresh History")}
-   Text("History",style=MaterialTheme.typography.titleMedium)
-   if(history.isEmpty())Text("No video loading sessions yet",style=MaterialTheme.typography.bodySmall)
-   history.forEach{d->Card(Modifier.fillMaxWidth()){Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(5.dp)){Text(File(d.path).nameWithoutExtension,style=MaterialTheme.typography.titleSmall);val ok=d.samples.mapNotNull{it.delayMs};Text("${d.status} · ${d.samples.size} attempts · ${d.samples.count{it.result=="PASS"}} success · Avg ${ok.takeIf{it.isNotEmpty()}?.average()?.let{String.format(Locale.US,"%.0f ms",it)}?:"--"}");Button(onClick={runCatching{VideoLoadingExporter.export(context,d.path)}.onSuccess{Toast.makeText(context,it.message,Toast.LENGTH_LONG).show()}.onFailure{Toast.makeText(context,it.message,Toast.LENGTH_LONG).show()}}){Text("Export Report")}}}}
-  }
- }
+private fun VideoLoadingScreen(onBack: () -> Unit) {
+    val context = LocalContext.current
+    val repo = remember { VideoLoadingRepository(context) }
+    var count by rememberSaveable { mutableStateOf(repo.loadConfig().count.toString()) }
+    var timeout by rememberSaveable { mutableStateOf((repo.loadConfig().timeoutMs / 1000).toString()) }
+    var returnWait by rememberSaveable { mutableStateOf((repo.loadConfig().returnWaitMs / 1000.0).toString()) }
+    var autoRecord by rememberSaveable { mutableStateOf(repo.loadConfig().autoRecord) }
+    var history by remember { mutableStateOf(repo.history()) }
+    var preview by remember { mutableStateOf<VideoLoadingDetail?>(null) }
+    var exportResult by remember { mutableStateOf<ExportResult?>(null) }
+
+    Scaffold(topBar = { TopAppBar(title = { Text("YouTube Video Loading") }, navigationIcon = { TextButton(onClick = onBack) { Text("Back") } }) }) { pad ->
+        Column(Modifier.padding(pad).padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Preparation", style = MaterialTheme.typography.titleMedium)
+            Text("On every DUT/REF: open YouTube → the same creator → Videos, with the same first video visible. Each phone measures its own loading delay; simultaneous start is not required.", style = MaterialTheme.typography.bodySmall)
+            OutlinedTextField(count, { count = it.filter(Char::isDigit) }, label = { Text("Test count") }, singleLine = true)
+            OutlinedTextField(timeout, { timeout = it.filter(Char::isDigit) }, label = { Text("Load timeout (s)") }, singleLine = true)
+            OutlinedTextField(returnWait, { returnWait = it.filter { c -> c.isDigit() || c == '.' } }, label = { Text("Return wait (s)") }, singleLine = true)
+            Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(autoRecord, { autoRecord = it }); Text("Auto Network Recording") }
+            Button(onClick = { context.startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }) { Text("1. Enable CellTracker Accessibility") }
+            Button(onClick = {
+                val cfg = VideoLoadingConfig((count.toIntOrNull() ?: 10).coerceIn(1, 50), ((timeout.toLongOrNull() ?: 15) * 1000).coerceAtLeast(3000), (((returnWait.toDoubleOrNull() ?: 2.0) * 1000).toLong()).coerceAtLeast(500), autoRecord)
+                repo.arm(cfg)
+                val launch = context.packageManager.getLaunchIntentForPackage("com.google.android.youtube")
+                if (launch != null) context.startActivity(launch) else Toast.makeText(context, "YouTube is not installed", Toast.LENGTH_SHORT).show()
+            }) { Text("2. PREPARE TEST / Open YouTube") }
+            Text("Normal operation is fully automatic: START → click video → AUTO DETECTING → loaded → Back → next video. MANUAL LOADED is only a fallback if automatic detection is late or wrong.", style = MaterialTheme.typography.bodySmall)
+            TextButton(onClick = { history = repo.history() }) { Text("Refresh History") }
+            Text("History", style = MaterialTheme.typography.titleMedium)
+            if (history.isEmpty()) Text("No video loading sessions yet", style = MaterialTheme.typography.bodySmall)
+            history.forEach { d ->
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                        Text(File(d.path).nameWithoutExtension, style = MaterialTheme.typography.titleSmall)
+                        val ok = d.samples.mapNotNull { it.delayMs }
+                        Text("${d.status} · ${d.samples.size} attempts · ${d.samples.count { it.result == "PASS" }} success · Avg ${ok.takeIf { it.isNotEmpty() }?.average()?.let { String.format(Locale.US, "%.0f ms", it) } ?: "--"}")
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = { preview = repo.load(d.path) }) { Text("View Details") }
+                            Button(onClick = {
+                                runCatching { VideoLoadingExporter.export(context, d.path) }
+                                    .onSuccess { exportResult = it }
+                                    .onFailure { Toast.makeText(context, it.message, Toast.LENGTH_LONG).show() }
+                            }) { Text("Export / Share") }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    preview?.let { d ->
+        val values = d.samples.mapNotNull { it.delayMs }.sorted()
+        fun pct(p: Double): Long? = if (values.isEmpty()) null else values[((values.size - 1) * p).toInt().coerceIn(0, values.lastIndex)]
+        AlertDialog(
+            onDismissRequest = { preview = null },
+            title = { Text("YouTube Test Result") },
+            text = {
+                Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Summary", style = MaterialTheme.typography.titleMedium)
+                    Text("Status: ${d.status}")
+                    Text("Attempts: ${d.samples.size} · Success: ${d.samples.count { it.result == "PASS" }} · Timeout: ${d.samples.count { it.result == "TIMEOUT" }}")
+                    Text("Average: ${if (values.isEmpty()) "--" else String.format(Locale.US, "%.0f ms", values.average())} · Median: ${pct(.5)?.let { "$it ms" } ?: "--"}")
+                    Text("P90: ${pct(.9)?.let { "$it ms" } ?: "--"} · P95: ${pct(.95)?.let { "$it ms" } ?: "--"} · Min/Max: ${values.minOrNull()?.let { "$it ms" } ?: "--"} / ${values.maxOrNull()?.let { "$it ms" } ?: "--"}")
+                    HorizontalDivider()
+                    Text("Attempts", style = MaterialTheme.typography.titleMedium)
+                    d.samples.forEach { a ->
+                        Text("#${a.sequence}  ${a.delayMs?.let { "$it ms" } ?: "TIMEOUT"}  ${a.result} · ${a.detection}", style = MaterialTheme.typography.bodyMedium)
+                        Text(a.title.ifBlank { "Video ${a.sequence}" }, style = MaterialTheme.typography.bodySmall)
+                        Text("${a.snapshot.displayRat} · RSRP ${a.snapshot.rsrp} · SINR ${a.snapshot.sinr} · PCI ${a.snapshot.pci}", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = {
+                runCatching { VideoLoadingExporter.export(context, d.path) }.onSuccess { exportResult = it }
+            }) { Text("Share") } },
+            dismissButton = { TextButton(onClick = { preview = null }) { Text("Close") } }
+        )
+    }
+    exportResult?.let { result -> ExportSuccessDialog(result = result, onDismiss = { exportResult = null }) }
 }
+
