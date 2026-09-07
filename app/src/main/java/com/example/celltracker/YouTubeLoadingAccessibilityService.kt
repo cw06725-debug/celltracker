@@ -527,47 +527,161 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         val mainLp = overlayLp ?: return
         val capture = View(this).apply { setBackgroundColor(0x01000000) }
         val cp = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
         ).apply { gravity = Gravity.TOP or Gravity.START }
-        var x = 0f; var y = 0f
+
+        val density = resources.displayMetrics.density
+        val tapSlopPx = 24f * density
+        val longPressMs = 500L
+        var downX = 0f
+        var downY = 0f
+        var downElapsed = 0L
+        var multiTouch = false
+        val points = ArrayList<Pair<Float, Float>>()
+
         capture.setOnTouchListener { _, e ->
             when (e.actionMasked) {
-                MotionEvent.ACTION_DOWN -> { x=e.rawX; y=e.rawY; true }
+                MotionEvent.ACTION_DOWN -> {
+                    downX = e.rawX
+                    downY = e.rawY
+                    downElapsed = SystemClock.elapsedRealtime()
+                    multiTouch = false
+                    points.clear()
+                    points.add(e.rawX to e.rawY)
+                    true
+                }
+                MotionEvent.ACTION_POINTER_DOWN -> {
+                    multiTouch = true
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    if (points.isEmpty() || kotlin.math.abs(points.last().first - e.rawX) > 3f || kotlin.math.abs(points.last().second - e.rawY) > 3f) {
+                        points.add(e.rawX to e.rawY)
+                    }
+                    true
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    points.clear()
+                    true
+                }
                 MotionEvent.ACTION_UP -> {
-                    x=e.rawX; y=e.rawY
-                    val wall=System.currentTimeMillis(); val elapsed=SystemClock.elapsedRealtime()
-                    seq++
-                    currentTitle="Manual media $seq"
-                    t0=wall; semiT0ElapsedMs=elapsed; semiT0Source="OVERLAY_TOUCH_HIGH"
-                    semiSawPlayback=false
-                    overlayStatus?.text="SEMI · #$seq T0 TOUCH · tap LOADED at first frame"
-                    removeSemiTouchCapture()
-                    scope.launch { delay(35); dispatchTap(x,y) }
+                    points.add(e.rawX to e.rawY)
+                    val upElapsed = SystemClock.elapsedRealtime()
+                    val duration = (upElapsed - downElapsed).coerceAtLeast(1L)
+                    val dx = e.rawX - downX
+                    val dy = e.rawY - downY
+                    val distance = kotlin.math.sqrt(dx * dx + dy * dy)
+                    val isTap = !multiTouch && distance <= tapSlopPx && duration < longPressMs
+                    val inMediaArea = isSemiMediaTapArea(e.rawX, e.rawY)
+
+                    if (isTap && inMediaArea) {
+                        // T0 is the user's real tap-up time.  Remove the capture layer, then replay
+                        // the same tap into YouTube.  No Accessibility click event is required.
+                        val wall = System.currentTimeMillis()
+                        val elapsed = upElapsed
+                        seq++
+                        currentTitle = "Manual media $seq"
+                        t0 = wall
+                        semiT0ElapsedMs = elapsed
+                        semiT0Source = "OVERLAY_TOUCH_HIGH"
+                        semiSawPlayback = false
+                        overlayStatus?.text = "SEMI · #$seq T0 TOUCH · tap LOADED at first frame"
+                        removeSemiTouchCapture()
+                        scope.launch {
+                            delay(30)
+                            dispatchTap(e.rawX, e.rawY)
+                        }
+                    } else {
+                        // Scroll/refresh/long-press/navigation taps must never start an attempt.
+                        // Replay the user's gesture to YouTube and re-arm capture afterwards.
+                        removeSemiTouchCapture()
+                        if (multiTouch) {
+                            overlayStatus?.text = "SEMI · multi-touch ignored · ready"
+                            scope.launch { delay(120); installSemiTouchCapture() }
+                        } else {
+                            val why = when {
+                                distance > tapSlopPx -> "scroll"
+                                duration >= longPressMs -> "long press"
+                                !inMediaArea -> "navigation tap"
+                                else -> "gesture"
+                            }
+                            overlayStatus?.text = "SEMI · $why · no T0"
+                            replayGesture(points.toList(), duration) {
+                                if (running && config.semiAuto && t0 == 0L) installSemiTouchCapture()
+                            }
+                        }
+                    }
                     true
                 }
                 else -> true
             }
         }
+
         // Keep the control window above the transparent capture layer.
         runCatching { wm.removeView(main) }
-        runCatching { wm.addView(capture, cp) }.onFailure { runCatching { wm.addView(main, mainLp) }; return }
-        semiCaptureOverlay=capture
+        runCatching { wm.addView(capture, cp) }
+            .onFailure {
+                runCatching { wm.addView(main, mainLp) }
+                return
+            }
+        semiCaptureOverlay = capture
         runCatching { wm.addView(main, mainLp) }
     }
 
-    private fun removeSemiTouchCapture() {
-        val v=semiCaptureOverlay ?: return
-        runCatching { getSystemService(WindowManager::class.java).removeView(v) }
-        semiCaptureOverlay=null
+    private fun isSemiMediaTapArea(x: Float, y: Float): Boolean {
+        val h = resources.displayMetrics.heightPixels
+        val w = resources.displayMetrics.widthPixels
+        if (x < 0f || x > w.toFloat() || y < 0f || y > h.toFloat()) return false
+
+        // Prefer the creator content bounds captured at START.  Fall back to a conservative
+        // YouTube content window that excludes the top app bar and bottom navigation.
+        val fallback = safeContentBounds()
+        val top = (lockedContentTop.takeIf { it > 0 } ?: fallback.top).coerceAtLeast((72 * resources.displayMetrics.density).toInt())
+        val bottom = (lockedContentBottom.takeIf { it > top } ?: fallback.bottom)
+            .coerceAtMost(h - (72 * resources.displayMetrics.density).toInt())
+        return y.toInt() in top..bottom
     }
 
-    private fun dispatchTap(x:Float,y:Float) {
-        val path=Path().apply { moveTo(x,y) }
-        val gesture=GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path,0,45)).build()
-        dispatchGesture(gesture,null,null)
+    private fun replayGesture(points: List<Pair<Float, Float>>, durationMs: Long, onDone: () -> Unit) {
+        if (points.isEmpty()) {
+            onDone()
+            return
+        }
+        val path = Path().apply {
+            moveTo(points.first().first, points.first().second)
+            points.drop(1).forEach { (x, y) -> lineTo(x, y) }
+        }
+        val duration = durationMs.coerceIn(40L, 1200L)
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0L, duration))
+            .build()
+        val accepted = dispatchGesture(gesture, object : AccessibilityService.GestureResultCallback() {
+            override fun onCompleted(gestureDescription: GestureDescription?) {
+                scope.launch { delay(80); onDone() }
+            }
+            override fun onCancelled(gestureDescription: GestureDescription?) {
+                scope.launch { delay(80); onDone() }
+            }
+        }, null)
+        if (!accepted) scope.launch { delay(duration + 80); onDone() }
+    }
+
+    private fun removeSemiTouchCapture() {
+        val v = semiCaptureOverlay ?: return
+        runCatching { getSystemService(WindowManager::class.java).removeView(v) }
+        semiCaptureOverlay = null
+    }
+
+    private fun dispatchTap(x: Float, y: Float) {
+        val path = Path().apply { moveTo(x, y) }
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0, 45))
+            .build()
+        dispatchGesture(gesture, null, null)
     }
 
     private fun clickableNode(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {

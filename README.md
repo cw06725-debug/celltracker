@@ -18,3 +18,9 @@ Version: 0.9.0.9 (versionCode 52)
 ## v0.9.2.6.4
 - Fix YouTube semi-auto STOP button feedback and shutdown flow.
 - STOP now saves current results, stops auto recording, disarms the session, shows immediate STOPPING feedback, then dismisses the YouTube overlay.
+
+## v0.9.3.0.1
+- Fix duplicate TestMetadata declarations / Settings metadata compile errors.
+- Semi-auto touch capture now distinguishes tap vs swipe/long-press.
+- Swipe/scroll gestures are replayed to YouTube without creating T0 attempts.
+- Navigation/out-of-content taps do not create attempts.
