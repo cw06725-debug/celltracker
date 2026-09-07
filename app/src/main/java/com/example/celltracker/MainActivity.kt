@@ -138,6 +138,7 @@ class MainActivity : ComponentActivity() {
                 var detailPath by remember { mutableStateOf<String?>(null) }
                 var showPingTest by remember { mutableStateOf(false) }
                 var showCallSetup by remember { mutableStateOf(false) }
+                var showVideoLoading by remember { mutableStateOf(false) }
                 val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { vm.start() }
                 var overlayPermissionRequestedForRecording by remember { mutableStateOf(false) }
                 val overlayPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
@@ -204,10 +205,11 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                BackHandler(enabled = showSettings || detailPath != null || showPingTest || showCallSetup) {
+                BackHandler(enabled = showSettings || detailPath != null || showPingTest || showCallSetup || showVideoLoading) {
                     when {
                         detailPath != null -> detailPath = null
                         showCallSetup -> showCallSetup = false
+                        showVideoLoading -> showVideoLoading = false
                         showPingTest -> showPingTest = false
                         showSettings -> showSettings = false
                     }
@@ -220,6 +222,7 @@ class MainActivity : ComponentActivity() {
                 val rootDestination: RootDestination = when {
                     detailPath != null -> RootDestination.Detail(detailPath!!)
                     showCallSetup -> RootDestination.CallSetup
+                    showVideoLoading -> RootDestination.VideoLoading
                     showPingTest -> RootDestination.PingTest
                     showSettings -> RootDestination.Settings
                     else -> RootDestination.Main
@@ -247,6 +250,7 @@ class MainActivity : ComponentActivity() {
                         onExport = vm::exportRecording,
                         onDelete = { path -> vm.deleteRecording(path); detailPath = null }
                     )
+                    RootDestination.VideoLoading -> VideoLoadingScreen(onBack = { showVideoLoading = false })
                     RootDestination.PingTest -> PingTestScreen(
                         state = state.pingTest,
                         history = state.pingHistory,
@@ -300,6 +304,7 @@ class MainActivity : ComponentActivity() {
                             showSettings = true
                         },
                         onPingTest = { showPingTest = true },
+                        onVideoLoading = { showVideoLoading = true },
                         onCallSetup = { showCallSetup = true },
                         onDismissMessage = vm::clearMessage
                     )
@@ -319,6 +324,7 @@ class MainActivity : ComponentActivity() {
 private sealed interface RootDestination {
     data object Main : RootDestination
     data object Settings : RootDestination
+    data object VideoLoading : RootDestination
     data object PingTest : RootDestination
     data object CallSetup : RootDestination
     data class Detail(val path: String) : RootDestination
@@ -341,6 +347,7 @@ private fun MainScreen(
     onOpenRecording: (String) -> Unit,
     onSettings: () -> Unit,
     onPingTest: () -> Unit,
+    onVideoLoading: () -> Unit,
     onCallSetup: () -> Unit,
     onDismissMessage: () -> Unit
 ) {
@@ -534,6 +541,10 @@ private fun MainScreen(
                     Field("Avg latency", state.pingTest.averageLatencyMs?.let { String.format(Locale.US, "%.1f ms", it) } ?: "--")
                 }
                 Button(onClick = onPingTest) { Text(if (state.pingTest.isRunning) "Open Ping Test" else "Configure Ping Test") }
+                HorizontalDivider(Modifier.padding(vertical = 10.dp))
+                Text("YouTube Video Loading", style = MaterialTheme.typography.titleSmall)
+                Text("Automated channel-video page loading delay via Accessibility, with network snapshots and reports.", style = MaterialTheme.typography.bodySmall)
+                Button(onClick = onVideoLoading) { Text("Configure Video Loading") }
                 HorizontalDivider(Modifier.padding(vertical = 10.dp))
                 Text("Dual-DUT Call Setup", style = MaterialTheme.typography.titleSmall)
                 Text("Bluetooth-linked MO/MT setup success rate with two-ended state validation.", style = MaterialTheme.typography.bodySmall)
@@ -2421,4 +2432,38 @@ private fun valueWithUnit(value: String, unit: String): String = if (value == "-
 private fun formatElapsed(ms: Long): String {
     val total = ms / 1000; val h = total / 3600; val m = (total % 3600) / 60; val s = total % 60
     return String.format(Locale.US, "%02d:%02d:%02d", h, m, s)
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun VideoLoadingScreen(onBack:()->Unit){
+ val context=LocalContext.current
+ val repo=remember{VideoLoadingRepository(context)}
+ var count by rememberSaveable{mutableStateOf(repo.loadConfig().count.toString())}
+ var timeout by rememberSaveable{mutableStateOf((repo.loadConfig().timeoutMs/1000).toString())}
+ var returnWait by rememberSaveable{mutableStateOf((repo.loadConfig().returnWaitMs/1000.0).toString())}
+ var autoRecord by rememberSaveable{mutableStateOf(repo.loadConfig().autoRecord)}
+ var history by remember{mutableStateOf(repo.history())}
+ Scaffold(topBar={TopAppBar(title={Text("YouTube Video Loading")},navigationIcon={TextButton(onClick=onBack){Text("Back")}})}){pad->
+  Column(Modifier.padding(pad).padding(16.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)){
+   Text("Preparation",style=MaterialTheme.typography.titleMedium)
+   Text("On every DUT/REF: open YouTube → the same creator → Videos, and make sure the same first video is visible. Each phone measures its own T1−T0; simultaneous start is not required.",style=MaterialTheme.typography.bodySmall)
+   OutlinedTextField(count,{count=it.filter(Char::isDigit)},label={Text("Test count")},singleLine=true)
+   OutlinedTextField(timeout,{timeout=it.filter{c->c.isDigit()}},label={Text("Load timeout (s)")},singleLine=true)
+   OutlinedTextField(returnWait,{returnWait=it.filter{c->c.isDigit()||c=='.'}},label={Text("Return wait (s)")},singleLine=true)
+   Row(verticalAlignment=Alignment.CenterVertically){Checkbox(autoRecord,{autoRecord=it});Text("Auto Network Recording")}
+   Button(onClick={context.startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))}){Text("1. Enable CellTracker Accessibility")}
+   Button(onClick={
+    val cfg=VideoLoadingConfig((count.toIntOrNull()?:10).coerceIn(1,50),((timeout.toLongOrNull()?:15)*1000).coerceAtLeast(3000),(((returnWait.toDoubleOrNull()?:2.0)*1000).toLong()).coerceAtLeast(500),autoRecord)
+    repo.arm(cfg)
+    val launch=context.packageManager.getLaunchIntentForPackage("com.google.android.youtube")
+    if(launch!=null)context.startActivity(launch) else Toast.makeText(context,"YouTube is not installed",Toast.LENGTH_SHORT).show()
+   }){Text("2. PREPARE TEST / Open YouTube")}
+   Text("After the creator Videos page is ready, use the CellTracker floating START button. AUTO waits for the player + key page actions to be ready for 3 consecutive checks. If AUTO is late/wrong, tap LOADED at the moment you judge the whole page loaded; the report records Detection=MANUAL.",style=MaterialTheme.typography.bodySmall)
+   TextButton(onClick={history=repo.history()}){Text("Refresh History")}
+   Text("History",style=MaterialTheme.typography.titleMedium)
+   if(history.isEmpty())Text("No video loading sessions yet",style=MaterialTheme.typography.bodySmall)
+   history.forEach{d->Card(Modifier.fillMaxWidth()){Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(5.dp)){Text(File(d.path).nameWithoutExtension,style=MaterialTheme.typography.titleSmall);val ok=d.samples.mapNotNull{it.delayMs};Text("${d.status} · ${d.samples.size} attempts · ${d.samples.count{it.result=="PASS"}} success · Avg ${ok.takeIf{it.isNotEmpty()}?.average()?.let{String.format(Locale.US,"%.0f ms",it)}?:"--"}");Button(onClick={runCatching{VideoLoadingExporter.export(context,d.path)}.onSuccess{Toast.makeText(context,it.message,Toast.LENGTH_LONG).show()}.onFailure{Toast.makeText(context,it.message,Toast.LENGTH_LONG).show()}}){Text("Export Report")}}}}
+  }
+ }
 }
