@@ -58,6 +58,12 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
     private var clockJob: Job? = null
     private var semiCaptureOverlay: View? = null
     private var overlayLp: WindowManager.LayoutParams? = null
+    // Keep the original touch instant for a short time. If a gesture we classified as a scroll
+    // unexpectedly opens a watch/Shorts page, YouTube actually treated it as a tap. Recover T0
+    // from the user's real ACTION_DOWN instead of forcing RETRY or using a late page fallback.
+    private var semiLastGestureWallMs = 0L
+    private var semiLastGestureElapsedMs = 0L
+    private var semiLastGestureTitle = ""
 
     override fun onServiceConnected() {
         activeInstance = this
@@ -88,7 +94,11 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                 semiPendingClickMs = 0L
                 semiPendingClickElapsedMs = 0L
                 semiPendingTitle = ""
+                semiLastGestureWallMs = 0L
+                semiLastGestureElapsedMs = 0L
+                semiLastGestureTitle = ""
                 overlayStatus?.text = "SEMI · ready · tap the next YouTube video"
+                scope.launch { delay(120); installSemiTouchCapture() }
             }
             return
         }
@@ -123,6 +133,24 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         }
 
         if (playbackPage && t0 == 0L) {
+            // If our transparent overlay classified the previous gesture as a scroll but YouTube
+            // nevertheless opened the media page, treat that gesture as the real tap. This fixes
+            // the common "scroll · no T0" case without asking the tester to press RETRY.
+            val recoveredAge = if (semiLastGestureElapsedMs > 0L) nowElapsed - semiLastGestureElapsedMs else Long.MAX_VALUE
+            if (!wasPlaybackPage && recoveredAge in 0..2500L) {
+                seq++
+                currentTitle = semiLastGestureTitle.ifBlank { "Manual media $seq" }
+                t0 = semiLastGestureWallMs
+                semiT0ElapsedMs = semiLastGestureElapsedMs
+                semiT0Source = "OVERLAY_RECOVERED_TAP"
+                semiSawPlayback = true
+                semiLastGestureWallMs = 0L
+                semiLastGestureElapsedMs = 0L
+                semiLastGestureTitle = ""
+                overlayStatus?.text = "SEMI · #$seq timing · recovered tap T0 · tap LOADED"
+                removeSemiTouchCapture()
+                return
+            }
             // Normally the click event arrives first. If YouTube suppresses TYPE_VIEW_CLICKED,
             // allow a creator/list -> playback transition as a fallback. Do not repeatedly create
             // attempts from multiple events while we are already sitting on the same watch page.
@@ -288,6 +316,9 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         semiT0ElapsedMs = 0L
         semiT0Source = ""
         semiPendingTitle = ""
+        semiLastGestureWallMs = 0L
+        semiLastGestureElapsedMs = 0L
+        semiLastGestureTitle = ""
         semiIgnorePlaybackUntilList = false
         semiLastPlaybackPage = looksLikePlaybackPage(rootInActiveWindow)
         sessionMode = detectCreatorMode(rootInActiveWindow)
@@ -434,7 +465,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             val loadedWall = System.currentTimeMillis()
             val loadedElapsed = SystemClock.elapsedRealtime()
             val delay = (loadedElapsed - startElapsed).coerceAtLeast(0L)
-            val accurate = source == "ACCESSIBILITY_CLICK" || source == "OVERLAY_TOUCH_HIGH"
+            val accurate = source == "ACCESSIBILITY_CLICK" || source == "OVERLAY_TOUCH_HIGH" || source == "OVERLAY_RECOVERED_TAP"
             val storedResult = when {
                 result == "AD" -> "AD"
                 accurate -> "PASS"
@@ -460,9 +491,16 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                 else -> "SEMI · #$seq ${delay} ms · LOW accuracy · excluded"
             }
             if (performBack) {
+                status?.text = "SEMI · #$seq ${delay} ms · saved · RETURNING…"
+                removeSemiTouchCapture()
                 performGlobalAction(GLOBAL_ACTION_BACK)
-                delay(700)
-                if (running && config.semiAuto) installSemiTouchCapture()
+                delay(450)
+                // Some YouTube builds ignore the first global Back while controls/animation own focus.
+                // Retry once, but keep the returning guard active so this can never become attempt #+1.
+                if (looksLikePlaybackPage(rootInActiveWindow)) {
+                    performGlobalAction(GLOBAL_ACTION_BACK)
+                }
+                // Do not re-arm here. onAccessibilityEvent re-arms only after playbackPage == false.
             }
         }
     }
@@ -537,7 +575,9 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         val density = resources.displayMetrics.density
         // Semi-auto gesture classifier: allow normal finger jitter without mistaking a tap for a scroll.
         // Real scrolling is detected from the maximum displacement during the whole gesture, not only UP-DOWN.
-        val tapSlopPx = 36f * density
+        // YouTube often interprets a short 30-60dp finger drift as a tap. Be conservative about
+        // calling something a scroll: only a clearly intentional movement is replayed as scrolling.
+        val tapSlopPx = 72f * density
         val longPressMs = 650L
         var downX = 0f
         var downY = 0f
@@ -552,6 +592,9 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                     downX = e.rawX
                     downY = e.rawY
                     downElapsed = SystemClock.elapsedRealtime()
+                    semiLastGestureElapsedMs = downElapsed
+                    semiLastGestureWallMs = System.currentTimeMillis()
+                    semiLastGestureTitle = ""
                     multiTouch = false
                     maxDistanceFromDown = 0f
                     points.clear()
@@ -600,20 +643,28 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                         semiT0Source = "OVERLAY_TOUCH_HIGH"
                         semiSawPlayback = false
                         overlayStatus?.text = "SEMI · #$seq T0 TOUCH · tap LOADED at first frame"
+                        // First try Accessibility ACTION_CLICK on the actual YouTube node under
+                        // the user's finger. This is much more reliable than dispatchGesture for the
+                        // first tap after an accessibility overlay is removed. Gesture replay remains
+                        // as the fallback for thumbnails that do not expose a clickable node.
+                        val clickTarget = findClickableNodeAt(rootInActiveWindow, e.rawX.toInt(), e.rawY.toInt())
                         removeSemiTouchCapture()
                         scope.launch {
-                            // Give WindowManager one frame to remove the transparent capture layer before replay.
-                            delay(60)
-                            if (!dispatchTap(e.rawX, e.rawY)) {
-                                delay(100)
+                            delay(90)
+                            val nodeClicked = runCatching { clickTarget?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true }.getOrDefault(false)
+                            if (!nodeClicked) {
+                                delay(90)
                                 if (!dispatchTap(e.rawX, e.rawY)) {
-                                    // Do not leave a phantom attempt when Android rejected the replay gesture.
-                                    t0 = 0L
-                                    semiT0ElapsedMs = 0L
-                                    semiT0Source = ""
-                                    seq = (seq - 1).coerceAtLeast(0)
-                                    overlayStatus?.text = "SEMI · tap replay failed · tap video again"
-                                    installSemiTouchCapture()
+                                    delay(180)
+                                    if (!dispatchTap(e.rawX, e.rawY)) {
+                                        // Do not leave a phantom attempt when Android rejected every replay method.
+                                        t0 = 0L
+                                        semiT0ElapsedMs = 0L
+                                        semiT0Source = ""
+                                        seq = (seq - 1).coerceAtLeast(0)
+                                        overlayStatus?.text = "SEMI · tap delivery failed · tap video again"
+                                        installSemiTouchCapture()
+                                    }
                                 }
                             }
                         }
@@ -631,9 +682,20 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                                 !inMediaArea -> "navigation tap"
                                 else -> "gesture"
                             }
+                            if (why != "scroll") {
+                                semiLastGestureWallMs = 0L
+                                semiLastGestureElapsedMs = 0L
+                            }
                             overlayStatus?.text = "SEMI · $why · no T0"
                             replayGesture(points.toList(), duration) {
-                                if (running && config.semiAuto && t0 == 0L) installSemiTouchCapture()
+                                scope.launch {
+                                    // Give YouTube time to complete navigation. If the replay opened a video,
+                                    // onAccessibilityEvent will recover the original ACTION_DOWN as T0.
+                                    delay(160)
+                                    if (running && config.semiAuto && t0 == 0L && !looksLikePlaybackPage(rootInActiveWindow)) {
+                                        installSemiTouchCapture()
+                                    }
+                                }
                             }
                         }
                     }
@@ -704,6 +766,28 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             .addStroke(GestureDescription.StrokeDescription(path, 0, 45))
             .build()
         return dispatchGesture(gesture, null, null)
+    }
+
+    private fun findClickableNodeAt(root: AccessibilityNodeInfo?, x: Int, y: Int): AccessibilityNodeInfo? {
+        if (root == null) return null
+        var best: AccessibilityNodeInfo? = null
+        var bestArea = Long.MAX_VALUE
+        fun walk(n: AccessibilityNodeInfo) {
+            val r = Rect()
+            n.getBoundsInScreen(r)
+            if (!r.isEmpty && r.contains(x, y)) {
+                if (n.isClickable) {
+                    val area = r.width().toLong() * r.height().toLong()
+                    if (r.width() > 80 && r.height() > 48 && area < bestArea) {
+                        best = n
+                        bestArea = area
+                    }
+                }
+                for (i in 0 until n.childCount) n.getChild(i)?.let(::walk)
+            }
+        }
+        walk(root)
+        return best
     }
 
     private fun clickableNode(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {

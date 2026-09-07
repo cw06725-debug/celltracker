@@ -2466,15 +2466,15 @@ private fun VideoLoadingScreen(onBack: () -> Unit) {
                         Text(File(d.path).nameWithoutExtension, style = MaterialTheme.typography.titleSmall)
                         val ok = d.samples.mapNotNull { it.delayMs }
                         Text("${d.status} · ${d.samples.size} attempts · ${d.samples.count { it.result == "PASS" }} success · Avg ${ok.takeIf { it.isNotEmpty() }?.average()?.let { String.format(Locale.US, "%.0f ms", it) } ?: "--"}")
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(onClick = { preview = repo.load(d.path) }) { Text("View Details") }
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = { preview = repo.load(d.path) }, modifier = Modifier.weight(1f)) { Text("View Details") }
                             Button(onClick = {
                                 runCatching { VideoLoadingExporter.export(context, d.path) }
                                     .onSuccess { exportResult = it }
                                     .onFailure { Toast.makeText(context, it.message, Toast.LENGTH_LONG).show() }
-                            }) { Text("Export / Share") }
-                            TextButton(onClick = { deleteVideoPath = d.path }) { Text("Delete") }
+                            }, modifier = Modifier.weight(1f)) { Text("Export / Share") }
                         }
+                        OutlinedButton(onClick = { deleteVideoPath = d.path }, modifier = Modifier.fillMaxWidth()) { Text("Delete") }
                     }
                 }
             }
