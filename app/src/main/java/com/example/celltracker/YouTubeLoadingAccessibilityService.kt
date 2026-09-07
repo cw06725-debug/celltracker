@@ -49,6 +49,9 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
     private var semiSawPlayback = false
     private var semiPendingClickMs = 0L
     private var semiPendingTitle = ""
+    private var semiIgnorePlaybackUntilList = false
+    private var semiLastPlaybackPage = false
+    private var clockJob: Job? = null
 
     override fun onServiceConnected() {
         activeInstance = this
@@ -65,6 +68,22 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         val now = System.currentTimeMillis()
         val root = rootInActiveWindow
         val playbackPage = looksLikePlaybackPage(root)
+        val wasPlaybackPage = semiLastPlaybackPage
+        semiLastPlaybackPage = playbackPage
+
+        // After LOADED/AD we perform Back ourselves. YouTube can continue emitting watch-page
+        // accessibility events for a short time while the page is closing. Never interpret those
+        // stale events as a second semi-auto attempt. Re-arm only after the creator/list page is
+        // actually visible again.
+        if (semiIgnorePlaybackUntilList) {
+            if (!playbackPage) {
+                semiIgnorePlaybackUntilList = false
+                semiPendingClickMs = 0L
+                semiPendingTitle = ""
+                overlayStatus?.text = "SEMI · ready · tap the next YouTube video"
+            }
+            return
+        }
 
         if (t0 > 0L) {
             if (playbackPage) semiSawPlayback = true
@@ -89,15 +108,19 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         }
 
         if (playbackPage && t0 == 0L) {
-            // Normally the click event arrives first.  If YouTube suppressed it, use the first
-            // observed playback-page event as a fallback rather than leaving semi-auto unusable.
+            // Normally the click event arrives first. If YouTube suppresses TYPE_VIEW_CLICKED,
+            // allow a creator/list -> playback transition as a fallback. Do not repeatedly create
+            // attempts from multiple events while we are already sitting on the same watch page.
             val pendingAge = if (semiPendingClickMs > 0L) now - semiPendingClickMs else Long.MAX_VALUE
-            val startMs = if (pendingAge in 0..10_000L) semiPendingClickMs else now
+            val hasFreshClick = pendingAge in 0..10_000L
+            val freshPageTransition = !wasPlaybackPage
+            if (!hasFreshClick && !freshPageTransition) return
+            val startMs = if (hasFreshClick) semiPendingClickMs else now
             seq++
             currentTitle = semiPendingTitle.ifBlank { "Manual media $seq" }
             t0 = startMs
             semiSawPlayback = true
-            val source = if (pendingAge in 0..10_000L) "click" else "page transition fallback"
+            val source = if (hasFreshClick) "click" else "page transition fallback"
             overlayStatus?.text = "SEMI · #$seq timing · T0 from $source · tap LOADED when ready"
             semiPendingClickMs = 0L
             semiPendingTitle = ""
@@ -124,6 +147,11 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             setPadding(8, 0, 8, 8)
         }
         overlayStatus = status
+        val clock = TextView(this).apply {
+            setTextColor(0xffffffff.toInt())
+            text = "TIME --:--:--.---"
+            setPadding(8, 0, 8, 8)
+        }
         val rowTop = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         val rowBottom = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         val start = Button(this).apply { text = "START" }
@@ -135,7 +163,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         rowTop.addView(loaded, weighted)
         rowBottom.addView(ad, weighted)
         rowBottom.addView(stop, weighted)
-        box.addView(header); box.addView(status); box.addView(rowTop); box.addView(rowBottom)
+        box.addView(header); box.addView(status); box.addView(clock); box.addView(rowTop); box.addView(rowBottom)
 
         val lp = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -195,6 +223,14 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         stop.setOnClickListener { stopTest("Stopped", status) }
         wm.addView(box, lp)
         overlay = box
+        clockJob?.cancel()
+        clockJob = scope.launch {
+            val fmt = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US)
+            while (isActive && overlay === box) {
+                clock.text = "TIME " + fmt.format(java.util.Date())
+                delay(20)
+            }
+        }
     }
 
     private fun startTest(status: TextView): Boolean {
@@ -209,6 +245,8 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         autoScrollCount = 0
         semiPendingClickMs = 0L
         semiPendingTitle = ""
+        semiIgnorePlaybackUntilList = false
+        semiLastPlaybackPage = looksLikePlaybackPage(rootInActiveWindow)
         sessionMode = detectCreatorMode(rootInActiveWindow)
         val initialBounds = creatorContentBounds(rootInActiveWindow) ?: safeContentBounds()
         if (!config.semiAuto && sessionMode == null) {
@@ -340,6 +378,9 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         if (start <= 0L || file == null) return
         t0 = 0L
         semiSawPlayback = false
+        semiPendingClickMs = 0L
+        semiPendingTitle = ""
+        if (performBack) semiIgnorePlaybackUntilList = true
         scope.launch {
             val now = System.currentTimeMillis()
             val snap = withContext(Dispatchers.IO) { snapshot() }
@@ -366,6 +407,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         if (!running && file == null) return
         running = false; t0 = 0; semiSawPlayback = false
         semiPendingClickMs = 0L; semiPendingTitle = ""
+        semiIgnorePlaybackUntilList = false; semiLastPlaybackPage = false
         val f = file; file = null
         if (f != null) repo.finish(f, 0, System.currentTimeMillis(), state, RecordingState.status.value.latestPath)
         if (recordingStarted) { stopService(Intent(this, RecordingService::class.java)); recordingStarted = false }
@@ -702,6 +744,8 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         if (activeInstance === this) activeInstance = null
+        clockJob?.cancel()
+        clockJob = null
         scope.cancel()
         overlay?.let { runCatching { getSystemService(WindowManager::class.java).removeView(it) } }
         overlay = null
