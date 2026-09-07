@@ -74,7 +74,7 @@ fun CallSetupScreen(
     val enableLauncher=rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()){ onLinkAction(DeviceLinkService.ACTION_REFRESH,"") }
     val discoverableLauncher=rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()){ permissionEpoch++; onLinkAction(DeviceLinkService.ACTION_REFRESH,"") }
     LaunchedEffect(Unit){
-        val p=mutableListOf(Manifest.permission.CALL_PHONE,Manifest.permission.ANSWER_PHONE_CALLS,Manifest.permission.READ_PHONE_STATE,Manifest.permission.READ_PHONE_NUMBERS)
+        val p=mutableListOf(Manifest.permission.CALL_PHONE,Manifest.permission.ANSWER_PHONE_CALLS,Manifest.permission.READ_PHONE_STATE,Manifest.permission.READ_PHONE_NUMBERS,Manifest.permission.RECORD_AUDIO)
         if(Build.VERSION.SDK_INT>=31){p+=Manifest.permission.BLUETOOTH_SCAN;p+=Manifest.permission.BLUETOOTH_CONNECT;p+=Manifest.permission.BLUETOOTH_ADVERTISE}
         permissionLauncher.launch(p.toTypedArray())
         onLinkAction(DeviceLinkService.ACTION_REFRESH,"")
@@ -96,6 +96,7 @@ fun CallSetupScreen(
     var direction by remember(test.config.direction){mutableStateOf(test.config.direction)}
     var autoRecord by remember(test.config.autoRecord){mutableStateOf(test.config.autoRecord)}
     var mode by remember(test.config.automationMode){mutableStateOf(test.config.automationMode)}
+    var voiceMonitor by remember(test.config.voiceMonitorEnabled){mutableStateOf(test.config.voiceMonitorEnabled)}
     var aSim by remember(test.config.aCallSimSlot){mutableIntStateOf(test.config.aCallSimSlot)}
     var bSim by remember(test.config.bCallSimSlot){mutableIntStateOf(test.config.bCallSimSlot)}
     LaunchedEffect(activeSlots){if(activeSlots.isNotEmpty()&&aSim !in activeSlots)aSim=activeSlots.first()}
@@ -208,13 +209,15 @@ fun CallSetupScreen(
                     Text("B Call SIM", style=MaterialTheme.typography.labelLarge)
                     SimSelector(bSim,{bSim=it},!test.isRunning,bSlots)
                     Row(verticalAlignment=Alignment.CenterVertically){Checkbox(true,{},enabled=false);Text("Network recording on both DUTs (automatic)")}
+                    Row(verticalAlignment=Alignment.CenterVertically){Checkbox(voiceMonitor,{voiceMonitor=it},enabled=!test.isRunning);Text("Voice Monitor (no-audio / high-noise, both directions)")}
+                    if(voiceMonitor) Text("After every successful call setup, CellTracker uses speakerphone and short 1000/1400 Hz acoustic checks on both DUTs. Voice results are saved in the report. Long calls use the same check at connection; periodic monitoring will be expanded after field validation.",style=MaterialTheme.typography.bodySmall)
                     Text("Call Setup automatically records the continuous radio/GPS trace for analysis and report export.",style=MaterialTheme.typography.bodySmall)
                     Row(verticalAlignment=Alignment.CenterVertically){Checkbox(mode==AutomationMode.SEMI_AUTO,{mode=if(it)AutomationMode.SEMI_AUTO else AutomationMode.AUTO_WHEN_AVAILABLE},enabled=!test.isRunning);Text("Force Semi-Auto mode")}
                     Text("Public Android call APIs are used. If auto answer/hang-up is unavailable, manually operate the Phone app; state detection and results continue automatically.",style=MaterialTheme.typography.bodySmall)
                     val selectedANumber=phoneBySlot[aSim].orEmpty()
                     val selectedBNumber=link.peerProfile?.phoneForSlot(bSim).orEmpty()
                     val canStart=link.status==DeviceLinkStatus.CONNECTED&&selectedANumber.isNotBlank()&&selectedBNumber.isNotBlank()
-                    if(test.isRunning)Button(onClick=onStopTest){Text("STOP TEST")}else Button(onClick={onStartTest(CallSetupConfig(task.ifBlank{"CallSetup"},direction,count.toIntOrNull()?:10,(timeout.toLongOrNull()?:30)*1000,(hold.toLongOrNull()?:10)*1000,(interval.toLongOrNull()?:10)*1000,(threshold.toLongOrNull()?:8)*1000,autoRecord,aSim,bSim,mode))},enabled=canStart){Text("Start Call Setup Test")}
+                    if(test.isRunning)Button(onClick=onStopTest){Text("STOP TEST")}else Button(onClick={onStartTest(CallSetupConfig(task.ifBlank{"CallSetup"},direction,count.toIntOrNull()?:10,(timeout.toLongOrNull()?:30)*1000,(hold.toLongOrNull()?:10)*1000,(interval.toLongOrNull()?:10)*1000,(threshold.toLongOrNull()?:8)*1000,autoRecord,aSim,bSim,mode,voiceMonitor))},enabled=canStart){Text("Start Call Setup Test")}
                     if(!test.isRunning&&!canStart) Text(when{link.status!=DeviceLinkStatus.CONNECTED->"Connect DUT B first.";selectedANumber.isBlank()->"Save DUT A SIM ${aSim+1} phone number first.";else->"Save DUT B SIM ${bSim+1} phone number on the Agent first."},style=MaterialTheme.typography.bodySmall)
                 }}
                 item{LiveTestPanel(link,test)}

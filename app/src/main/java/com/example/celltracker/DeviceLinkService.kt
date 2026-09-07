@@ -285,6 +285,18 @@ class DeviceLinkService : Service() {
                 remoteSnapshots.getOrPut(m.attemptId) { Collections.synchronizedList(mutableListOf()) }.add(snapshot)
                 val s=DeviceLinkStore.callTest.value; DeviceLinkStore.callTest.value=s.copy(peerSnapshot=snapshot)
             }
+            "VOICE_DETECT" -> if (DeviceLinkStore.link.value.role == DeviceLinkRole.AGENT) {
+                scope.launch {
+                    VoiceMonitor.setSpeakerphone(this@DeviceLinkService,true)
+                    val hz=m.payload["hz"]?.toIntOrNull()?:VoiceMonitor.TONE_A_TO_B
+                    val dir=m.payload["direction"]?:"A_TO_B"
+                    val v=VoiceMonitor.detectTone(this@DeviceLinkService,hz,dir)
+                    send("VOICE_RESULT",m.sessionId,m.attemptId,voicePayload(v))
+                }
+            }
+            "VOICE_PLAY" -> if (DeviceLinkStore.link.value.role == DeviceLinkRole.AGENT) {
+                scope.launch { VoiceMonitor.setSpeakerphone(this@DeviceLinkService,true); VoiceMonitor.playTone(m.payload["hz"]?.toIntOrNull()?:VoiceMonitor.TONE_B_TO_A) }
+            }
             "AGENT_RECORDING_BEGIN" -> if (DeviceLinkStore.link.value.role == DeviceLinkRole.CONTROLLER) {
                 val dir=sessionDir
                 if(dir!=null){
@@ -443,9 +455,21 @@ class DeviceLinkService : Service() {
         var callEndedAtActual: Long? = null
         if(connected){
             val snap=captureSnapshot("A","CONNECTED",activeSubscriptionId);snapshots+=snap;DeviceLinkStore.callTest.value=DeviceLinkStore.callTest.value.copy(localSnapshot=snap,currentSetupLatencyMs=latency,statusMessage="Connected · holding")
+            if(c.voiceMonitorEnabled) {
+                DeviceLinkStore.callTest.value=DeviceLinkStore.callTest.value.copy(statusMessage="Connected · checking voice A→B / B→A")
+                VoiceMonitor.setSpeakerphone(this,true)
+                val voiceResults=runVoiceCheck(session,attemptId)
+                voiceResults.forEach { v -> sessionDir?.let { repository.appendVoiceResult(it,attemptId,v) } }
+                val bad=voiceResults.filter{it.result!="VOICE_OK"}
+                if(bad.isNotEmpty()) {
+                    val detail=bad.joinToString("; "){"${it.direction} ${it.result} (${it.detail})"}
+                    sessionDir?.let{repository.appendEvent(it,System.currentTimeMillis(),"VOICE_QUALITY_ISSUE",attemptId,direction,detail)}
+                }
+            }
             // Long-call capable hold: do not blindly delay. Continuously watch both DUTs
             // and the control link so an unexpected release is classified as CALL_DROP.
             val holdStartedElapsed = SystemClock.elapsedRealtime()
+            var nextVoiceCheckElapsed = holdStartedElapsed + 30_000L
             val holdDeadline = holdStartedElapsed + c.holdTimeMs
             while (SystemClock.elapsedRealtime() < holdDeadline) {
                 currentCoroutineContext().ensureActive()
@@ -473,6 +497,14 @@ class DeviceLinkService : Service() {
                 }
                 if (droppedDuringHold) break
                 actualHoldMs = SystemClock.elapsedRealtime() - holdStartedElapsed
+                if(c.voiceMonitorEnabled && SystemClock.elapsedRealtime() >= nextVoiceCheckElapsed && SystemClock.elapsedRealtime()+5_000L < holdDeadline) {
+                    DeviceLinkStore.callTest.value=DeviceLinkStore.callTest.value.copy(statusMessage="Long call · periodic voice check")
+                    val periodic=runVoiceCheck(session,attemptId)
+                    periodic.forEach { v -> sessionDir?.let { repository.appendVoiceResult(it,attemptId,v) } }
+                    val bad=periodic.filter{it.result!="VOICE_OK"}
+                    if(bad.isNotEmpty()) sessionDir?.let { d -> repository.appendEvent(d,System.currentTimeMillis(),"VOICE_QUALITY_ISSUE",attemptId,direction,bad.joinToString("; "){"${it.direction} ${it.result} (${it.detail})"}) }
+                    nextVoiceCheckElapsed = SystemClock.elapsedRealtime()+30_000L
+                }
                 DeviceLinkStore.callTest.value = DeviceLinkStore.callTest.value.copy(statusMessage = "Connected · hold ${actualHoldMs / 1000}s / ${c.holdTimeMs / 1000}s")
             }
             if (droppedDuringHold) snapshots += captureSnapshot("A","CALL_DROP",activeSubscriptionId)
@@ -493,6 +525,21 @@ class DeviceLinkService : Service() {
         val result=when { droppedDuringHold->"CALL_DROP"; linkLost->CallResultCodes.BLUETOOTH_LINK_LOST; connected->CallResultCodes.SUCCESS; remoteFailure!=null->remoteFailure!!; failure.contains("before",true)->CallResultCodes.DISCONNECTED_BEFORE_CONNECTED; failure.contains("place",true)->CallResultCodes.MO_DIAL_FAILED; ringAt==null && direction=="A_TO_B"->CallResultCodes.MT_NO_INCOMING_CALL; !ringingSeen && direction=="B_TO_A"->CallResultCodes.MT_NO_INCOMING_CALL; SystemClock.elapsedRealtime()>=deadline->CallResultCodes.SETUP_TIMEOUT; localRole=="MO"&&localCallState!="OFFHOOK"->CallResultCodes.MO_NOT_CONNECTED; else->CallResultCodes.MT_NOT_CONNECTED }
         val end=System.currentTimeMillis()
         return CallAttemptResult(number,attemptId,direction,start,end,dialAt,ringAt,moAt,mtAt,callEndedAtActual ?: end,latency,result,"MEDIUM_PUBLIC_API",failure,linkLost,snapshots)
+    }
+
+    private fun voicePayload(v:VoiceCheckResult)=mapOf("direction" to v.direction,"result" to v.result,"hz" to v.toneHz.toString(),"level" to v.levelDb.toString(),"snr" to v.snrDb.toString(),"duration" to v.durationMs.toString(),"detail" to v.detail)
+    private fun voiceFrom(p:Map<String,String>)=VoiceCheckResult(p["direction"]?:"--",p["result"]?:"VOICE_CHECK_FAILED",p["hz"]?.toIntOrNull()?:0,p["level"]?.toDoubleOrNull()?:-120.0,p["snr"]?.toDoubleOrNull()?:0.0,p["duration"]?.toLongOrNull()?:0L,p["detail"].orEmpty())
+
+    private suspend fun runVoiceCheck(session:String,attempt:String):List<VoiceCheckResult> {
+        val out=mutableListOf<VoiceCheckResult>()
+        send("VOICE_DETECT",session,attempt,mapOf("hz" to VoiceMonitor.TONE_A_TO_B.toString(),"direction" to "A_TO_B"))
+        delay(250); VoiceMonitor.playTone(VoiceMonitor.TONE_A_TO_B)
+        val ab=awaitMessage(3000){it.attemptId==attempt&&it.messageType=="VOICE_RESULT"&&it.payload["direction"]=="A_TO_B"}
+        out += ab?.let{voiceFrom(it.payload)} ?: VoiceCheckResult("A_TO_B","VOICE_CHECK_FAILED",VoiceMonitor.TONE_A_TO_B,-120.0,0.0,0,"No Agent voice result")
+        val local=scope.async { VoiceMonitor.detectTone(this@DeviceLinkService,VoiceMonitor.TONE_B_TO_A,"B_TO_A") }
+        delay(250); send("VOICE_PLAY",session,attempt,mapOf("hz" to VoiceMonitor.TONE_B_TO_A.toString(),"direction" to "B_TO_A"))
+        out += local.await()
+        return out
     }
 
     private suspend fun awaitMessage(timeout:Long,predicate:(DeviceLinkMessage)->Boolean):DeviceLinkMessage?=withTimeoutOrNull(timeout){while(true){val m=messages.receive();if(predicate(m))return@withTimeoutOrNull m};null}
@@ -765,13 +812,13 @@ class DeviceLinkService : Service() {
 
     private fun profilePayload(p:DeviceProfile)=mapOf("device_name" to p.deviceName,"device_id" to p.deviceId,"phone" to p.phoneNumber,"sim_slot" to p.simSlot.toString(),"subscription_id" to p.subscriptionId.toString(),"operator" to p.operator,"rat" to p.rat,"voice_rat" to p.voiceRat,"signal" to p.signal,"battery" to p.batteryPercent.toString(),"version" to p.appVersion,"phone_sim_1" to p.phoneNumberSim1,"phone_sim_2" to p.phoneNumberSim2)
     private fun profileFrom(p:Map<String,String>)=DeviceProfile(p["device_name"]?:"Unknown",p["device_id"].orEmpty(),p["phone"].orEmpty(),p["sim_slot"]?.toIntOrNull()?:0,p["subscription_id"]?.toIntOrNull()?:-1,p["operator"]?:"--",p["rat"]?:"--",p["voice_rat"]?:"--",p["signal"]?:"--",p["battery"]?.toIntOrNull()?:-1,p["version"]?:"--",p["phone_sim_1"].orEmpty(),p["phone_sim_2"].orEmpty())
-    private fun configPayload(c:CallSetupConfig)=mapOf("task" to c.taskName,"direction" to c.direction.name,"count" to c.callCount.toString(),"timeout" to c.setupTimeoutMs.toString(),"hold" to c.holdTimeMs.toString(),"interval" to c.interCallIntervalMs.toString(),"threshold" to c.highLatencyThresholdMs.toString(),"auto_record" to c.autoRecord.toString(),"a_sim" to c.aCallSimSlot.toString(),"b_sim" to c.bCallSimSlot.toString(),"mode" to c.automationMode.name)
-    private fun configFrom(p:Map<String,String>)=CallSetupConfig(p["task"]?:"CallSetup",runCatching{CallDirection.valueOf(p["direction"]!!)}.getOrDefault(CallDirection.A_TO_B),p["count"]?.toIntOrNull()?:10,p["timeout"]?.toLongOrNull()?:30000,p["hold"]?.toLongOrNull()?:10000,p["interval"]?.toLongOrNull()?:10000,p["threshold"]?.toLongOrNull()?:8000,p["auto_record"].toBoolean(),p["a_sim"]?.toIntOrNull()?:0,p["b_sim"]?.toIntOrNull()?:0,runCatching{AutomationMode.valueOf(p["mode"]!!)}.getOrDefault(AutomationMode.AUTO_WHEN_AVAILABLE))
+    private fun configPayload(c:CallSetupConfig)=mapOf("task" to c.taskName,"direction" to c.direction.name,"count" to c.callCount.toString(),"timeout" to c.setupTimeoutMs.toString(),"hold" to c.holdTimeMs.toString(),"interval" to c.interCallIntervalMs.toString(),"threshold" to c.highLatencyThresholdMs.toString(),"auto_record" to c.autoRecord.toString(),"a_sim" to c.aCallSimSlot.toString(),"b_sim" to c.bCallSimSlot.toString(),"mode" to c.automationMode.name,"voice_monitor" to c.voiceMonitorEnabled.toString())
+    private fun configFrom(p:Map<String,String>)=CallSetupConfig(p["task"]?:"CallSetup",runCatching{CallDirection.valueOf(p["direction"]!!)}.getOrDefault(CallDirection.A_TO_B),p["count"]?.toIntOrNull()?:10,p["timeout"]?.toLongOrNull()?:30000,p["hold"]?.toLongOrNull()?:10000,p["interval"]?.toLongOrNull()?:10000,p["threshold"]?.toLongOrNull()?:8000,p["auto_record"].toBoolean(),p["a_sim"]?.toIntOrNull()?:0,p["b_sim"]?.toIntOrNull()?:0,runCatching{AutomationMode.valueOf(p["mode"]!!)}.getOrDefault(AutomationMode.AUTO_WHEN_AVAILABLE),p["voice_monitor"]?.toBooleanStrictOrNull()?:true)
     private fun snapshotPayload(s:CallNetworkSnapshot)=mapOf("endpoint" to s.endpoint,"moment" to s.moment,"timestamp" to s.timestampMs.toString(),"elapsed" to s.elapsedRealtimeMs.toString(),"sub" to s.subscriptionId.toString(),"slot" to s.simSlot.toString(),"operator" to s.operator,"rat" to s.rat,"display_rat" to s.displayRat,"voice_rat" to s.voiceRat,"mcc" to s.mcc,"mnc" to s.mnc,"tac" to s.tac,"cell_id" to s.cellId,"pci" to s.pci,"arfcn" to s.arfcn,"band" to s.band,"bandwidth" to s.bandwidth,"rsrp" to s.rsrp,"rsrq" to s.rsrq,"sinr" to s.sinr,"rssi" to s.rssi,"ca" to s.carrierAggregation,"data_net" to s.dataNetwork,"lat" to (s.latitude?.toString()?:""),"lon" to (s.longitude?.toString()?:""),"speed" to s.speedKmh,"accuracy" to s.accuracy)
     private fun snapshotFrom(p:Map<String,String>)=CallNetworkSnapshot(p["endpoint"]?:"B",p["moment"]?:"--",p["timestamp"]?.toLongOrNull()?:0,p["elapsed"]?.toLongOrNull()?:0,p["sub"]?.toIntOrNull()?:-1,p["slot"]?.toIntOrNull()?:-1,p["operator"]?:"--",p["rat"]?:"--",p["display_rat"]?:"--",p["voice_rat"]?:"--",p["mcc"]?:"--",p["mnc"]?:"--",p["tac"]?:"--",p["cell_id"]?:"--",p["pci"]?:"--",p["arfcn"]?:"--",p["band"]?:"--",p["bandwidth"]?:"--",p["rsrp"]?:"--",p["rsrq"]?:"--",p["sinr"]?:"--",p["rssi"]?:"--",p["ca"]?:"--",p["data_net"]?:"--",p["lat"]?.toDoubleOrNull(),p["lon"]?.toDoubleOrNull(),p["speed"]?:"--",p["accuracy"]?:"--")
-    private fun readConfig(i:Intent)=CallSetupConfig(i.getStringExtra(EXTRA_TASK).orEmpty().ifBlank{"CallSetup"},runCatching{CallDirection.valueOf(i.getStringExtra(EXTRA_DIRECTION)!!)}.getOrDefault(CallDirection.A_TO_B),i.getIntExtra(EXTRA_COUNT,10).coerceIn(1,500),i.getLongExtra(EXTRA_TIMEOUT,30000).coerceIn(5000,120000),i.getLongExtra(EXTRA_HOLD,10000).coerceIn(1000,300000),i.getLongExtra(EXTRA_INTERVAL,10000).coerceIn(1000,300000),i.getLongExtra(EXTRA_THRESHOLD,8000).coerceIn(500,120000),i.getBooleanExtra(EXTRA_AUTO_RECORD,true),i.getIntExtra(EXTRA_A_SIM,0),i.getIntExtra(EXTRA_B_SIM,0),runCatching{AutomationMode.valueOf(i.getStringExtra(EXTRA_MODE)!!)}.getOrDefault(AutomationMode.AUTO_WHEN_AVAILABLE))
+    private fun readConfig(i:Intent)=CallSetupConfig(i.getStringExtra(EXTRA_TASK).orEmpty().ifBlank{"CallSetup"},runCatching{CallDirection.valueOf(i.getStringExtra(EXTRA_DIRECTION)!!)}.getOrDefault(CallDirection.A_TO_B),i.getIntExtra(EXTRA_COUNT,10).coerceIn(1,500),i.getLongExtra(EXTRA_TIMEOUT,30000).coerceIn(5000,120000),i.getLongExtra(EXTRA_HOLD,10000).coerceIn(1000,300000),i.getLongExtra(EXTRA_INTERVAL,10000).coerceIn(1000,300000),i.getLongExtra(EXTRA_THRESHOLD,8000).coerceIn(500,120000),i.getBooleanExtra(EXTRA_AUTO_RECORD,true),i.getIntExtra(EXTRA_A_SIM,0),i.getIntExtra(EXTRA_B_SIM,0),runCatching{AutomationMode.valueOf(i.getStringExtra(EXTRA_MODE)!!)}.getOrDefault(AutomationMode.AUTO_WHEN_AVAILABLE),i.getBooleanExtra(EXTRA_VOICE_MONITOR,true))
 
     override fun onDestroy(){intentionallyDisconnected.set(true);if(DeviceLinkStore.callTest.value.isRunning)endCall();getSharedPreferences("celltracker_automation",MODE_PRIVATE).edit().putBoolean("recording_owned",false).remove("owner").apply();testJob?.cancel();scope.cancel();unregisterCallMonitor();runCatching{if(wakeLock?.isHeld==true)wakeLock?.release()};wakeLock=null;runCatching{unregisterReceiver(discoveryReceiver)};runCatching{socket?.close()};runCatching{serverSocket?.close()};super.onDestroy()}
     override fun onBind(intent:Intent?)=null
-    companion object { const val CHANNEL_ID="celltracker_device_link";const val NOTIFICATION_ID=1301;const val ACTION_DISCOVER="device_link.discover";const val ACTION_PAIR="device_link.pair";const val ACTION_AGENT="device_link.agent";const val ACTION_CONTROLLER="device_link.controller";const val ACTION_CONNECT="device_link.connect";const val ACTION_DISCONNECT="device_link.disconnect";const val ACTION_REFRESH="device_link.refresh";const val ACTION_SAVE_PROFILE="device_link.save_profile";const val ACTION_START_TEST="call_setup.start";const val ACTION_STOP_TEST="call_setup.stop";const val EXTRA_ADDRESS="address";const val EXTRA_PHONE="phone";const val EXTRA_SIM_SLOT="sim_slot";const val EXTRA_TASK="task";const val EXTRA_DIRECTION="direction";const val EXTRA_COUNT="count";const val EXTRA_TIMEOUT="timeout";const val EXTRA_HOLD="hold";const val EXTRA_INTERVAL="interval";const val EXTRA_THRESHOLD="threshold";const val EXTRA_AUTO_RECORD="auto_record";const val EXTRA_A_SIM="a_sim";const val EXTRA_B_SIM="b_sim";const val EXTRA_MODE="mode" }
+    companion object { const val CHANNEL_ID="celltracker_device_link";const val NOTIFICATION_ID=1301;const val ACTION_DISCOVER="device_link.discover";const val ACTION_PAIR="device_link.pair";const val ACTION_AGENT="device_link.agent";const val ACTION_CONTROLLER="device_link.controller";const val ACTION_CONNECT="device_link.connect";const val ACTION_DISCONNECT="device_link.disconnect";const val ACTION_REFRESH="device_link.refresh";const val ACTION_SAVE_PROFILE="device_link.save_profile";const val ACTION_START_TEST="call_setup.start";const val ACTION_STOP_TEST="call_setup.stop";const val EXTRA_ADDRESS="address";const val EXTRA_PHONE="phone";const val EXTRA_SIM_SLOT="sim_slot";const val EXTRA_TASK="task";const val EXTRA_DIRECTION="direction";const val EXTRA_COUNT="count";const val EXTRA_TIMEOUT="timeout";const val EXTRA_HOLD="hold";const val EXTRA_INTERVAL="interval";const val EXTRA_THRESHOLD="threshold";const val EXTRA_AUTO_RECORD="auto_record";const val EXTRA_A_SIM="a_sim";const val EXTRA_B_SIM="b_sim";const val EXTRA_MODE="mode";const val EXTRA_VOICE_MONITOR="voice_monitor" }
 }

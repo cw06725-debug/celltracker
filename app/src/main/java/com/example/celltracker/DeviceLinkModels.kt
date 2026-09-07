@@ -76,7 +76,8 @@ data class CallSetupConfig(
     val autoRecord: Boolean = true,
     val aCallSimSlot: Int = 0,
     val bCallSimSlot: Int = 0,
-    val automationMode: AutomationMode = AutomationMode.AUTO_WHEN_AVAILABLE
+    val automationMode: AutomationMode = AutomationMode.AUTO_WHEN_AVAILABLE,
+    val voiceMonitorEnabled: Boolean = true
 )
 
 data class CallNetworkSnapshot(

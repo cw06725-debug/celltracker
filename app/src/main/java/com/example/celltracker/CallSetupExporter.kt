@@ -20,10 +20,12 @@ object CallSetupExporter {
         val networkCsv=detail.item.recordingPath?.let{rp->File(rp).takeIf{it.exists()}?.let{f->save(context,"${base}_dut_a_network_recording.csv","text/csv",f.readBytes()).toString()}}
         val agentFile=File(dir,"agent_network_recording.csv").takeIf{it.exists()}
         val agentNetworkCsv=agentFile?.let{f->save(context,"${base}_dut_b_network_recording.csv","text/csv",f.readBytes()).toString()}
+        val voiceFile=File(dir,"voice_quality.csv").takeIf{it.exists()}
+        val voiceCsv=voiceFile?.let{f->save(context,"${base}_voice_quality.csv","text/csv",f.readBytes()).toString()}
         val htmlName="${base}_report.html";val html=save(context,htmlName,"text/html",buildHtml(detail).toByteArray()).toString()
         val xlsxName="${base}_report.xlsx";val xlsx=save(context,xlsxName,"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",buildXlsx(dir,detail)).toString()
         val kmlName="${base}_track.kml";val kml=save(context,kmlName,"application/vnd.google-earth.kml+xml",buildKml(detail).toByteArray()).toString()
-        return ExportResult("Call Setup report exported · HTML Report + Excel + CSV + KML",listOfNotNull(csv,networkCsv,agentNetworkCsv),html,htmlName,xlsx,xlsxName,kml,kmlName)
+        return ExportResult("Call Setup report exported · HTML Report + Excel + CSV + KML",listOfNotNull(csv,networkCsv,agentNetworkCsv,voiceCsv),html,htmlName,xlsx,xlsxName,kml,kmlName)
     }
 
     private fun buildCombinedCsv(d:CallSetupDetail)=buildString {
@@ -47,6 +49,8 @@ object CallSetupExporter {
         val dropRate=if(total==0)0.0 else drops*100.0/total
         val successRate=if(total==0)0.0 else success*100.0/total
         val lat=attempts.mapNotNull{it.setupLatencyMs?.toDouble()}.sorted()
+        val voiceRows=File(i.path,"voice_quality.csv").takeIf{it.exists()}?.readLines()?.drop(1)?.filter{it.isNotBlank()}?.map(CallSetupRepository::parseCsv).orEmpty()
+        val voiceOk=voiceRows.count{it.getOrNull(3)=="VOICE_OK"}; val noAudio=voiceRows.count{it.getOrNull(3)=="NO_AUDIO"}; val highNoise=voiceRows.count{it.getOrNull(3)=="HIGH_NOISE"}; val voiceFailed=voiceRows.count{it.getOrNull(3)=="VOICE_CHECK_FAILED"}
         val avg=lat.takeIf{it.isNotEmpty()}?.average()
         fun pct(q:Double)=lat.takeIf{it.isNotEmpty()}?.get(kotlin.math.ceil((lat.size-1)*q).toInt().coerceIn(0,lat.lastIndex))
 
@@ -91,6 +95,8 @@ object CallSetupExporter {
             append(metric("Drop Rate",String.format(Locale.US,"%.1f%%",dropRate)))
             append(metric("DUT A Network",if(d.networkSamples.isNotEmpty())"${d.networkSamples.size} samples" else "Not available"))
             append(metric("DUT B Network",if(d.agentNetworkSamples.isNotEmpty())"${d.agentNetworkSamples.size} samples" else "Not available"))
+            append(metric("Voice Checks",voiceRows.size.toString()))
+            append(metric("Voice OK / No Audio / High Noise","$voiceOk / $noAudio / $highNoise"))
             append("</div></div>")
 
             append("<div class='card'><div class='section'>Attempts</div><div class='tablewrap'><table><tr><th>#</th><th>Direction</th><th>Result</th><th>Setup</th><th>Hold</th><th>Confidence</th><th>Detail</th></tr>")
@@ -99,6 +105,10 @@ object CallSetupExporter {
                 val holdMs=connectedAt?.let{t->it.callEndedAt?.minus(t)?.coerceAtLeast(0)}
                 append("<tr><td>${it.attemptNumber}</td><td>${e(it.direction)}</td><td class='ok'>${e(it.result)}</td><td>${l(it.setupLatencyMs?.toDouble())}</td><td>${holdMs?.let{h->String.format(Locale.US,"%.1f s",h/1000.0)}?:"--"}</td><td>${e(it.confidence)}</td><td class='detail'>${e(it.failureDetail.ifBlank{"--"})}</td></tr>")
             }
+            append("</table></div></div>")
+
+            append("<div class='card'><div class='section'>Voice Quality</div><div class='tablewrap'><table><tr><th>Time</th><th>Attempt</th><th>Direction</th><th>Result</th><th>Tone</th><th>Level</th><th>SNR</th><th>Detail</th></tr>")
+            voiceRows.forEach{r->if(r.size>=9)append("<tr><td>${e(r[0])}</td><td>${e(r[1])}</td><td>${e(r[2])}</td><td class='ok'>${e(r[3])}</td><td>${e(r[4])} Hz</td><td>${e(r[5])} dB</td><td>${e(r[6])} dB</td><td class='detail'>${e(r[8])}</td></tr>")}
             append("</table></div></div>")
 
             append("<div class='card'><div class='section'>Events</div><div class='tablewrap'><table><tr><th>Time</th><th>Type</th><th>Direction</th><th>Attempt</th><th>Detail</th></tr>")
@@ -124,7 +134,8 @@ object CallSetupExporter {
         } }
         val networkRows=d.item.recordingPath?.let{rp->File(rp).takeIf{it.exists()}?.readLines()?.filter{it.isNotBlank()}?.map(CallSetupRepository::parseCsv)}?:emptyList()
         val agentNetworkRows=File(dir,"agent_network_recording.csv").takeIf{it.exists()}?.readLines()?.filter{it.isNotBlank()}?.map(CallSetupRepository::parseCsv)?:emptyList()
-        val sheets=mutableListOf("Summary" to summary,"Attempts" to rows("attempts.csv"),"MO Snapshots" to mo,"MT Snapshots" to mt,"Events" to rows("events.csv"))
+        val voiceRows=rows("voice_quality.csv")
+        val sheets=mutableListOf("Summary" to summary,"Attempts" to rows("attempts.csv"),"Voice Quality" to voiceRows,"MO Snapshots" to mo,"MT Snapshots" to mt,"Events" to rows("events.csv"))
         if(networkRows.isNotEmpty()) sheets.add("DUT A Network" to networkRows)
         if(agentNetworkRows.isNotEmpty()) sheets.add("DUT B Network" to agentNetworkRows)
         return PingExporter.simpleXlsx(sheets)

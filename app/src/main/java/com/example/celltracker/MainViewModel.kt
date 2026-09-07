@@ -430,6 +430,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             putExtra(DeviceLinkService.EXTRA_A_SIM, config.aCallSimSlot)
             putExtra(DeviceLinkService.EXTRA_B_SIM, config.bCallSimSlot)
             putExtra(DeviceLinkService.EXTRA_MODE, config.automationMode.name)
+            putExtra(DeviceLinkService.EXTRA_VOICE_MONITOR, config.voiceMonitorEnabled)
         })
     }
 

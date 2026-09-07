@@ -16,14 +16,15 @@ class CallSetupRepository(private val context: Context) {
         holdTimeMs = prefs.getLong("hold", 10_000L), interCallIntervalMs = prefs.getLong("interval", 10_000L),
         highLatencyThresholdMs = prefs.getLong("threshold", 8_000L), autoRecord = prefs.getBoolean("auto_record", true),
         aCallSimSlot = prefs.getInt("a_sim", 0), bCallSimSlot = prefs.getInt("b_sim", 0),
-        automationMode = runCatching { AutomationMode.valueOf(prefs.getString("mode", AutomationMode.AUTO_WHEN_AVAILABLE.name)!!) }.getOrDefault(AutomationMode.AUTO_WHEN_AVAILABLE)
+        automationMode = runCatching { AutomationMode.valueOf(prefs.getString("mode", AutomationMode.AUTO_WHEN_AVAILABLE.name)!!) }.getOrDefault(AutomationMode.AUTO_WHEN_AVAILABLE),
+        voiceMonitorEnabled = prefs.getBoolean("voice_monitor", true)
     )
 
     fun saveConfig(c: CallSetupConfig) = prefs.edit().putString("task_name", c.taskName).putString("direction", c.direction.name)
         .putInt("count", c.callCount).putLong("timeout", c.setupTimeoutMs).putLong("hold", c.holdTimeMs)
         .putLong("interval", c.interCallIntervalMs).putLong("threshold", c.highLatencyThresholdMs)
         .putBoolean("auto_record", c.autoRecord).putInt("a_sim", c.aCallSimSlot).putInt("b_sim", c.bCallSimSlot)
-        .putString("mode", c.automationMode.name).apply()
+        .putString("mode", c.automationMode.name).putBoolean("voice_monitor", c.voiceMonitorEnabled).apply()
 
     fun loadLocalSimSlot() = prefs.getInt("local_sim", 0)
     fun loadLocalNumber(simSlot: Int = loadLocalSimSlot()): String {
@@ -45,6 +46,7 @@ class CallSetupRepository(private val context: Context) {
         File(dir, "attempts.csv").writeText(ATTEMPT_HEADER + "\n")
         File(dir, "snapshots.csv").writeText(SNAPSHOT_HEADER + "\n")
         File(dir, "events.csv").writeText("timestamp,event_source,event_type,attempt_id,direction,detail\n")
+        File(dir, "voice_quality.csv").writeText("timestamp,attempt_id,direction,result,tone_hz,level_db,snr_db,duration_ms,detail\n")
         writeMeta(dir, config, a, b, startedAt, 0L, "Running")
         return dir
     }
@@ -56,6 +58,12 @@ class CallSetupRepository(private val context: Context) {
                 result.callEndedAt ?: "", result.setupLatencyMs ?: "", result.result, result.confidence, result.failureDetail, result.bluetoothLost)))
         }
         result.snapshots.forEach { appendSnapshot(dir, result.attemptId, it) }
+    }
+
+    fun appendVoiceResult(dir: File, attemptId: String, v: VoiceCheckResult) {
+        FileWriter(File(dir, "voice_quality.csv"), true).use { w ->
+            w.appendLine(csv(listOf(System.currentTimeMillis(),attemptId,v.direction,v.result,v.toneHz,String.format(java.util.Locale.US,"%.2f",v.levelDb),String.format(java.util.Locale.US,"%.2f",v.snrDb),v.durationMs,v.detail)))
+        }
     }
 
     fun appendSnapshot(dir: File, attemptId: String, s: CallNetworkSnapshot) {
