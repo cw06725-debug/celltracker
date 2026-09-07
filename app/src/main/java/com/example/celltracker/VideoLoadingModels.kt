@@ -5,7 +5,8 @@ data class VideoLoadingConfig(
     val timeoutMs:Long=15000,
     val returnWaitMs:Long=2000,
     val autoRecord:Boolean=true,
-    val semiAuto:Boolean=false
+    val semiAuto:Boolean=false,
+    val metadata:TestMetadata=TestMetadata()
 )
 data class VideoLoadingSample(
     val sequence:Int, val title:String, val startMs:Long, val loadedMs:Long, val delayMs:Long?,

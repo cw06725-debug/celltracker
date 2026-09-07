@@ -16,7 +16,14 @@ class VideoLoadingRepository(private val context: Context) {
         prefs.getLong("timeout", 15000),
         prefs.getLong("return_wait", 2000),
         prefs.getBoolean("auto_record", true),
-        prefs.getBoolean("semi_auto", false)
+        prefs.getBoolean("semi_auto", false),
+        TestMetadata(
+            prefs.getString("meta_scenario", "Mobility") ?: "Mobility",
+            prefs.getString("meta_operator", "Zong") ?: "Zong",
+            prefs.getString("meta_rat", "5G") ?: "5G",
+            prefs.getString("meta_task", "YouTube Video Loading") ?: "YouTube Video Loading",
+            prefs.getString("meta_location", "") ?: ""
+        )
     )
 
     fun saveConfig(c: VideoLoadingConfig) {
@@ -26,6 +33,8 @@ class VideoLoadingRepository(private val context: Context) {
             .putLong("return_wait", c.returnWaitMs)
             .putBoolean("auto_record", c.autoRecord)
             .putBoolean("semi_auto", c.semiAuto)
+            .putString("meta_scenario", c.metadata.scenario).putString("meta_operator", c.metadata.operator)
+            .putString("meta_rat", c.metadata.rat).putString("meta_task", c.metadata.task).putString("meta_location", c.metadata.location)
             .apply()
     }
 
@@ -41,7 +50,9 @@ class VideoLoadingRepository(private val context: Context) {
     }
 
     fun create(start: Long): File {
-        val name = "YouTube_Video_Loading_${SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date(start))}.csv"
+        val cfg = loadConfig()
+        val prefix = cfg.metadata.displayName().ifBlank { "YouTube Video Loading" }.replace(Regex("[^A-Za-z0-9 _.-]"), "_").trim().replace(Regex("\\s+"), "_")
+        val name = "${prefix}_${SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date(start))}.csv"
         val file = File(dir(), name)
         file.writeText(HEADER + "\n")
         meta(file, start, 0, "Running", null)

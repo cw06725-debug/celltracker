@@ -56,6 +56,8 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
     private var semiIgnorePlaybackUntilList = false
     private var semiLastPlaybackPage = false
     private var clockJob: Job? = null
+    private var semiCaptureOverlay: View? = null
+    private var overlayLp: WindowManager.LayoutParams? = null
 
     override fun onServiceConnected() {
         activeInstance = this
@@ -254,12 +256,13 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             stop.text = "STOPPING…"
             stopTest("Stopped", status)
             scope.launch {
-                delay(650)
+                delay(2000)
                 dismissOverlay()
             }
         }
         wm.addView(box, lp)
         overlay = box
+        overlayLp = lp
         clockJob?.cancel()
         clockJob = scope.launch {
             val fmt = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US)
@@ -309,7 +312,8 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             recordingStarted = true
         }
         if (config.semiAuto) {
-            status.text = "SEMI AUTO · tap any video manually to start timing"
+            status.text = "SEMI AUTO · tap a video · touch T0 armed"
+            scope.launch { delay(250); installSemiTouchCapture() }
         } else {
             status.text = "Started · locating Video #1…"
             scope.launch { delay(500); next(status) }
@@ -430,7 +434,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             val loadedWall = System.currentTimeMillis()
             val loadedElapsed = SystemClock.elapsedRealtime()
             val delay = (loadedElapsed - startElapsed).coerceAtLeast(0L)
-            val accurate = source == "ACCESSIBILITY_CLICK"
+            val accurate = source == "ACCESSIBILITY_CLICK" || source == "OVERLAY_TOUCH_HIGH"
             val storedResult = when {
                 result == "AD" -> "AD"
                 accurate -> "PASS"
@@ -455,7 +459,11 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                 "AD" -> "SEMI · #$seq AD · excluded · tap next video"
                 else -> "SEMI · #$seq ${delay} ms · LOW accuracy · excluded"
             }
-            if (performBack) performGlobalAction(GLOBAL_ACTION_BACK)
+            if (performBack) {
+                performGlobalAction(GLOBAL_ACTION_BACK)
+                delay(700)
+                if (running && config.semiAuto) installSemiTouchCapture()
+            }
         }
     }
 
@@ -477,6 +485,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         semiPendingTitle = ""
         semiIgnorePlaybackUntilList = false
         semiLastPlaybackPage = false
+        removeSemiTouchCapture()
 
         val f = file
         file = null
@@ -502,12 +511,63 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
     }
 
     private fun dismissOverlay() {
+        removeSemiTouchCapture()
         clockJob?.cancel()
         clockJob = null
         val view = overlay ?: return
         runCatching { getSystemService(WindowManager::class.java).removeView(view) }
         if (overlay === view) overlay = null
         overlayStatus = null
+    }
+
+    private fun installSemiTouchCapture() {
+        if (!running || !config.semiAuto || t0 > 0L || semiCaptureOverlay != null) return
+        val wm = getSystemService(WindowManager::class.java)
+        val main = overlay ?: return
+        val mainLp = overlayLp ?: return
+        val capture = View(this).apply { setBackgroundColor(0x01000000) }
+        val cp = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply { gravity = Gravity.TOP or Gravity.START }
+        var x = 0f; var y = 0f
+        capture.setOnTouchListener { _, e ->
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> { x=e.rawX; y=e.rawY; true }
+                MotionEvent.ACTION_UP -> {
+                    x=e.rawX; y=e.rawY
+                    val wall=System.currentTimeMillis(); val elapsed=SystemClock.elapsedRealtime()
+                    seq++
+                    currentTitle="Manual media $seq"
+                    t0=wall; semiT0ElapsedMs=elapsed; semiT0Source="OVERLAY_TOUCH_HIGH"
+                    semiSawPlayback=false
+                    overlayStatus?.text="SEMI · #$seq T0 TOUCH · tap LOADED at first frame"
+                    removeSemiTouchCapture()
+                    scope.launch { delay(35); dispatchTap(x,y) }
+                    true
+                }
+                else -> true
+            }
+        }
+        // Keep the control window above the transparent capture layer.
+        runCatching { wm.removeView(main) }
+        runCatching { wm.addView(capture, cp) }.onFailure { runCatching { wm.addView(main, mainLp) }; return }
+        semiCaptureOverlay=capture
+        runCatching { wm.addView(main, mainLp) }
+    }
+
+    private fun removeSemiTouchCapture() {
+        val v=semiCaptureOverlay ?: return
+        runCatching { getSystemService(WindowManager::class.java).removeView(v) }
+        semiCaptureOverlay=null
+    }
+
+    private fun dispatchTap(x:Float,y:Float) {
+        val path=Path().apply { moveTo(x,y) }
+        val gesture=GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path,0,45)).build()
+        dispatchGesture(gesture,null,null)
     }
 
     private fun clickableNode(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {

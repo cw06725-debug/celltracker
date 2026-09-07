@@ -2134,7 +2134,7 @@ private fun SettingsScreen(settings: AppSettings, visitId: Int, onUpdate: (AppSe
     }
     Scaffold(topBar = {
         TopAppBar(
-            title = { Text(when (page) { "sampling" -> "Sampling"; "marker" -> "Marker Button"; "floating" -> "Floating Window"; "map" -> "Map Point Details"; "issues" -> "Issue Types"; else -> "Settings" }) },
+            title = { Text(when (page) { "sampling" -> "Sampling"; "marker" -> "Marker Button"; "floating" -> "Floating Window"; "map" -> "Map Point Details"; "issues" -> "Issue Types"; "metadata" -> "Test Metadata Options"; else -> "Settings" }) },
             navigationIcon = { TextButton(onClick = { if (page == "root") onBack() else { page = "root" } }) { Text("Back") } }
         )
     }) { padding ->
@@ -2262,6 +2262,7 @@ private fun SettingsScreen(settings: AppSettings, visitId: Int, onUpdate: (AppSe
                         }) { Text("Add") }
                     }
                 }
+                "metadata" -> MetadataOptionsSettings()
                 else -> Column(Modifier.padding(12.dp).verticalScroll(rootScrollState), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     SettingsMenuRow("Sampling", "UI refresh and recording intervals") { navigateTo("sampling") }
                     HorizontalDivider()
@@ -2272,6 +2273,8 @@ private fun SettingsScreen(settings: AppSettings, visitId: Int, onUpdate: (AppSe
                     SettingsMenuRow("Map Point Details", "Choose information shown for a map point") { navigateTo("map") }
                     HorizontalDivider()
                     SettingsMenuRow("Issue Types", "Manage built-in and custom issue choices") { navigateTo("issues") }
+                    HorizontalDivider()
+                    SettingsMenuRow("Test Metadata Options", "Customize Scenario, Operator, RAT and Task choices") { navigateTo("metadata") }
                 }
             }
         }
@@ -2451,6 +2454,9 @@ private fun VideoLoadingScreen(onBack: () -> Unit) {
     var history by remember { mutableStateOf(repo.history()) }
     var preview by remember { mutableStateOf<VideoLoadingDetail?>(null) }
     var exportResult by remember { mutableStateOf<ExportResult?>(null) }
+    val metaRepo = remember { TestMetadataRepository(context) }
+    var showMetadata by remember { mutableStateOf(false) }
+    var pendingConfig by remember { mutableStateOf<VideoLoadingConfig?>(null) }
 
     Scaffold(topBar = { TopAppBar(title = { Text("YouTube Video Loading") }, navigationIcon = { TextButton(onClick = onBack) { Text("Back") } }) }) { pad ->
         Column(Modifier.padding(pad).padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -2464,19 +2470,13 @@ private fun VideoLoadingScreen(onBack: () -> Unit) {
             if (semiAuto) Text("Semi-auto has no fixed test count. Tap each YouTube video yourself; CellTracker records T0 from the click. Tap LOADED when the page is loaded, or press Android Back after playback is visible. Use AD / SKIP for advertisements; AD rows are excluded from delay statistics.", style = MaterialTheme.typography.bodySmall)
             Button(onClick = { context.startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }) { Text("1. Enable CellTracker Accessibility") }
             Button(onClick = {
-                val cfg = VideoLoadingConfig(
+                pendingConfig = VideoLoadingConfig(
                     count = (count.toIntOrNull() ?: 10).coerceIn(1, 50),
                     timeoutMs = ((timeout.toLongOrNull() ?: 15) * 1000).coerceAtLeast(3000),
                     returnWaitMs = (((returnWait.toDoubleOrNull() ?: 2.0) * 1000).toLong()).coerceAtLeast(500),
-                    autoRecord = autoRecord,
-                    semiAuto = semiAuto
+                    autoRecord = autoRecord, semiAuto = semiAuto
                 )
-                repo.arm(cfg)
-                // The accessibility service is normally already connected at this point; explicitly
-                // ask it to create the overlay instead of waiting for onServiceConnected() again.
-                YouTubeLoadingAccessibilityService.requestOverlay()
-                val launch = context.packageManager.getLaunchIntentForPackage("com.google.android.youtube")
-                if (launch != null) context.startActivity(launch) else Toast.makeText(context, "YouTube is not installed", Toast.LENGTH_SHORT).show()
+                showMetadata = true
             }) { Text("2. PREPARE TEST / Open YouTube") }
             Text(if (semiAuto) "Semi-auto: START → manually tap a video → LOADED when ready (or Android Back) → repeat. Press AD / SKIP for an ad." else "AUTO: START → different video → first-play detection → Back → next video → auto-scroll. LOADED is a manual fallback.", style = MaterialTheme.typography.bodySmall)
             TextButton(onClick = { history = repo.history() }) { Text("Refresh History") }
@@ -2502,6 +2502,23 @@ private fun VideoLoadingScreen(onBack: () -> Unit) {
         }
     }
 
+    if (showMetadata) {
+        TestMetadataDialog(
+            initial = metaRepo.last().copy(task = "YouTube Video Loading"),
+            options = metaRepo.options(),
+            onDismiss = { showMetadata = false },
+            onConfirm = { meta ->
+                metaRepo.saveLast(meta)
+                val cfg = (pendingConfig ?: VideoLoadingConfig()).copy(metadata = meta)
+                repo.arm(cfg)
+                showMetadata = false
+                YouTubeLoadingAccessibilityService.requestOverlay()
+                val launch = context.packageManager.getLaunchIntentForPackage("com.google.android.youtube")
+                if (launch != null) context.startActivity(launch) else Toast.makeText(context, "YouTube is not installed", Toast.LENGTH_SHORT).show()
+            }
+        )
+    }
+
     preview?.let { d ->
         val values = d.samples.filter { it.result == "PASS" }.mapNotNull { it.delayMs }.sorted()
         fun pct(p: Double): Long? = if (values.isEmpty()) null else values[((values.size - 1) * p).toInt().coerceIn(0, values.lastIndex)]
@@ -2516,6 +2533,11 @@ private fun VideoLoadingScreen(onBack: () -> Unit) {
                     Text("Average: ${if (values.isEmpty()) "--" else String.format(Locale.US, "%.0f ms", values.average())} · Median: ${pct(.5)?.let { "$it ms" } ?: "--"}")
                     Text("P90: ${pct(.9)?.let { "$it ms" } ?: "--"} · P95: ${pct(.95)?.let { "$it ms" } ?: "--"} · Min/Max: ${values.minOrNull()?.let { "$it ms" } ?: "--"} / ${values.maxOrNull()?.let { "$it ms" } ?: "--"}")
                     HorizontalDivider()
+                    if (d.samples.any { it.snapshot.latitude != null && it.snapshot.longitude != null }) {
+                        Text("Map", style = MaterialTheme.typography.titleMedium)
+                        VideoLoadingMap(d.samples, d.recordingPath)
+                        HorizontalDivider()
+                    }
                     Text("Attempts", style = MaterialTheme.typography.titleMedium)
                     d.samples.forEach { a ->
                         Text("#${a.sequence}  ${a.delayMs?.let { "$it ms" } ?: "TIMEOUT"}  ${a.result} · ${a.detection}", style = MaterialTheme.typography.bodyMedium)
@@ -2536,3 +2558,47 @@ private fun VideoLoadingScreen(onBack: () -> Unit) {
     exportResult?.let { result -> ExportSuccessDialog(result = result, onDismiss = { exportResult = null }) }
 }
 
+
+@Composable
+private fun TestMetadataDialog(initial: TestMetadata, options: TestMetadataOptions, onDismiss:()->Unit, onConfirm:(TestMetadata)->Unit) {
+    var scenario by remember { mutableStateOf(initial.scenario) }; var operator by remember { mutableStateOf(initial.operator) }
+    var rat by remember { mutableStateOf(initial.rat) }; var task by remember { mutableStateOf(initial.task) }; var location by remember { mutableStateOf(initial.location) }
+    AlertDialog(onDismissRequest=onDismiss, title={Text("Test information")}, text={
+        Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement=Arrangement.spacedBy(8.dp)) {
+            MetadataChoice("Scenario",scenario,options.scenarios){scenario=it}; MetadataChoice("Operator",operator,options.operators){operator=it}
+            MetadataChoice("RAT",rat,options.rats){rat=it}; MetadataChoice("Task",task,options.tasks){task=it}
+            OutlinedTextField(location,{location=it},label={Text("Location (optional)")},singleLine=true)
+            Text("Report: ${TestMetadata(scenario,operator,rat,task,location).displayName()} + time",style=MaterialTheme.typography.bodySmall)
+        }
+    }, confirmButton={TextButton(onClick={onConfirm(TestMetadata(scenario,operator,rat,task,location))}){Text("Start")}}, dismissButton={TextButton(onClick=onDismiss){Text("Cancel")}})
+}
+
+@Composable private fun MetadataChoice(label:String,value:String,choices:List<String>,onValue:(String)->Unit){
+    var expanded by remember { mutableStateOf(false) }; Column { Text(label,style=MaterialTheme.typography.labelMedium); Box { OutlinedButton(onClick={expanded=true}){Text(value.ifBlank{"Select"})}; DropdownMenu(expanded=expanded,onDismissRequest={expanded=false}){ choices.forEach{v->DropdownMenuItem(text={Text(v)},onClick={onValue(v);expanded=false})} } } }
+}
+
+@Composable private fun MetadataOptionsSettings(){
+    val context=LocalContext.current; val repo=remember{TestMetadataRepository(context)}; var o by remember{mutableStateOf(repo.options())}
+    fun save(n:TestMetadataOptions){o=n;repo.saveOptions(n)}
+    Column(Modifier.padding(16.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(16.dp)){
+        EditableMetadataList("Scenario",o.scenarios){save(o.copy(scenarios=it))}; EditableMetadataList("Operator",o.operators){save(o.copy(operators=it))}
+        EditableMetadataList("RAT",o.rats){save(o.copy(rats=it))}; EditableMetadataList("Task",o.tasks){save(o.copy(tasks=it))}
+    }
+}
+@Composable private fun EditableMetadataList(title:String,values:List<String>,onChange:(List<String>)->Unit){
+    var input by remember{mutableStateOf("")}; Column(verticalArrangement=Arrangement.spacedBy(6.dp)){ Text(title,style=MaterialTheme.typography.titleMedium); values.forEach{v->Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){Text(v);TextButton(onClick={if(values.size>1)onChange(values-v)}){Text("Delete")}}}; Row(verticalAlignment=Alignment.CenterVertically){OutlinedTextField(input,{input=it},label={Text("Add $title")},modifier=Modifier.weight(1f),singleLine=true);TextButton(onClick={val v=input.trim();if(v.isNotEmpty()&&v !in values){onChange(values+v);input=""}}){Text("Add")}} }
+}
+
+@Composable private fun VideoLoadingMap(samples:List<VideoLoadingSample>, recordingPath:String?){
+    val context=LocalContext.current
+    val route = remember(recordingPath) { recordingPath?.let { runCatching { RecordingDetailRepository.loadSamples(it) }.getOrDefault(emptyList()) } ?: emptyList() }
+    val pts=samples.mapNotNull{s-> val la=s.snapshot.latitude;val lo=s.snapshot.longitude;if(la!=null&&lo!=null) Triple(s,la,lo) else null}
+    if(pts.isEmpty()){Text("No GPS points");return}
+    AndroidView(factory={MapView(context).apply{setMultiTouchControls(true)}},modifier=Modifier.fillMaxWidth().height(260.dp),update={map->
+        map.overlays.clear();
+        val routePts=route.filter{it.locationValid && it.latitude!=null && it.longitude!=null}.map{GeoPoint(it.latitude!!,it.longitude!!)}
+        if(routePts.size>1){map.overlays.add(Polyline().apply{setPoints(routePts)})}
+        pts.forEach{(s,la,lo)->map.overlays.add(Marker(map).apply{position=GeoPoint(la,lo);title="#${s.sequence} ${s.delayMs?.let{"$it ms"}?:s.result}";snippet="${s.result} · ${s.snapshot.displayRat} · RSRP ${s.snapshot.rsrp}";setAnchor(Marker.ANCHOR_CENTER,Marker.ANCHOR_BOTTOM)})};
+        if(pts.size>1){map.overlays.add(Polyline().apply{setPoints(pts.map{GeoPoint(it.second,it.third)})})}; val bb=BoundingBox.fromGeoPoints(pts.map{GeoPoint(it.second,it.third)}); map.post{if(pts.size>1)map.zoomToBoundingBox(bb,true,60) else {map.controller.setZoom(16.0);map.controller.setCenter(GeoPoint(pts[0].second,pts[0].third))}};map.invalidate()
+    })
+}
