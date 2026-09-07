@@ -19,7 +19,7 @@ object VideoLoadingExporter {
         val htmlUri = save(c, htmlName, "text/html", html(d).toByteArray()).toString()
         val xlsxName = "${base}_report.xlsx"
         val rows = src.readLines().filter { it.isNotBlank() }.map { parse(it) }
-        val ok = d.samples.mapNotNull { it.delayMs }.sorted()
+        val ok = d.samples.filter { it.result == "PASS" }.mapNotNull { it.delayMs }.sorted()
 
         fun percentile(x: Double): Long? {
             if (ok.isEmpty()) return null
@@ -51,7 +51,7 @@ object VideoLoadingExporter {
     }
 
     private fun html(d: VideoLoadingDetail): String {
-        val values = d.samples.mapNotNull { it.delayMs }.sorted()
+        val values = d.samples.filter { it.result == "PASS" }.mapNotNull { it.delayMs }.sorted()
         fun percentile(x: Double): Long? {
             if (values.isEmpty()) return null
             val index = ceil((values.size - 1) * x).toInt().coerceIn(0, values.lastIndex)
@@ -72,14 +72,16 @@ object VideoLoadingExporter {
             append("</head><body><h1>YouTube Video Page Loading</h1>")
             append("<div class='card'>Attempts ${d.samples.size} · Success $successCount · Timeout $timeoutCount · AD $adCount<br>")
             append("Average $averageText · P90 $p90Text · P95 $p95Text</div>")
-            append("<table><tr><th>#</th><th>Title</th><th>Delay</th><th>Result</th><th>Detection</th><th>RAT</th><th>RSRP</th><th>SINR</th><th>PCI</th></tr>")
+            append("<table><tr><th>#</th><th>Title</th><th>Delay</th><th>Result</th><th>Detection</th><th>Click Time</th><th>Loaded Time</th><th>T0 Source</th><th>RAT</th><th>RSRP</th><th>SINR</th><th>PCI</th></tr>")
             d.samples.forEach { sample ->
                 val delayText = sample.delayMs?.toString() ?: "--"
-                append("<tr><td>${sample.sequence}</td><td>${escape(sample.title)}</td><td>$delayText ms</td><td>${sample.result}</td><td>${sample.detection}</td><td>${escape(sample.snapshot.displayRat)}</td><td>${escape(sample.snapshot.rsrp)}</td><td>${escape(sample.snapshot.sinr)}</td><td>${escape(sample.snapshot.pci)}</td></tr>")
+                append("<tr><td>${sample.sequence}</td><td>${escape(sample.title)}</td><td>$delayText ms</td><td>${sample.result}</td><td>${sample.detection}</td><td>${fmtTime(sample.startMs)}</td><td>${fmtTime(sample.loadedMs)}</td><td>${escape(sample.t0Source)}</td><td>${escape(sample.snapshot.displayRat)}</td><td>${escape(sample.snapshot.rsrp)}</td><td>${escape(sample.snapshot.sinr)}</td><td>${escape(sample.snapshot.pci)}</td></tr>")
             }
             append("</table></body></html>")
         }
     }
+
+    private fun fmtTime(ms: Long): String = if (ms > 0L) java.text.SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(java.util.Date(ms)) else "--"
 
     private fun save(c: Context, name: String, mime: String, bytes: ByteArray): android.net.Uri {
         if (Build.VERSION.SDK_INT >= 29) {

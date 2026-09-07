@@ -58,6 +58,9 @@ class VideoLoadingRepository(private val context: Context) {
             sample.delayMs ?: "",
             sample.result,
             sample.detection,
+            sample.startElapsedMs,
+            sample.loadedElapsedMs,
+            sample.t0Source,
             sample.title,
             n.subscriptionId,
             n.simSlot + 1,
@@ -131,7 +134,10 @@ class VideoLoadingRepository(private val context: Context) {
                 delayMs = get(row, "delay_ms").toLongOrNull(),
                 result = get(row, "result"),
                 detection = get(row, "detection"),
-                snapshot = snapshot
+                snapshot = snapshot,
+                startElapsedMs = get(row, "start_elapsed_ms").toLongOrNull() ?: 0L,
+                loadedElapsedMs = get(row, "loaded_elapsed_ms").toLongOrNull() ?: 0L,
+                t0Source = get(row, "t0_source")
             )
         }
 
@@ -204,6 +210,6 @@ class VideoLoadingRepository(private val context: Context) {
     }
 
     companion object {
-        const val HEADER = "sequence,start_ms,start_time,loaded_ms,delay_ms,result,detection,title,subscription_id,sim_slot,operator,rat,rsrp,rsrq,sinr,rssi,band,pci,arfcn,latitude,longitude"
+        const val HEADER = "sequence,start_ms,start_time,loaded_ms,delay_ms,result,detection,start_elapsed_ms,loaded_elapsed_ms,t0_source,title,subscription_id,sim_slot,operator,rat,rsrp,rsrq,sinr,rssi,band,pci,arfcn,latitude,longitude"
     }
 }

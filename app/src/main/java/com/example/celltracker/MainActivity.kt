@@ -2503,7 +2503,7 @@ private fun VideoLoadingScreen(onBack: () -> Unit) {
     }
 
     preview?.let { d ->
-        val values = d.samples.mapNotNull { it.delayMs }.sorted()
+        val values = d.samples.filter { it.result == "PASS" }.mapNotNull { it.delayMs }.sorted()
         fun pct(p: Double): Long? = if (values.isEmpty()) null else values[((values.size - 1) * p).toInt().coerceIn(0, values.lastIndex)]
         AlertDialog(
             onDismissRequest = { preview = null },
@@ -2519,6 +2519,9 @@ private fun VideoLoadingScreen(onBack: () -> Unit) {
                     Text("Attempts", style = MaterialTheme.typography.titleMedium)
                     d.samples.forEach { a ->
                         Text("#${a.sequence}  ${a.delayMs?.let { "$it ms" } ?: "TIMEOUT"}  ${a.result} · ${a.detection}", style = MaterialTheme.typography.bodyMedium)
+                        val timeFmt = remember { java.text.SimpleDateFormat("HH:mm:ss.SSS", Locale.US) }
+                        Text("Click ${if (a.startMs > 0) timeFmt.format(java.util.Date(a.startMs)) else "--"} · Loaded ${if (a.loadedMs > 0) timeFmt.format(java.util.Date(a.loadedMs)) else "--"}", style = MaterialTheme.typography.bodySmall)
+                        Text("T0 Source: ${a.t0Source.ifBlank { "LEGACY" }}", style = MaterialTheme.typography.bodySmall)
                         Text(a.title.ifBlank { "Video ${a.sequence}" }, style = MaterialTheme.typography.bodySmall)
                         Text("${a.snapshot.displayRat} · RSRP ${a.snapshot.rsrp} · SINR ${a.snapshot.sinr} · PCI ${a.snapshot.pci}", style = MaterialTheme.typography.bodySmall)
                     }

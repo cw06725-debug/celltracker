@@ -5,6 +5,7 @@ import android.content.Intent
 import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.graphics.Path
+import android.os.SystemClock
 import android.accessibilityservice.GestureDescription
 import android.telephony.SubscriptionManager
 import android.view.Gravity
@@ -48,6 +49,9 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
     private var overlayStatus: TextView? = null
     private var semiSawPlayback = false
     private var semiPendingClickMs = 0L
+    private var semiPendingClickElapsedMs = 0L
+    private var semiT0ElapsedMs = 0L
+    private var semiT0Source = ""
     private var semiPendingTitle = ""
     private var semiIgnorePlaybackUntilList = false
     private var semiLastPlaybackPage = false
@@ -66,6 +70,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         if (event.packageName?.toString() != "com.google.android.youtube") return
 
         val now = System.currentTimeMillis()
+        val nowElapsed = SystemClock.elapsedRealtime()
         val root = rootInActiveWindow
         val playbackPage = looksLikePlaybackPage(root)
         val wasPlaybackPage = semiLastPlaybackPage
@@ -79,6 +84,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             if (!playbackPage) {
                 semiIgnorePlaybackUntilList = false
                 semiPendingClickMs = 0L
+                semiPendingClickElapsedMs = 0L
                 semiPendingTitle = ""
                 overlayStatus?.text = "SEMI · ready · tap the next YouTube video"
             }
@@ -97,14 +103,21 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         // emit TYPE_VIEW_CLICKED from a thumbnail child, some from the card parent, and some only
         // expose the watch-page transition.  Keep the most recent plausible YouTube click as T0,
         // then commit it when the player page becomes visible.
-        if (event.eventType == android.view.accessibility.AccessibilityEvent.TYPE_VIEW_CLICKED) {
+        if (event.eventType == android.view.accessibility.AccessibilityEvent.TYPE_VIEW_CLICKED && !playbackPage) {
+            // Capture T0 FIRST, validate it only after YouTube reaches a playback page.
+            // AccessibilityEvent.eventTime uses uptimeMillis; convert it to both wall-clock and
+            // elapsedRealtime so the report can be compared with screen recording while duration
+            // uses a monotonic clock.
+            val ageMs = (SystemClock.uptimeMillis() - event.eventTime).coerceAtLeast(0L)
+            val clickElapsed = nowElapsed - ageMs
+            val clickWall = now - ageMs
             val src = event.source
-            if (src == null || isPotentialSemiMediaTrigger(src) || playbackPage) {
-                semiPendingClickMs = now
-                semiPendingTitle = src?.let {
-                    nodeLabel(it).ifBlank { descendantLabels(it).firstOrNull().orEmpty() }
-                }.orEmpty().take(160)
-            }
+            semiPendingClickMs = clickWall
+            semiPendingClickElapsedMs = clickElapsed
+            semiPendingTitle = src?.let {
+                nodeLabel(it).ifBlank { descendantLabels(it).firstOrNull().orEmpty() }
+            }.orEmpty().take(160)
+            overlayStatus?.text = "SEMI · click captured · validating video…"
         }
 
         if (playbackPage && t0 == 0L) {
@@ -112,17 +125,27 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             // allow a creator/list -> playback transition as a fallback. Do not repeatedly create
             // attempts from multiple events while we are already sitting on the same watch page.
             val pendingAge = if (semiPendingClickMs > 0L) now - semiPendingClickMs else Long.MAX_VALUE
-            val hasFreshClick = pendingAge in 0..10_000L
+            val hasFreshClick = pendingAge in 0..10_000L && semiPendingClickElapsedMs > 0L
             val freshPageTransition = !wasPlaybackPage
             if (!hasFreshClick && !freshPageTransition) return
-            val startMs = if (hasFreshClick) semiPendingClickMs else now
             seq++
             currentTitle = semiPendingTitle.ifBlank { "Manual media $seq" }
-            t0 = startMs
+            if (hasFreshClick) {
+                t0 = semiPendingClickMs
+                semiT0ElapsedMs = semiPendingClickElapsedMs
+                semiT0Source = "ACCESSIBILITY_CLICK"
+                overlayStatus?.text = "SEMI · #$seq timing · T0 CLICK · tap LOADED when ready"
+            } else {
+                // Keep the session usable, but mark fallback timing LOW confidence. It will not be
+                // included in normal PASS delay statistics.
+                t0 = now
+                semiT0ElapsedMs = nowElapsed
+                semiT0Source = "PAGE_FALLBACK_LOW"
+                overlayStatus?.text = "SEMI · #$seq LOW accuracy T0 · tap LOADED when ready"
+            }
             semiSawPlayback = true
-            val source = if (hasFreshClick) "click" else "page transition fallback"
-            overlayStatus?.text = "SEMI · #$seq timing · T0 from $source · tap LOADED when ready"
             semiPendingClickMs = 0L
+            semiPendingClickElapsedMs = 0L
             semiPendingTitle = ""
         }
     }
@@ -244,6 +267,9 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         testedContentKeys.clear()
         autoScrollCount = 0
         semiPendingClickMs = 0L
+        semiPendingClickElapsedMs = 0L
+        semiT0ElapsedMs = 0L
+        semiT0Source = ""
         semiPendingTitle = ""
         semiIgnorePlaybackUntilList = false
         semiLastPlaybackPage = looksLikePlaybackPage(rootInActiveWindow)
@@ -374,30 +400,46 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
     }
 
     private fun completeSemiAttempt(result: String, detection: String, status: TextView?, performBack: Boolean) {
-        val start = t0
-        if (start <= 0L || file == null) return
+        val startWall = t0
+        val startElapsed = semiT0ElapsedMs
+        val source = semiT0Source
+        if (startWall <= 0L || startElapsed <= 0L || file == null) return
         t0 = 0L
+        semiT0ElapsedMs = 0L
+        semiT0Source = ""
         semiSawPlayback = false
         semiPendingClickMs = 0L
+        semiPendingClickElapsedMs = 0L
         semiPendingTitle = ""
         if (performBack) semiIgnorePlaybackUntilList = true
         scope.launch {
-            val now = System.currentTimeMillis()
+            val loadedWall = System.currentTimeMillis()
+            val loadedElapsed = SystemClock.elapsedRealtime()
+            val delay = (loadedElapsed - startElapsed).coerceAtLeast(0L)
+            val accurate = source == "ACCESSIBILITY_CLICK"
+            val storedResult = when {
+                result == "AD" -> "AD"
+                accurate -> "PASS"
+                else -> "LOW_ACCURACY"
+            }
             val snap = withContext(Dispatchers.IO) { snapshot() }
             repo.append(file!!, VideoLoadingSample(
                 sequence = seq,
                 title = currentTitle,
-                startMs = start,
-                loadedMs = if (result == "PASS") now else 0L,
-                delayMs = if (result == "PASS") now - start else null,
-                result = result,
+                startMs = startWall,
+                loadedMs = loadedWall,
+                delayMs = delay,
+                result = storedResult,
                 detection = detection,
-                snapshot = snap
+                snapshot = snap,
+                startElapsedMs = startElapsed,
+                loadedElapsedMs = loadedElapsed,
+                t0Source = source
             ))
-            status?.text = if (result == "PASS") {
-                "SEMI · #$seq ${now-start} ms · saved · tap next video"
-            } else {
-                "SEMI · #$seq AD · excluded · tap next video"
+            status?.text = when (storedResult) {
+                "PASS" -> "SEMI · #$seq ${delay} ms · saved · tap next video"
+                "AD" -> "SEMI · #$seq AD · excluded · tap next video"
+                else -> "SEMI · #$seq ${delay} ms · LOW accuracy · excluded"
             }
             if (performBack) performGlobalAction(GLOBAL_ACTION_BACK)
         }
@@ -406,7 +448,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
     private fun stopTest(state: String, status: TextView) {
         if (!running && file == null) return
         running = false; t0 = 0; semiSawPlayback = false
-        semiPendingClickMs = 0L; semiPendingTitle = ""
+        semiPendingClickMs = 0L; semiPendingClickElapsedMs = 0L; semiT0ElapsedMs = 0L; semiT0Source = ""; semiPendingTitle = ""
         semiIgnorePlaybackUntilList = false; semiLastPlaybackPage = false
         val f = file; file = null
         if (f != null) repo.finish(f, 0, System.currentTimeMillis(), state, RecordingState.status.value.latestPath)
