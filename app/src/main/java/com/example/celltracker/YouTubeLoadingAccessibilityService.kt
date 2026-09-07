@@ -89,17 +89,11 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         // stale events as a second semi-auto attempt. Re-arm only after the creator/list page is
         // actually visible again.
         if (semiIgnorePlaybackUntilList) {
-            if (!playbackPage) {
-                semiIgnorePlaybackUntilList = false
-                semiPendingClickMs = 0L
-                semiPendingClickElapsedMs = 0L
-                semiPendingTitle = ""
-                semiLastGestureWallMs = 0L
-                semiLastGestureElapsedMs = 0L
-                semiLastGestureTitle = ""
-                overlayStatus?.text = "SEMI · ready · tap the next YouTube video"
-                scope.launch { delay(120); installSemiTouchCapture() }
-            }
+            // Return handling is owned by completeSemiAttempt(). During YouTube's transition the
+            // accessibility tree can briefly report a non-playback page and then report the old
+            // watch page again. Re-arming here caused the return transition itself to become a
+            // phantom second attempt. Ignore every event until the return coroutine confirms a
+            // stable non-playback page.
             return
         }
 
@@ -512,14 +506,58 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             if (performBack) {
                 status?.text = "SEMI · #$seq ${delay} ms · saved · RETURNING…"
                 removeSemiTouchCapture()
+                // Exactly ONE Back. A timed second Back is unsafe: YouTube may still expose the old
+                // watch-page tree while the first Back is already navigating, so the second Back can
+                // jump past the creator video list to Home. The returning guard blocks all events
+                // until a stable non-playback page is observed.
                 performGlobalAction(GLOBAL_ACTION_BACK)
-                delay(450)
-                // Some YouTube builds ignore the first global Back while controls/animation own focus.
-                // Retry once, but keep the returning guard active so this can never become attempt #+1.
-                if (looksLikePlaybackPage(rootInActiveWindow)) {
-                    performGlobalAction(GLOBAL_ACTION_BACK)
+
+                var stableNonPlayback = 0
+                var waitedMs = 0L
+                while (waitedMs < 10_000L && stableNonPlayback < 3 && running) {
+                    delay(180)
+                    waitedMs += 180L
+                    if (!looksLikePlaybackPage(rootInActiveWindow)) stableNonPlayback++ else stableNonPlayback = 0
                 }
-                // Do not re-arm here. onAccessibilityEvent re-arms only after playbackPage == false.
+
+                if (stableNonPlayback >= 3 && running) {
+                    delay(350)
+                    semiIgnorePlaybackUntilList = false
+                    semiPendingClickMs = 0L
+                    semiPendingClickElapsedMs = 0L
+                    semiPendingTitle = ""
+                    semiLastGestureWallMs = 0L
+                    semiLastGestureElapsedMs = 0L
+                    semiLastGestureTitle = ""
+                    semiLastPlaybackPage = looksLikePlaybackPage(rootInActiveWindow)
+                    status?.text = "SEMI · ready · tap the next YouTube video"
+                    installSemiTouchCapture()
+                } else if (running) {
+                    // Do not issue a second automatic Back. Let the tester press Android Back once;
+                    // keep the guard active so that manual return can never become a new attempt.
+                    status?.text = "SEMI · return not confirmed · press Android Back once"
+                    scope.launch {
+                        var manualStable = 0
+                        repeat(80) {
+                            delay(200)
+                            if (!running || !semiIgnorePlaybackUntilList) return@launch
+                            if (!looksLikePlaybackPage(rootInActiveWindow)) manualStable++ else manualStable = 0
+                            if (manualStable >= 3) {
+                                semiIgnorePlaybackUntilList = false
+                                semiPendingClickMs = 0L
+                                semiPendingClickElapsedMs = 0L
+                                semiPendingTitle = ""
+                                semiLastGestureWallMs = 0L
+                                semiLastGestureElapsedMs = 0L
+                                semiLastGestureTitle = ""
+                                semiLastPlaybackPage = looksLikePlaybackPage(rootInActiveWindow)
+                                status?.text = "SEMI · ready · tap the next YouTube video"
+                                installSemiTouchCapture()
+                                return@launch
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -661,6 +699,12 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                         semiT0ElapsedMs = elapsed
                         semiT0Source = "OVERLAY_TOUCH_HIGH"
                         semiSawPlayback = false
+                        // This gesture is now committed as the active attempt. Do not leave it in
+                        // the recovery cache, otherwise the Back transition after LOADED can reuse
+                        // the stale touch and create a duplicate attempt.
+                        semiLastGestureWallMs = 0L
+                        semiLastGestureElapsedMs = 0L
+                        semiLastGestureTitle = ""
                         overlayStatus?.text = "SEMI · #$seq T0 TOUCH · tap LOADED at first frame"
                         // First try Accessibility ACTION_CLICK on the actual YouTube node under
                         // the user's finger. This is much more reliable than dispatchGesture for the
