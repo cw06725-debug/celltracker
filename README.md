@@ -13,3 +13,8 @@ Based on the field-tested v0.9.0.8 project.
 - Automatic voice-quality analysis is intentionally not claimed: public Android APIs do not reliably expose cellular call PCM audio to an ordinary app. Manual audio issue marking remains the supported v0.9.0.9 path.
 
 Version: 0.9.0.9 (versionCode 52)
+
+
+## v0.9.2.6.4
+- Fix YouTube semi-auto STOP button feedback and shutdown flow.
+- STOP now saves current results, stops auto recording, disarms the session, shows immediate STOPPING feedback, then dismisses the YouTube overlay.

@@ -243,7 +243,21 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                 else completeAttempt("AD", "MANUAL_AD", status)
             } else status.text = "No active video · AD ignored"
         }
-        stop.setOnClickListener { stopTest("Stopped", status) }
+        stop.setOnClickListener {
+            // Give immediate UI feedback before repository/export work starts so STOP never feels
+            // unresponsive on slower devices.
+            status.text = "STOPPING… saving current results"
+            start.isEnabled = false
+            loaded.isEnabled = false
+            ad.isEnabled = false
+            stop.isEnabled = false
+            stop.text = "STOPPING…"
+            stopTest("Stopped", status)
+            scope.launch {
+                delay(650)
+                dismissOverlay()
+            }
+        }
         wm.addView(box, lp)
         overlay = box
         clockJob?.cancel()
@@ -446,15 +460,54 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
     }
 
     private fun stopTest(state: String, status: TextView) {
-        if (!running && file == null) return
-        running = false; t0 = 0; semiSawPlayback = false
-        semiPendingClickMs = 0L; semiPendingClickElapsedMs = 0L; semiT0ElapsedMs = 0L; semiT0Source = ""; semiPendingTitle = ""
-        semiIgnorePlaybackUntilList = false; semiLastPlaybackPage = false
-        val f = file; file = null
-        if (f != null) repo.finish(f, 0, System.currentTimeMillis(), state, RecordingState.status.value.latestPath)
-        if (recordingStarted) { stopService(Intent(this, RecordingService::class.java)); recordingStarted = false }
-        repo.disarm()
-        status.text = "YouTube Test · $state · open CellTracker for results"
+        // STOP must be idempotent and must always provide visible feedback.  Do not let a report
+        // finalization or RecordingService failure make the overlay look as if the button did
+        // nothing.
+        if (!running && file == null) {
+            status.text = "YouTube Test · already stopped"
+            return
+        }
+        running = false
+        t0 = 0L
+        semiSawPlayback = false
+        semiPendingClickMs = 0L
+        semiPendingClickElapsedMs = 0L
+        semiT0ElapsedMs = 0L
+        semiT0Source = ""
+        semiPendingTitle = ""
+        semiIgnorePlaybackUntilList = false
+        semiLastPlaybackPage = false
+
+        val f = file
+        file = null
+        runCatching {
+            if (f != null) {
+                repo.finish(
+                    f,
+                    0,
+                    System.currentTimeMillis(),
+                    state,
+                    RecordingState.status.value.latestPath
+                )
+            }
+        }
+        runCatching {
+            if (recordingStarted) {
+                stopService(Intent(this, RecordingService::class.java))
+                recordingStarted = false
+            }
+        }
+        runCatching { repo.disarm() }
+        status.text = "YouTube Test · $state · results saved"
+    }
+
+    private fun dismissOverlay() {
+        clockJob?.cancel()
+        clockJob = null
+        val view = overlay ?: return
+        runCatching { getSystemService(WindowManager::class.java).removeView(view) }
+        if (overlay === view) overlay = null
+        overlayStatus = null
     }
 
     private fun clickableNode(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
