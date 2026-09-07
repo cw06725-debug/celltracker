@@ -146,9 +146,14 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         }
         delay(config.returnWaitMs)
         status.text = "Locating Video ${seq + 1}/${config.count}…"
-        val candidates = videoCandidates(rootInActiveWindow)
+        val root = rootInActiveWindow
+        if (creatorVideosBounds(root) == null) {
+            status.text = "Please switch to creator Videos tab · no click performed"
+            return
+        }
+        val candidates = videoCandidates(root)
         if (candidates.isEmpty()) {
-            status.text = "Cannot find video item · return to creator Videos tab"
+            status.text = "No safe video item found · no click performed"
             return
         }
         val raw = candidates.getOrNull(seq.coerceAtMost(candidates.lastIndex)) ?: candidates.last()
@@ -209,23 +214,105 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
 
     private fun clickableNode(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
         var cur: AccessibilityNodeInfo? = node
-        repeat(5) { if (cur?.isClickable == true) return cur; cur = cur?.parent }
+        repeat(4) {
+            val n = cur ?: return@repeat
+            val r = Rect(); n.getBoundsInScreen(r)
+            // Do not climb into a huge page/header container. A real video row/card should
+            // remain reasonably bounded inside the content area.
+            if (n.isClickable && r.width() > 120 && r.height() in 60..700) return n
+            cur = n.parent
+        }
         return null
+    }
+
+    private data class ContentBounds(val top: Int, val bottom: Int)
+
+    private fun nodeLabel(n: AccessibilityNodeInfo): String =
+        ((n.contentDescription ?: n.text) ?: "").toString().trim()
+
+    private fun isVideosLabel(t: String): Boolean {
+        val v = t.trim()
+        return v.equals("Videos", true) || v == "视频" || v == "影片"
+    }
+
+    private fun isWrongCreatorTab(t: String): Boolean {
+        val v = t.trim()
+        return v.equals("Shorts", true) || v == "短视频" ||
+            v.equals("Playlists", true) || v.equals("Playlist", true) || v == "播放列表" ||
+            v.equals("Live", true) || v == "直播" ||
+            v.equals("Podcasts", true) || v.equals("Podcast", true) || v == "播客" ||
+            v.equals("Courses", true) || v == "课程" || v.equals("Posts", true) || v == "帖子"
+    }
+
+    /**
+     * Require the creator's normal Videos tab.  This is intentionally conservative:
+     * when the active tab cannot be proven to be Videos we refuse to click anything.
+     */
+    private fun creatorVideosBounds(root: AccessibilityNodeInfo?): ContentBounds? {
+        if (root == null) return null
+        val screen = resources.displayMetrics
+        var videos: AccessibilityNodeInfo? = null
+        var selectedWrong = false
+        fun walk(n: AccessibilityNodeInfo) {
+            val t = nodeLabel(n)
+            val r = Rect(); n.getBoundsInScreen(r)
+            // Creator tabs live in the upper/middle part of the page, never in the bottom nav.
+            if (r.top < (screen.heightPixels * 0.78f).toInt()) {
+                if (isVideosLabel(t) && (n.isSelected || n.isClickable)) videos = n
+                if (isWrongCreatorTab(t) && n.isSelected) selectedWrong = true
+            }
+            for (i in 0 until n.childCount) n.getChild(i)?.let(::walk)
+        }
+        walk(root)
+        if (selectedWrong) return null
+        val v = videos ?: return null
+        // Prefer an explicit selected state. Some YouTube builds don't expose it, so when no
+        // competing tab is selected we still use the Videos tab row as a safe content boundary.
+        val r = Rect(); v.getBoundsInScreen(r)
+        if (r.isEmpty) return null
+        val top = (r.bottom + 16).coerceAtLeast((screen.heightPixels * 0.22f).toInt())
+        val bottom = (screen.heightPixels * 0.90f).toInt()
+        return if (top < bottom) ContentBounds(top, bottom) else null
     }
 
     private fun videoCandidates(root: AccessibilityNodeInfo?): List<AccessibilityNodeInfo> {
         if (root == null) return emptyList()
-        val out = mutableListOf<AccessibilityNodeInfo>()
+        val bounds = creatorVideosBounds(root) ?: return emptyList()
+        val screenW = resources.displayMetrics.widthPixels
+        val rejected = listOf(
+            "subscribe", "subscriptions", "community", "instagram", "more", "sort", "search",
+            "订阅", "社区", "更多", "排序", "搜索", "首页", "我的", "shorts", "播放列表"
+        )
+        val found = mutableListOf<Pair<AccessibilityNodeInfo, Rect>>()
         fun walk(n: AccessibilityNodeInfo) {
-            val text = ((n.contentDescription ?: n.text) ?: "").toString()
+            val text = nodeLabel(n)
             val r = Rect(); n.getBoundsInScreen(r)
-            val looksLikeVideo = text.isNotBlank() && r.width() > 180 && r.height() > 60 &&
-                !text.contains("Home", true) && !text.contains("Shorts", true) && !text.contains("Subscriptions", true)
-            if (looksLikeVideo && (n.isClickable || clickableNode(n) != null)) out += n
+            val click = if (n.isClickable) n else clickableNode(n)
+            if (text.isNotBlank() && click != null &&
+                r.top >= bounds.top && r.bottom <= bounds.bottom &&
+                r.width() >= 120 && r.height() >= 40 &&
+                rejected.none { text.contains(it, true) }) {
+                val cr = Rect(); click.getBoundsInScreen(cr)
+                // Reject tab/header-wide buttons and tiny overflow/menu controls.
+                if (cr.top >= bounds.top && cr.bottom <= bounds.bottom &&
+                    cr.width() >= 160 && cr.height() in 60..700 &&
+                    !(cr.width() > (screenW * 0.92f).toInt() && cr.height() < 100)) {
+                    found += n to cr
+                }
+            }
             for (i in 0 until n.childCount) n.getChild(i)?.let(::walk)
         }
         walk(root)
-        return out.distinctBy { (it.contentDescription ?: it.text ?: "").toString() }.take(30)
+        // Collapse multiple text descendants that belong to the same video card, then order by
+        // what the user sees on screen rather than Accessibility tree traversal order.
+        return found
+            .sortedWith(compareBy<Pair<AccessibilityNodeInfo, Rect>> { it.second.top }.thenBy { it.second.left })
+            .distinctBy { p ->
+                val r = p.second
+                "${r.left / 24}:${r.top / 24}:${r.right / 24}:${r.bottom / 24}"
+            }
+            .map { it.first }
+            .take(20)
     }
 
     private fun isVideoPageReady(root: AccessibilityNodeInfo?): Boolean {
