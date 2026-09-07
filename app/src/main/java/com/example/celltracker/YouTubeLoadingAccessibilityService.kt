@@ -52,11 +52,6 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
     }
     override fun onInterrupt() {}
 
-    override fun onDestroy() {
-        if (activeInstance === this) activeInstance = null
-        super.onDestroy()
-    }
-
     private fun showOverlay() {
         if (overlay != null) return
         val wm = getSystemService(WindowManager::class.java)
@@ -263,6 +258,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
     }
 
     override fun onDestroy() {
+        if (activeInstance === this) activeInstance = null
         scope.cancel()
         overlay?.let { runCatching { getSystemService(WindowManager::class.java).removeView(it) } }
         overlay = null
