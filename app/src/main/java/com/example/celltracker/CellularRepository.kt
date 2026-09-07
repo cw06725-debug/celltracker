@@ -124,6 +124,15 @@ class CellularRepository(private val context: Context) {
         usable(runCatching { tm.networkOperatorName }.getOrNull())?.let { return it }
         usable(runCatching { tm.simOperatorName }.getOrNull())?.let { return it }
 
+        // OEMs such as vivo may expose "SIM 1"/"SIM 2" as displayName.
+        // carrierName is usually a better subscription-level fallback, but still
+        // pass it through usable() so slot labels never become operator names.
+        val subInfo = runCatching {
+            activeSubscriptions().firstOrNull { it.subscriptionId == tm.subscriptionId }
+        }.getOrNull()
+        usable(subInfo?.carrierName?.toString())?.let { return it }
+        usable(subInfo?.displayName?.toString())?.let { return it }
+
         val networkNumeric = runCatching { tm.networkOperator }.getOrNull().orEmpty()
         operatorFromPlmn(networkNumeric)?.let { return it }
         val cellPlmn = if (!cellMcc.isNullOrBlank() && !cellMnc.isNullOrBlank()) cellMcc + cellMnc else ""
@@ -137,9 +146,10 @@ class CellularRepository(private val context: Context) {
     private fun operatorFromPlmn(plmnRaw: String): String? {
         val plmn = plmnRaw.filter { it.isDigit() }
         return when (plmn) {
-            "41001", "41006", "41007" -> "Jazz"
-            "41003" -> "Ufone"
-            "41004" -> "Zong"
+            "41001", "41007", "4101", "4107" -> "Jazz"
+            "41003", "4103" -> "Ufone"
+            "41004", "4104" -> "Zong"
+            "41006", "4106" -> "Telenor"
             else -> null
         }
     }

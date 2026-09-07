@@ -45,6 +45,8 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
     private var sessionMode: CreatorMode? = null
     private var lockedContentTop = 0
     private var lockedContentBottom = 0
+    private var overlayStatus: TextView? = null
+    private var semiSawPlayback = false
 
     override fun onServiceConnected() {
         activeInstance = this
@@ -54,9 +56,31 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: android.view.accessibility.AccessibilityEvent?) {
-        // Fallback: if the test was armed after the accessibility service connected,
-        // make sure the overlay appears as soon as YouTube generates an event.
         if (::repo.isInitialized && repo.isArmed() && overlay == null) showOverlay()
+        if (event == null || !running || !config.semiAuto) return
+        if (event.packageName?.toString() != "com.google.android.youtube") return
+
+        val root = rootInActiveWindow
+        if (t0 > 0L) {
+            if (looksLikePlaybackPage(root)) semiSawPlayback = true
+            if (semiSawPlayback && looksLikeCreatorPage(root) && !looksLikePlaybackPage(root) &&
+                System.currentTimeMillis() - t0 > 300L) {
+                completeSemiAttempt("PASS", "MANUAL_BACK", overlayStatus, performBack = false)
+            }
+            return
+        }
+
+        if (event.eventType == android.view.accessibility.AccessibilityEvent.TYPE_VIEW_CLICKED) {
+            val src = event.source ?: return
+            if (isLikelyManualMediaClick(src)) {
+                seq++
+                currentTitle = nodeLabel(src).ifBlank { descendantLabels(src).firstOrNull().orEmpty() }.take(160)
+                if (currentTitle.isBlank()) currentTitle = "Manual media $seq"
+                t0 = System.currentTimeMillis()
+                semiSawPlayback = false
+                overlayStatus?.text = "SEMI · #$seq started · tap LOADED / BACK when ready"
+            }
+        }
     }
     override fun onInterrupt() {}
 
@@ -78,11 +102,13 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             text = "Ready · open creator Videos page"
             setPadding(8, 0, 8, 8)
         }
+        overlayStatus = status
         val row = LinearLayout(this)
         val start = Button(this).apply { text = "START" }
-        val loaded = Button(this).apply { text = "MANUAL LOADED"; visibility = View.GONE }
+        val loaded = Button(this).apply { text = "LOADED / BACK"; visibility = View.GONE }
+        val ad = Button(this).apply { text = "AD / SKIP"; visibility = View.GONE }
         val stop = Button(this).apply { text = "STOP"; visibility = View.GONE }
-        row.addView(start); row.addView(loaded); row.addView(stop)
+        row.addView(start); row.addView(loaded); row.addView(ad); row.addView(stop)
         box.addView(header); box.addView(status); box.addView(row)
 
         val lp = WindowManager.LayoutParams(
@@ -109,7 +135,9 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
 
         start.setOnClickListener {
             if (running) {
-                if (t0 > 0L) {
+                if (config.semiAuto) {
+                    status.text = if (t0 > 0L) "SEMI · #$seq timing… tap LOADED / BACK" else "SEMI AUTO · tap the next YouTube video manually"
+                } else if (t0 > 0L) {
                     status.text = "Video $seq/${config.count} is already loading…"
                 } else {
                     status.text = "RETRYING…"
@@ -121,13 +149,22 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                 if (accepted) {
                     start.text = "RETRY"
                     loaded.visibility = View.VISIBLE
+                    ad.visibility = View.VISIBLE
                     stop.visibility = View.VISIBLE
                 }
             }
         }
         loaded.setOnClickListener {
-            if (running && t0 > 0) completeAttempt("PASS", "MANUAL", status)
-            else status.text = "Nothing is loading · MANUAL LOADED ignored"
+            if (running && t0 > 0) {
+                if (config.semiAuto) completeSemiAttempt("PASS", "MANUAL_BUTTON", status, performBack = true)
+                else completeAttempt("PASS", "MANUAL", status)
+            } else status.text = if (config.semiAuto) "SEMI · tap a YouTube video first" else "Nothing is loading · LOADED ignored"
+        }
+        ad.setOnClickListener {
+            if (running && t0 > 0) {
+                if (config.semiAuto) completeSemiAttempt("AD", "MANUAL_AD", status, performBack = true)
+                else completeAttempt("AD", "MANUAL_AD", status)
+            } else status.text = "No active video · AD ignored"
         }
         stop.setOnClickListener { stopTest("Stopped", status) }
         wm.addView(box, lp)
@@ -145,12 +182,15 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         testedContentKeys.clear()
         autoScrollCount = 0
         sessionMode = detectCreatorMode(rootInActiveWindow)
-        val initialBounds = creatorContentBounds(rootInActiveWindow)
-        if (sessionMode == null || initialBounds == null) {
+        val initialBounds = creatorContentBounds(rootInActiveWindow) ?: safeContentBounds()
+        if (!config.semiAuto && sessionMode == null) {
+            sessionMode = inferModeFromVisibleGeometry(rootInActiveWindow, initialBounds)
+        }
+        if (!config.semiAuto && sessionMode == null) {
             running = false
             file?.delete()
             file = null
-            status.text = "START failed · select creator Videos or Shorts tab"
+            status.text = "START failed · open creator Videos/Shorts list or use SEMI AUTO"
             return false
         }
         lockedContentTop = initialBounds.top
@@ -162,8 +202,12 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                 .putExtra(RecordingService.EXTRA_TASK_NAME, "YouTube_Video_Loading"))
             recordingStarted = true
         }
-        status.text = "Started · locating Video #1…"
-        scope.launch { delay(500); next(status) }
+        if (config.semiAuto) {
+            status.text = "SEMI AUTO · tap any video manually to start timing"
+        } else {
+            status.text = "Started · locating Video #1…"
+            scope.launch { delay(500); next(status) }
+        }
         return true
     }
 
@@ -209,16 +253,16 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                 status.text = "Video $seq/${config.count} · AUTO DETECTING…"
                 scope.launch {
                     val thisSeq = seq
-                    delay(700)
+                    delay(150)
                     var readyHits = 0
                     while (running && seq == thisSeq && System.currentTimeMillis() - t0 < config.timeoutMs) {
-                        delay(300)
+                        delay(120)
                         val elapsed = System.currentTimeMillis() - t0
                         // Do not count navigation/UI chrome as loaded.  Require a real watch/Shorts
                         // player signature and evidence that playback has started.  Three consecutive
                         // hits suppress transition-animation false positives.
-                        readyHits = if (elapsed >= 1200 && isPlaybackActuallyStarted(rootInActiveWindow, sessionMode)) readyHits + 1 else 0
-                        if (readyHits >= 3) {
+                        readyHits = if (elapsed >= 250 && isPlaybackActuallyStarted(rootInActiveWindow, sessionMode)) readyHits + 1 else 0
+                        if (readyHits >= 2) {
                             completeAttempt("PASS", "AUTO", status)
                             return@launch
                         }
@@ -252,16 +296,47 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             val snap = withContext(Dispatchers.IO) { snapshot() }
             repo.append(file!!, VideoLoadingSample(seq, currentTitle, start, if (result == "PASS") now else 0,
                 if (result == "PASS") now - start else null, result, detection, snap))
-            status.text = if (result == "PASS") "Video $seq · ${now-start} ms · $detection · RETURNING…" else "Video $seq · TIMEOUT · RETURNING…"
+            status.text = when (result) {
+                "PASS" -> "Video $seq · ${now-start} ms · $detection · RETURNING…"
+                "AD" -> "Video $seq · AD skipped · not counted as success · RETURNING…"
+                else -> "Video $seq · TIMEOUT · RETURNING…"
+            }
             performGlobalAction(GLOBAL_ACTION_BACK)
             delay(config.returnWaitMs)
             next(status)
         }
     }
 
+    private fun completeSemiAttempt(result: String, detection: String, status: TextView?, performBack: Boolean) {
+        val start = t0
+        if (start <= 0L || file == null) return
+        t0 = 0L
+        semiSawPlayback = false
+        scope.launch {
+            val now = System.currentTimeMillis()
+            val snap = withContext(Dispatchers.IO) { snapshot() }
+            repo.append(file!!, VideoLoadingSample(
+                sequence = seq,
+                title = currentTitle,
+                startMs = start,
+                loadedMs = if (result == "PASS") now else 0L,
+                delayMs = if (result == "PASS") now - start else null,
+                result = result,
+                detection = detection,
+                snapshot = snap
+            ))
+            status?.text = if (result == "PASS") {
+                "SEMI · #$seq ${now-start} ms · saved · tap next video"
+            } else {
+                "SEMI · #$seq AD · excluded · tap next video"
+            }
+            if (performBack) performGlobalAction(GLOBAL_ACTION_BACK)
+        }
+    }
+
     private fun stopTest(state: String, status: TextView) {
         if (!running && file == null) return
-        running = false; t0 = 0
+        running = false; t0 = 0; semiSawPlayback = false
         val f = file; file = null
         if (f != null) repo.finish(f, 0, System.currentTimeMillis(), state, RecordingState.status.value.latestPath)
         if (recordingStarted) { stopService(Intent(this, RecordingService::class.java)); recordingStarted = false }
@@ -360,6 +435,76 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         return if (top < bottom) ContentBounds(top, bottom) else null
     }
 
+    private fun safeContentBounds(): ContentBounds {
+        val h = resources.displayMetrics.heightPixels
+        return ContentBounds((h * 0.16f).toInt(), (h * 0.91f).toInt())
+    }
+
+    private fun inferModeFromVisibleGeometry(root: AccessibilityNodeInfo?, bounds: ContentBounds): CreatorMode? {
+        if (root == null) return null
+        val w = resources.displayMetrics.widthPixels
+        var narrow = 0
+        var wide = 0
+        fun walk(n: AccessibilityNodeInfo) {
+            if (n.isClickable) {
+                val r = Rect(); n.getBoundsInScreen(r)
+                if (!r.isEmpty && r.top >= bounds.top && r.bottom <= bounds.bottom && r.height() >= 100) {
+                    if (r.width() in (w * 0.20f).toInt()..(w * 0.55f).toInt()) narrow++
+                    if (r.width() >= (w * 0.55f).toInt()) wide++
+                }
+            }
+            for (i in 0 until n.childCount) n.getChild(i)?.let(::walk)
+        }
+        walk(root)
+        return when {
+            narrow >= 3 && narrow > wide -> CreatorMode.SHORTS
+            wide >= 1 -> CreatorMode.VIDEOS
+            else -> null
+        }
+    }
+
+    private fun looksLikePlaybackPage(root: AccessibilityNodeInfo?): Boolean {
+        if (root == null) return false
+        var hit = false
+        fun walk(n: AccessibilityNodeInfo) {
+            val t = nodeLabel(n).lowercase()
+            if (t.contains("comments") || t.contains("share") || t.contains("pause") ||
+                t.contains("评论") || t.contains("分享") || t.contains("暂停") ||
+                t.contains("fullscreen") || t.contains("全屏")) hit = true
+            if (!hit) for (i in 0 until n.childCount) n.getChild(i)?.let(::walk)
+        }
+        walk(root)
+        return hit
+    }
+
+    private fun looksLikeCreatorPage(root: AccessibilityNodeInfo?): Boolean {
+        if (root == null) return false
+        var mediaCount = 0
+        val b = safeContentBounds()
+        val w = resources.displayMetrics.widthPixels
+        fun walk(n: AccessibilityNodeInfo) {
+            if (n.isClickable) {
+                val r = Rect(); n.getBoundsInScreen(r)
+                if (!r.isEmpty && r.top >= b.top && r.bottom <= b.bottom && r.height() >= 100 &&
+                    r.width() >= (w * 0.20f).toInt()) mediaCount++
+            }
+            if (mediaCount < 3) for (i in 0 until n.childCount) n.getChild(i)?.let(::walk)
+        }
+        walk(root)
+        return mediaCount >= 3
+    }
+
+    private fun isLikelyManualMediaClick(node: AccessibilityNodeInfo): Boolean {
+        val r = Rect(); node.getBoundsInScreen(r)
+        val b = safeContentBounds()
+        if (r.isEmpty || r.centerY() !in b.top..b.bottom) return false
+        val text = (nodeLabel(node) + " " + descendantLabels(node).joinToString(" ")).lowercase()
+        val blocked = listOf("subscribe", "share", "comments", "like", "search", "sort", "more",
+            "订阅", "分享", "评论", "搜索", "排序", "更多", "首页", "我的")
+        if (blocked.any { text.contains(it) }) return false
+        return r.width() >= (resources.displayMetrics.widthPixels * 0.18f).toInt() || node.isClickable
+    }
+
     private data class MediaCandidate(
         val node: AccessibilityNodeInfo,
         val rect: Rect,
@@ -398,7 +543,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         fun addCandidate(click: AccessibilityNodeInfo) {
             val cr = Rect(); click.getBoundsInScreen(cr)
             if (cr.isEmpty || cr.top < bounds.top || cr.bottom > bounds.bottom) return
-            val videoRow = cr.width() >= (screenW * 0.55f).toInt() && cr.height() in 120..720
+            val videoRow = cr.width() >= (screenW * 0.35f).toInt() && cr.height() in 100..760
             val shortTile = cr.width() in (screenW * 0.20f).toInt()..(screenW * 0.55f).toInt() && cr.height() >= 170
             if (mode == CreatorMode.VIDEOS && !videoRow) return
             if (mode == CreatorMode.SHORTS && !shortTile) return
@@ -437,17 +582,28 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
     }
 
     private fun scrollCreatorContent(bounds: ContentBounds): Boolean {
+        val root = rootInActiveWindow
+        fun findScrollable(n: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+            if (n == null) return null
+            val r = Rect(); n.getBoundsInScreen(r)
+            if (n.isScrollable && r.height() > resources.displayMetrics.heightPixels * 0.35f) return n
+            for (i in 0 until n.childCount) {
+                val found = findScrollable(n.getChild(i))
+                if (found != null) return found
+            }
+            return null
+        }
+        val scrollable = findScrollable(root)
+        if (scrollable?.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD) == true) return true
+
         val dm = resources.displayMetrics
         val x = dm.widthPixels * 0.5f
         val startY = (bounds.bottom - 40).coerceAtMost((dm.heightPixels * 0.86f).toInt()).toFloat()
-        val endY = (bounds.top + (bounds.bottom - bounds.top) * 0.28f).toFloat()
+        val endY = (dm.heightPixels * 0.34f).toFloat()
         if (startY <= endY) return false
-        val path = Path().apply {
-            moveTo(x, startY)
-            lineTo(x, endY)
-        }
+        val path = Path().apply { moveTo(x, startY); lineTo(x, endY) }
         val gesture = GestureDescription.Builder()
-            .addStroke(GestureDescription.StrokeDescription(path, 0, 420))
+            .addStroke(GestureDescription.StrokeDescription(path, 0, 520))
             .build()
         return dispatchGesture(gesture, null, null)
     }

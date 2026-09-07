@@ -15,7 +15,8 @@ class VideoLoadingRepository(private val context: Context) {
         prefs.getInt("count", 10),
         prefs.getLong("timeout", 15000),
         prefs.getLong("return_wait", 2000),
-        prefs.getBoolean("auto_record", true)
+        prefs.getBoolean("auto_record", true),
+        prefs.getBoolean("semi_auto", false)
     )
 
     fun saveConfig(c: VideoLoadingConfig) {
@@ -24,6 +25,7 @@ class VideoLoadingRepository(private val context: Context) {
             .putLong("timeout", c.timeoutMs)
             .putLong("return_wait", c.returnWaitMs)
             .putBoolean("auto_record", c.autoRecord)
+            .putBoolean("semi_auto", c.semiAuto)
             .apply()
     }
 

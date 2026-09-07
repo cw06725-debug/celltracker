@@ -2447,6 +2447,7 @@ private fun VideoLoadingScreen(onBack: () -> Unit) {
     var timeout by rememberSaveable { mutableStateOf((repo.loadConfig().timeoutMs / 1000).toString()) }
     var returnWait by rememberSaveable { mutableStateOf((repo.loadConfig().returnWaitMs / 1000.0).toString()) }
     var autoRecord by rememberSaveable { mutableStateOf(repo.loadConfig().autoRecord) }
+    var semiAuto by rememberSaveable { mutableStateOf(repo.loadConfig().semiAuto) }
     var history by remember { mutableStateOf(repo.history()) }
     var preview by remember { mutableStateOf<VideoLoadingDetail?>(null) }
     var exportResult by remember { mutableStateOf<ExportResult?>(null) }
@@ -2455,13 +2456,21 @@ private fun VideoLoadingScreen(onBack: () -> Unit) {
         Column(Modifier.padding(pad).padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Preparation", style = MaterialTheme.typography.titleMedium)
             Text("On every DUT/REF: open YouTube → the same creator → Videos, with the same first video visible. Each phone measures its own loading delay; simultaneous start is not required.", style = MaterialTheme.typography.bodySmall)
-            OutlinedTextField(count, { count = it.filter(Char::isDigit) }, label = { Text("Test count") }, singleLine = true)
+            OutlinedTextField(count, { count = it.filter(Char::isDigit) }, label = { Text("Test count (AUTO only)") }, singleLine = true, enabled = !semiAuto)
             OutlinedTextField(timeout, { timeout = it.filter(Char::isDigit) }, label = { Text("Load timeout (s)") }, singleLine = true)
             OutlinedTextField(returnWait, { returnWait = it.filter { c -> c.isDigit() || c == '.' } }, label = { Text("Return wait (s)") }, singleLine = true)
             Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(autoRecord, { autoRecord = it }); Text("Auto Network Recording") }
+            Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(semiAuto, { semiAuto = it }); Text("Semi-auto mode (manual click → LOADED/BACK)") }
+            if (semiAuto) Text("Semi-auto has no fixed test count. Tap each YouTube video yourself; CellTracker records T0 from the click. Tap LOADED / BACK when the page is loaded. Use AD / SKIP for advertisements; AD rows are excluded from delay statistics.", style = MaterialTheme.typography.bodySmall)
             Button(onClick = { context.startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }) { Text("1. Enable CellTracker Accessibility") }
             Button(onClick = {
-                val cfg = VideoLoadingConfig((count.toIntOrNull() ?: 10).coerceIn(1, 50), ((timeout.toLongOrNull() ?: 15) * 1000).coerceAtLeast(3000), (((returnWait.toDoubleOrNull() ?: 2.0) * 1000).toLong()).coerceAtLeast(500), autoRecord)
+                val cfg = VideoLoadingConfig(
+                    count = (count.toIntOrNull() ?: 10).coerceIn(1, 50),
+                    timeoutMs = ((timeout.toLongOrNull() ?: 15) * 1000).coerceAtLeast(3000),
+                    returnWaitMs = (((returnWait.toDoubleOrNull() ?: 2.0) * 1000).toLong()).coerceAtLeast(500),
+                    autoRecord = autoRecord,
+                    semiAuto = semiAuto
+                )
                 repo.arm(cfg)
                 // The accessibility service is normally already connected at this point; explicitly
                 // ask it to create the overlay instead of waiting for onServiceConnected() again.
@@ -2469,7 +2478,7 @@ private fun VideoLoadingScreen(onBack: () -> Unit) {
                 val launch = context.packageManager.getLaunchIntentForPackage("com.google.android.youtube")
                 if (launch != null) context.startActivity(launch) else Toast.makeText(context, "YouTube is not installed", Toast.LENGTH_SHORT).show()
             }) { Text("2. PREPARE TEST / Open YouTube") }
-            Text("Normal operation is fully automatic: START → click video → AUTO DETECTING → loaded → Back → next video. MANUAL LOADED is only a fallback if automatic detection is late or wrong.", style = MaterialTheme.typography.bodySmall)
+            Text(if (semiAuto) "Semi-auto: START → manually tap a video → LOADED / BACK when ready → repeat. Press AD / SKIP for an ad." else "AUTO: START → different video → first-play detection → Back → next video → auto-scroll. LOADED / BACK is a manual fallback.", style = MaterialTheme.typography.bodySmall)
             TextButton(onClick = { history = repo.history() }) { Text("Refresh History") }
             Text("History", style = MaterialTheme.typography.titleMedium)
             if (history.isEmpty()) Text("No video loading sessions yet", style = MaterialTheme.typography.bodySmall)
@@ -2503,7 +2512,7 @@ private fun VideoLoadingScreen(onBack: () -> Unit) {
                 Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Summary", style = MaterialTheme.typography.titleMedium)
                     Text("Status: ${d.status}")
-                    Text("Attempts: ${d.samples.size} · Success: ${d.samples.count { it.result == "PASS" }} · Timeout: ${d.samples.count { it.result == "TIMEOUT" }}")
+                    Text("Attempts: ${d.samples.size} · Success: ${d.samples.count { it.result == "PASS" }} · Timeout: ${d.samples.count { it.result == "TIMEOUT" }} · AD: ${d.samples.count { it.result == "AD" }}")
                     Text("Average: ${if (values.isEmpty()) "--" else String.format(Locale.US, "%.0f ms", values.average())} · Median: ${pct(.5)?.let { "$it ms" } ?: "--"}")
                     Text("P90: ${pct(.9)?.let { "$it ms" } ?: "--"} · P95: ${pct(.95)?.let { "$it ms" } ?: "--"} · Min/Max: ${values.minOrNull()?.let { "$it ms" } ?: "--"} / ${values.maxOrNull()?.let { "$it ms" } ?: "--"}")
                     HorizontalDivider()

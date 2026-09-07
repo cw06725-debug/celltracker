@@ -33,6 +33,7 @@ object VideoLoadingExporter {
             listOf("Attempts", d.samples.size.toString()),
             listOf("Success", d.samples.count { sample -> sample.result == "PASS" }.toString()),
             listOf("Timeout", d.samples.count { sample -> sample.result == "TIMEOUT" }.toString()),
+            listOf("Advertisement", d.samples.count { sample -> sample.result == "AD" }.toString()),
             listOf("Average ms", if (ok.isNotEmpty()) String.format(Locale.US, "%.0f", ok.average()) else ""),
             listOf("Median ms", percentile(0.5)?.toString().orEmpty()),
             listOf("P90 ms", percentile(0.9)?.toString().orEmpty()),
@@ -60,6 +61,7 @@ object VideoLoadingExporter {
 
         val successCount = d.samples.count { sample -> sample.result == "PASS" }
         val timeoutCount = d.samples.count { sample -> sample.result == "TIMEOUT" }
+        val adCount = d.samples.count { sample -> sample.result == "AD" }
         val averageText = if (values.isNotEmpty()) String.format(Locale.US, "%.0f ms", values.average()) else "--"
         val p90Text = percentile(0.9)?.let { "$it ms" } ?: "--"
         val p95Text = percentile(0.95)?.let { "$it ms" } ?: "--"
@@ -68,7 +70,7 @@ object VideoLoadingExporter {
             append("<html><head><meta name='viewport' content='width=device-width'>")
             append("<style>body{font-family:sans-serif;margin:18px}table{border-collapse:collapse;width:100%;display:block;overflow:auto}td,th{padding:8px;border-bottom:1px solid #ddd;white-space:nowrap}.card{padding:12px;border:1px solid #ddd;border-radius:12px;margin:10px 0}</style>")
             append("</head><body><h1>YouTube Video Page Loading</h1>")
-            append("<div class='card'>Attempts ${d.samples.size} · Success $successCount · Timeout $timeoutCount<br>")
+            append("<div class='card'>Attempts ${d.samples.size} · Success $successCount · Timeout $timeoutCount · AD $adCount<br>")
             append("Average $averageText · P90 $p90Text · P95 $p95Text</div>")
             append("<table><tr><th>#</th><th>Title</th><th>Delay</th><th>Result</th><th>Detection</th><th>RAT</th><th>RSRP</th><th>SINR</th><th>PCI</th></tr>")
             d.samples.forEach { sample ->

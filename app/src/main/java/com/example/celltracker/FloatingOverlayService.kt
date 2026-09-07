@@ -52,10 +52,12 @@ class FloatingOverlayService : Service() {
     private var startView: View? = null
     private var closeConfirmView: View? = null
     private var refreshJob: Job? = null
+    private var clockJob: Job? = null
     private var compact = false
     private var lastTargetSimNo: Int? = null
 
     private lateinit var headerText: TextView
+    private lateinit var clockText: TextView
     private lateinit var primaryText: TextView
     private lateinit var secondaryText: TextView
     private lateinit var dataText: TextView
@@ -122,6 +124,8 @@ class FloatingOverlayService : Service() {
         headerRow.addView(toggleButton, LinearLayout.LayoutParams(dp(38), dp(36)).apply { marginEnd = dp(3) })
         headerRow.addView(closeButton, LinearLayout.LayoutParams(dp(36), dp(36)))
         root.addView(headerRow)
+        clockText = textView(12f, true).apply { text = "--:--:--.---" }
+        root.addView(clockText)
 
         primaryText = textView(17f, true).apply { text = "RSRP --   SINR --" }
         secondaryText = textView(13f, false).apply { text = "RSRQ -- · B-- · PCI --" }
@@ -172,6 +176,19 @@ class FloatingOverlayService : Service() {
         windowManager.addView(root, params)
         setCompact(compact)
         updateControls(RecordingState.status.value.isRecording)
+        startClockLoop()
+    }
+
+
+    private fun startClockLoop() {
+        clockJob?.cancel()
+        clockJob = CoroutineScope(SupervisorJob() + Dispatchers.Main).launch {
+            while (isActive) {
+                val now = java.util.Date()
+                clockText.text = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US).format(now)
+                delay(50L)
+            }
+        }
     }
 
     private fun attachDrag(handle: View, params: WindowManager.LayoutParams) {
@@ -236,6 +253,7 @@ class FloatingOverlayService : Service() {
 
     private fun startRefreshLoop() {
         refreshJob?.cancel()
+        clockJob?.cancel()
         refreshJob = scope.launch {
             while (isActive) {
                 val status = RecordingState.status.value
