@@ -535,12 +535,15 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         ).apply { gravity = Gravity.TOP or Gravity.START }
 
         val density = resources.displayMetrics.density
-        val tapSlopPx = 24f * density
-        val longPressMs = 500L
+        // Semi-auto gesture classifier: allow normal finger jitter without mistaking a tap for a scroll.
+        // Real scrolling is detected from the maximum displacement during the whole gesture, not only UP-DOWN.
+        val tapSlopPx = 36f * density
+        val longPressMs = 650L
         var downX = 0f
         var downY = 0f
         var downElapsed = 0L
         var multiTouch = false
+        var maxDistanceFromDown = 0f
         val points = ArrayList<Pair<Float, Float>>()
 
         capture.setOnTouchListener { _, e ->
@@ -550,6 +553,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                     downY = e.rawY
                     downElapsed = SystemClock.elapsedRealtime()
                     multiTouch = false
+                    maxDistanceFromDown = 0f
                     points.clear()
                     points.add(e.rawX to e.rawY)
                     true
@@ -559,6 +563,9 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
+                    val mdx = e.rawX - downX
+                    val mdy = e.rawY - downY
+                    maxDistanceFromDown = maxOf(maxDistanceFromDown, kotlin.math.sqrt(mdx * mdx + mdy * mdy))
                     if (points.isEmpty() || kotlin.math.abs(points.last().first - e.rawX) > 3f || kotlin.math.abs(points.last().second - e.rawY) > 3f) {
                         points.add(e.rawX to e.rawY)
                     }
@@ -575,14 +582,17 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                     val dx = e.rawX - downX
                     val dy = e.rawY - downY
                     val distance = kotlin.math.sqrt(dx * dx + dy * dy)
-                    val isTap = !multiTouch && distance <= tapSlopPx && duration < longPressMs
+                    maxDistanceFromDown = maxOf(maxDistanceFromDown, distance)
+                    val isTap = !multiTouch && maxDistanceFromDown <= tapSlopPx && duration < longPressMs
                     val inMediaArea = isSemiMediaTapArea(e.rawX, e.rawY)
 
                     if (isTap && inMediaArea) {
                         // T0 is the user's real tap-up time.  Remove the capture layer, then replay
                         // the same tap into YouTube.  No Accessibility click event is required.
-                        val wall = System.currentTimeMillis()
-                        val elapsed = upElapsed
+                        // Use ACTION_DOWN as the user's real click instant. Classification waits until ACTION_UP,
+                        // but T0 must not be shifted later by the classification/replay work.
+                        val wall = System.currentTimeMillis() - duration
+                        val elapsed = downElapsed
                         seq++
                         currentTitle = "Manual media $seq"
                         t0 = wall
@@ -592,8 +602,20 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                         overlayStatus?.text = "SEMI · #$seq T0 TOUCH · tap LOADED at first frame"
                         removeSemiTouchCapture()
                         scope.launch {
-                            delay(30)
-                            dispatchTap(e.rawX, e.rawY)
+                            // Give WindowManager one frame to remove the transparent capture layer before replay.
+                            delay(60)
+                            if (!dispatchTap(e.rawX, e.rawY)) {
+                                delay(100)
+                                if (!dispatchTap(e.rawX, e.rawY)) {
+                                    // Do not leave a phantom attempt when Android rejected the replay gesture.
+                                    t0 = 0L
+                                    semiT0ElapsedMs = 0L
+                                    semiT0Source = ""
+                                    seq = (seq - 1).coerceAtLeast(0)
+                                    overlayStatus?.text = "SEMI · tap replay failed · tap video again"
+                                    installSemiTouchCapture()
+                                }
+                            }
                         }
                     } else {
                         // Scroll/refresh/long-press/navigation taps must never start an attempt.
@@ -604,7 +626,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                             scope.launch { delay(120); installSemiTouchCapture() }
                         } else {
                             val why = when {
-                                distance > tapSlopPx -> "scroll"
+                                maxDistanceFromDown > tapSlopPx -> "scroll"
                                 duration >= longPressMs -> "long press"
                                 !inMediaArea -> "navigation tap"
                                 else -> "gesture"
@@ -676,12 +698,12 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         semiCaptureOverlay = null
     }
 
-    private fun dispatchTap(x: Float, y: Float) {
+    private fun dispatchTap(x: Float, y: Float): Boolean {
         val path = Path().apply { moveTo(x, y) }
         val gesture = GestureDescription.Builder()
             .addStroke(GestureDescription.StrokeDescription(path, 0, 45))
             .build()
-        dispatchGesture(gesture, null, null)
+        return dispatchGesture(gesture, null, null)
     }
 
     private fun clickableNode(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {

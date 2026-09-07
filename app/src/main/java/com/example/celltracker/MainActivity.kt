@@ -359,10 +359,10 @@ private fun MainScreen(
     var showLiveMap by remember { mutableStateOf(false) }
     var showMarkDialog by remember { mutableStateOf(false) }
     var showTaskNameDialog by remember { mutableStateOf(false) }
-    var taskNameInput by remember { mutableStateOf("") }
 
     val selected = state.sims.firstOrNull { it.subscriptionId == state.selectedSubscriptionId } ?: state.sims.firstOrNull()
     val context = LocalContext.current
+    val recordingMetaRepo = remember { TestMetadataRepository(context) }
     var lastExitBackAt by remember { mutableLongStateOf(0L) }
     BackHandler(enabled = showLiveMap) { showLiveMap = false }
     BackHandler(enabled = !showLiveMap) {
@@ -655,37 +655,14 @@ private fun MainScreen(
     }
 
     if (showTaskNameDialog) {
-        AlertDialog(
-            onDismissRequest = { showTaskNameDialog = false },
-            title = { Text("Recording task") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Give this recording a task name so it is easier to identify later. You can also skip it.")
-                    OutlinedTextField(
-                        value = taskNameInput,
-                        onValueChange = { if (it.length <= 48) taskNameInput = it },
-                        label = { Text("Task name") },
-                        placeholder = { Text("e.g. Zong 5G Drive Test") },
-                        singleLine = true
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    onStartRecording(taskNameInput.trim())
-                    showTaskNameDialog = false
-                    taskNameInput = ""
-                }) { Text("Start") }
-            },
-            dismissButton = {
-                Row {
-                    TextButton(onClick = {
-                        onStartRecording("")
-                        showTaskNameDialog = false
-                        taskNameInput = ""
-                    }) { Text("Skip") }
-                    TextButton(onClick = { showTaskNameDialog = false }) { Text("Cancel") }
-                }
+        TestMetadataDialog(
+            initial = recordingMetaRepo.last().copy(task = recordingMetaRepo.last().task.ifBlank { "Network Recording" }),
+            options = recordingMetaRepo.options(),
+            onDismiss = { showTaskNameDialog = false },
+            onConfirm = { meta ->
+                recordingMetaRepo.saveLast(meta)
+                onStartRecording(meta.displayName())
+                showTaskNameDialog = false
             }
         )
     }
@@ -2453,6 +2430,7 @@ private fun VideoLoadingScreen(onBack: () -> Unit) {
     var semiAuto by rememberSaveable { mutableStateOf(repo.loadConfig().semiAuto) }
     var history by remember { mutableStateOf(repo.history()) }
     var preview by remember { mutableStateOf<VideoLoadingDetail?>(null) }
+    var deleteVideoPath by remember { mutableStateOf<String?>(null) }
     var exportResult by remember { mutableStateOf<ExportResult?>(null) }
     val metaRepo = remember { TestMetadataRepository(context) }
     var showMetadata by remember { mutableStateOf(false) }
@@ -2495,6 +2473,7 @@ private fun VideoLoadingScreen(onBack: () -> Unit) {
                                     .onSuccess { exportResult = it }
                                     .onFailure { Toast.makeText(context, it.message, Toast.LENGTH_LONG).show() }
                             }) { Text("Export / Share") }
+                            TextButton(onClick = { deleteVideoPath = d.path }) { Text("Delete") }
                         }
                     }
                 }
@@ -2552,7 +2531,26 @@ private fun VideoLoadingScreen(onBack: () -> Unit) {
             confirmButton = { TextButton(onClick = {
                 runCatching { VideoLoadingExporter.export(context, d.path) }.onSuccess { exportResult = it }
             }) { Text("Share") } },
-            dismissButton = { TextButton(onClick = { preview = null }) { Text("Close") } }
+            dismissButton = {
+                Row {
+                    TextButton(onClick = { deleteVideoPath = d.path }) { Text("Delete") }
+                    TextButton(onClick = { preview = null }) { Text("Close") }
+                }
+            }
+        )
+    }
+    deleteVideoPath?.let { path ->
+        AlertDialog(
+            onDismissRequest = { deleteVideoPath = null },
+            title = { Text("Delete YouTube test report?") },
+            text = { Text("This deletes the saved YouTube test result. This action cannot be undone.") },
+            confirmButton = { TextButton(onClick = {
+                repo.delete(path)
+                if (preview?.path == path) preview = null
+                history = repo.history()
+                deleteVideoPath = null
+            }) { Text("Delete") } },
+            dismissButton = { TextButton(onClick = { deleteVideoPath = null }) { Text("Cancel") } }
         )
     }
     exportResult?.let { result -> ExportSuccessDialog(result = result, onDismiss = { exportResult = null }) }

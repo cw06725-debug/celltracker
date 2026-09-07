@@ -96,6 +96,16 @@ class VideoLoadingRepository(private val context: Context) {
         meta(file, start, end, status, recording)
     }
 
+    fun delete(path: String): Boolean {
+        val file = File(path)
+        if (!file.exists()) return true
+        val detail = runCatching { load(path) }.getOrNull()
+        detail?.recordingPath?.takeIf { it.isNotBlank() }?.let { recordingPath ->
+            // Do not delete the shared network recording here; it may also be visible in Recording history.
+        }
+        return runCatching { file.delete() }.getOrDefault(false)
+    }
+
     fun history(): List<VideoLoadingDetail> =
         dir().listFiles { file -> file.extension == "csv" }
             ?.mapNotNull { file -> runCatching { load(file.absolutePath) }.getOrNull() }
