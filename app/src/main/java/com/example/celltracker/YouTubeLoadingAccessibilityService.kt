@@ -17,6 +17,16 @@ import androidx.core.content.ContextCompat
 import kotlinx.coroutines.*
 
 class YouTubeLoadingAccessibilityService : AccessibilityService() {
+    companion object {
+        @Volatile private var activeInstance: YouTubeLoadingAccessibilityService? = null
+
+        /** Called after Video Loading is armed. AccessibilityService may already be connected. */
+        fun requestOverlay() {
+            activeInstance?.scope?.launch {
+                if (activeInstance?.repo?.isArmed() == true) activeInstance?.showOverlay()
+            }
+        }
+    }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private lateinit var repo: VideoLoadingRepository
     private var overlay: View? = null
@@ -29,13 +39,23 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
     private var recordingStarted = false
 
     override fun onServiceConnected() {
+        activeInstance = this
         repo = VideoLoadingRepository(this)
         config = repo.loadConfig()
         if (repo.isArmed()) showOverlay()
     }
 
-    override fun onAccessibilityEvent(event: android.view.accessibility.AccessibilityEvent?) {}
+    override fun onAccessibilityEvent(event: android.view.accessibility.AccessibilityEvent?) {
+        // Fallback: if the test was armed after the accessibility service connected,
+        // make sure the overlay appears as soon as YouTube generates an event.
+        if (::repo.isInitialized && repo.isArmed() && overlay == null) showOverlay()
+    }
     override fun onInterrupt() {}
+
+    override fun onDestroy() {
+        if (activeInstance === this) activeInstance = null
+        super.onDestroy()
+    }
 
     private fun showOverlay() {
         if (overlay != null) return

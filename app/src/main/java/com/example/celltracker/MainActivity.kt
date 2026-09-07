@@ -2459,6 +2459,9 @@ private fun VideoLoadingScreen(onBack: () -> Unit) {
             Button(onClick = {
                 val cfg = VideoLoadingConfig((count.toIntOrNull() ?: 10).coerceIn(1, 50), ((timeout.toLongOrNull() ?: 15) * 1000).coerceAtLeast(3000), (((returnWait.toDoubleOrNull() ?: 2.0) * 1000).toLong()).coerceAtLeast(500), autoRecord)
                 repo.arm(cfg)
+                // The accessibility service is normally already connected at this point; explicitly
+                // ask it to create the overlay instead of waiting for onServiceConnected() again.
+                YouTubeLoadingAccessibilityService.requestOverlay()
                 val launch = context.packageManager.getLaunchIntentForPackage("com.google.android.youtube")
                 if (launch != null) context.startActivity(launch) else Toast.makeText(context, "YouTube is not installed", Toast.LENGTH_SHORT).show()
             }) { Text("2. PREPARE TEST / Open YouTube") }
