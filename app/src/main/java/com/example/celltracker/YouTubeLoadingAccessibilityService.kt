@@ -137,7 +137,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             // nevertheless opened the media page, treat that gesture as the real tap. This fixes
             // the common "scroll · no T0" case without asking the tester to press RETRY.
             val recoveredAge = if (semiLastGestureElapsedMs > 0L) nowElapsed - semiLastGestureElapsedMs else Long.MAX_VALUE
-            if (!wasPlaybackPage && recoveredAge in 0..2500L) {
+            if (!wasPlaybackPage && recoveredAge in 0..20_000L) {
                 seq++
                 currentTitle = semiLastGestureTitle.ifBlank { "Manual media $seq" }
                 t0 = semiLastGestureWallMs
@@ -682,16 +682,28 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                                 !inMediaArea -> "navigation tap"
                                 else -> "gesture"
                             }
-                            if (why != "scroll") {
+                            // Keep the original ACTION_DOWN timestamp for any single-finger
+                            // gesture in the YouTube content area. YouTube sometimes reports a
+                            // slightly drifting tap as a scroll and, on slow networks, the actual
+                            // watch/Shorts page may not become detectable for several seconds.
+                            // If a playback page appears later, onAccessibilityEvent will recover
+                            // this real touch instant as T0. A later gesture simply overwrites it.
+                            val mayBecomeMediaTap = isSemiMediaTapArea(downX, downY) || isSemiMediaTapArea(e.rawX, e.rawY)
+                            if (!mayBecomeMediaTap) {
                                 semiLastGestureWallMs = 0L
                                 semiLastGestureElapsedMs = 0L
+                                semiLastGestureTitle = ""
                             }
-                            overlayStatus?.text = "SEMI · $why · no T0"
+                            overlayStatus?.text = "SEMI · $why · waiting for navigation…"
                             replayGesture(points.toList(), duration) {
                                 scope.launch {
                                     // Give YouTube time to complete navigation. If the replay opened a video,
                                     // onAccessibilityEvent will recover the original ACTION_DOWN as T0.
-                                    delay(160)
+                                    // Do not immediately re-arm after a scroll-like gesture.
+                                    // A slow video navigation can take several seconds before the
+                                    // playback page is visible. Re-arming too early lets the next
+                                    // accessibility/touch cycle erase the original T0 candidate.
+                                    delay(900)
                                     if (running && config.semiAuto && t0 == 0L && !looksLikePlaybackPage(rootInActiveWindow)) {
                                         installSemiTouchCapture()
                                     }

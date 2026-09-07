@@ -1,3 +1,12 @@
+# CellTracker v0.9.3.0.4
+
+Hotfix for YouTube semi-auto touch timing after scrolling and slow video navigation.
+
+- Extend recovered touch T0 window to 20 seconds.
+- Preserve the real ACTION_DOWN timestamp for scroll-like gestures in media content.
+- Recover T0 if YouTube actually navigates to playback, even when the gesture was initially classified as scroll.
+- Delay re-arming the transparent capture layer after scroll-like gestures to avoid losing the pending T0 candidate.
+
 # CellTracker v0.9.0.9
 
 Based on the field-tested v0.9.0.8 project.
