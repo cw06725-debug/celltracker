@@ -459,7 +459,11 @@ private fun MainScreen(
                 Field("Operator", c.operator)
                 Field("RAT", c.displayRat.ifBlank { c.rat })
                 val dataSim = state.sims.firstOrNull { it.subscriptionId == state.dataSimSubscriptionId }
-                Field("Data SIM", dataSim?.let { "SIM ${it.simSlotIndex + 1} ${it.servingCell.operator}" } ?: "--")
+                Field("Data SIM", dataSim?.let { sim ->
+                    val slot = "SIM ${sim.simSlotIndex + 1}"
+                    val op = sim.servingCell.operator.trim()
+                    if (op.equals(slot, ignoreCase = true) || op.equals("SIM", ignoreCase = true) || op.isBlank()) slot else "$slot · $op"
+                } ?: "--")
                 Field("DataNet", state.dataNetwork)
                 Field("Data RAT", c.dataRat)
                 Field("Voice RAT", c.voiceRat)

@@ -104,6 +104,46 @@ class CellularRepository(private val context: Context) {
         return SimCellState(subscriptionId, simSlotIndex, simLabel, serving, neighbors)
     }
 
+
+    private fun resolveOperatorName(
+        tm: TelephonyManager,
+        cellMcc: String?,
+        cellMnc: String?,
+        fallback: String
+    ): String {
+        fun usable(value: String?): String? {
+            val v = value?.trim().orEmpty()
+            if (v.isBlank()) return null
+            val normalized = v.lowercase().replace(" ", "")
+            if (normalized.matches(Regex("sim\\d*")) ||
+                normalized.matches(Regex("slot\\d*")) ||
+                normalized == "unknown" || normalized == "null") return null
+            return v
+        }
+
+        usable(runCatching { tm.networkOperatorName }.getOrNull())?.let { return it }
+        usable(runCatching { tm.simOperatorName }.getOrNull())?.let { return it }
+
+        val networkNumeric = runCatching { tm.networkOperator }.getOrNull().orEmpty()
+        operatorFromPlmn(networkNumeric)?.let { return it }
+        val cellPlmn = if (!cellMcc.isNullOrBlank() && !cellMnc.isNullOrBlank()) cellMcc + cellMnc else ""
+        operatorFromPlmn(cellPlmn)?.let { return it }
+        val simNumeric = runCatching { tm.simOperator }.getOrNull().orEmpty()
+        operatorFromPlmn(simNumeric)?.let { return it }
+
+        return fallback
+    }
+
+    private fun operatorFromPlmn(plmnRaw: String): String? {
+        val plmn = plmnRaw.filter { it.isDigit() }
+        return when (plmn) {
+            "41001", "41006", "41007" -> "Jazz"
+            "41003" -> "Ufone"
+            "41004" -> "Zong"
+            else -> null
+        }
+    }
+
     private suspend fun requestFreshCells(tm: TelephonyManager): List<CellInfo> = suspendCancellableCoroutine { cont ->
         try {
             tm.requestCellInfoUpdate(context.mainExecutor, object : TelephonyManager.CellInfoCallback() {
@@ -137,7 +177,7 @@ class CellularRepository(private val context: Context) {
                 simLabel = simLabel,
                 rat = "LTE",
                 displayRat = "LTE",
-                operator = tm.networkOperatorName.ifBlank { simLabel },
+                operator = resolveOperatorName(tm, id.mccString, id.mncString, simLabel),
                 mcc = id.mccString ?: "--",
                 mnc = id.mncString ?: "--",
                 tac = intValue(id.tac),
@@ -166,7 +206,7 @@ class CellularRepository(private val context: Context) {
                 simLabel = simLabel,
                 rat = "NR",
                 displayRat = "NR",
-                operator = tm.networkOperatorName.ifBlank { simLabel },
+                operator = resolveOperatorName(tm, id.mccString, id.mncString, simLabel),
                 mcc = id.mccString ?: "--",
                 mnc = id.mncString ?: "--",
                 tac = intValue(id.tac),
