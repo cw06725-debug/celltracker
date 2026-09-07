@@ -39,6 +39,8 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
     private var t0 = 0L
     private var currentTitle = ""
     private var recordingStarted = false
+    private val testedContentKeys = linkedSetOf<String>()
+    private var autoScrollCount = 0
 
     override fun onServiceConnected() {
         activeInstance = this
@@ -136,6 +138,8 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         config = repo.loadConfig()
         file = repo.create(System.currentTimeMillis())
         running = true; seq = 0
+        testedContentKeys.clear()
+        autoScrollCount = 0
         if (config.autoRecord && !RecordingState.status.value.isRecording) {
             val sub = SubscriptionManager.getDefaultDataSubscriptionId()
             ContextCompat.startForegroundService(this, Intent(this, RecordingService::class.java)
@@ -152,49 +156,74 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         if (!running) return
         if (seq >= config.count) { stopTest("Completed", status); return }
         if (rootInActiveWindow?.packageName?.toString() != "com.google.android.youtube") {
-            status.text = "Paused · waiting for YouTube Videos page"
+            status.text = "Paused · waiting for YouTube creator page"
             return
         }
         delay(config.returnWaitMs)
-        status.text = "Locating item ${seq + 1}/${config.count}…"
-        val root = rootInActiveWindow
-        val content = creatorContentBounds(root)
-        if (content == null) {
-            status.text = "Creator content area not found · stay on Videos or Shorts tab and tap RETRY"
-            return
-        }
-        val candidates = mediaCandidates(root, content)
-        if (candidates.isEmpty()) {
-            status.text = "No safe media item found · scroll slightly if needed, then tap RETRY"
-            return
-        }
-        val raw = candidates.getOrNull(seq.coerceAtMost(candidates.lastIndex)) ?: candidates.last()
-        val node = clickableNode(raw) ?: raw
-        currentTitle = (raw.contentDescription ?: raw.text ?: "Item ${seq + 1}").toString().take(160)
-        seq++
-        t0 = System.currentTimeMillis()
-        status.text = "Item $seq/${config.count} · CLICKING…"
-        val clicked = clickNode(node)
-        if (!clicked) {
-            t0 = 0L; seq--
-            status.text = "Click failed · tap RETRY"
-            return
-        }
-        status.text = "Video $seq/${config.count} · AUTO DETECTING…"
-        scope.launch {
-            val thisSeq = seq
-            delay(900)
-            var readyHits = 0
-            while (running && seq == thisSeq && System.currentTimeMillis() - t0 < config.timeoutMs) {
-                delay(300)
-                readyHits = if (isVideoPageReady(rootInActiveWindow)) readyHits + 1 else 0
-                if (readyHits >= 3) {
-                    completeAttempt("PASS", "AUTO", status)
-                    return@launch
-                }
+
+        // Never select by attempt index. After Back, YouTube may restore/reorder the viewport,
+        // so an index-based lookup can hit the same cached item again. Always choose the first
+        // visible content whose stable content key has not been tested in this session.
+        repeat(5) { scrollRound ->
+            status.text = if (scrollRound == 0) {
+                "Locating new item ${seq + 1}/${config.count}…"
+            } else {
+                "Finding new content · scroll $scrollRound/4…"
             }
-            if (running && seq == thisSeq && t0 > 0) completeAttempt("TIMEOUT", "AUTO", status)
+
+            val root = rootInActiveWindow
+            val content = creatorContentBounds(root)
+            if (content == null) {
+                status.text = "Creator content area not found · stay on Videos or Shorts tab and tap RETRY"
+                return
+            }
+            val candidates = mediaCandidates(root, content)
+            val candidate = candidates.firstOrNull { it.key !in testedContentKeys }
+            if (candidate != null) {
+                currentTitle = candidate.title.take(160)
+                testedContentKeys += candidate.key
+                seq++
+                t0 = System.currentTimeMillis()
+                status.text = "Item $seq/${config.count} · CLICKING…"
+                val clicked = clickNode(candidate.node)
+                if (!clicked) {
+                    t0 = 0L
+                    seq--
+                    testedContentKeys.remove(candidate.key)
+                    status.text = "Click failed · tap RETRY"
+                    return
+                }
+                status.text = "Video $seq/${config.count} · AUTO DETECTING…"
+                scope.launch {
+                    val thisSeq = seq
+                    delay(900)
+                    var readyHits = 0
+                    while (running && seq == thisSeq && System.currentTimeMillis() - t0 < config.timeoutMs) {
+                        delay(300)
+                        readyHits = if (isVideoPageReady(rootInActiveWindow)) readyHits + 1 else 0
+                        if (readyHits >= 3) {
+                            completeAttempt("PASS", "AUTO", status)
+                            return@launch
+                        }
+                    }
+                    if (running && seq == thisSeq && t0 > 0) completeAttempt("TIMEOUT", "AUTO", status)
+                }
+                return
+            }
+
+            // All currently visible cards have already been tested. Scroll the creator grid/list
+            // to expose new content, wait for YouTube to settle, then scan again.
+            if (scrollRound < 4) {
+                status.text = "Visible items already tested · scrolling for new content…"
+                if (!scrollCreatorContent(content)) {
+                    status.text = "No new media item found · unable to scroll · tap RETRY"
+                    return
+                }
+                autoScrollCount++
+                delay(1200)
+            }
         }
+        status.text = "No new media item found after scrolling · tap RETRY"
     }
 
     private fun completeAttempt(result: String, detection: String, status: TextView) {
@@ -283,44 +312,90 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         return if (top < bottom) ContentBounds(top, bottom) else null
     }
 
-    private fun mediaCandidates(root: AccessibilityNodeInfo?, bounds: ContentBounds): List<AccessibilityNodeInfo> {
+    private data class MediaCandidate(
+        val node: AccessibilityNodeInfo,
+        val rect: Rect,
+        val key: String,
+        val title: String
+    )
+
+    private fun descendantLabels(node: AccessibilityNodeInfo): List<String> {
+        val out = mutableListOf<String>()
+        fun walk(n: AccessibilityNodeInfo, depth: Int) {
+            if (depth > 5) return
+            val t = nodeLabel(n)
+            if (t.isNotBlank()) out += t
+            for (i in 0 until n.childCount) n.getChild(i)?.let { walk(it, depth + 1) }
+        }
+        walk(node, 0)
+        return out.distinct().take(12)
+    }
+
+    /**
+     * Separate geometry profiles are used for normal Videos rows and Shorts tiles.  Do not
+     * require the thumbnail itself to expose text: on several YouTube builds the clickable card
+     * has no label while its title/metadata live in descendants or siblings.
+     */
+    private fun mediaCandidates(root: AccessibilityNodeInfo?, bounds: ContentBounds): List<MediaCandidate> {
         if (root == null) return emptyList()
         val screenW = resources.displayMetrics.widthPixels
         val rejected = listOf(
             "subscribe", "subscriptions", "community", "instagram", "more", "sort", "search",
-            "home", "library", "you", "channel", "links",
-            "订阅", "社区", "更多", "排序", "搜索", "首页", "我的", "链接", "频道"
+            "home", "library", "you", "channel", "links", "videos", "shorts", "live", "playlist",
+            "订阅", "社区", "更多", "排序", "搜索", "首页", "我的", "链接", "频道", "视频", "直播", "播放列表"
         )
-        val found = mutableListOf<Pair<AccessibilityNodeInfo, Rect>>()
-        fun walk(n: AccessibilityNodeInfo) {
-            val text = nodeLabel(n)
-            val r = Rect(); n.getBoundsInScreen(r)
-            val click = if (n.isClickable) n else clickableNode(n)
-            if (text.isNotBlank() && click != null &&
-                r.top >= bounds.top && r.bottom <= bounds.bottom &&
-                r.width() >= 90 && r.height() >= 36 &&
-                rejected.none { text.contains(it, true) }) {
-                val cr = Rect(); click.getBoundsInScreen(cr)
-                val inContent = cr.top >= bounds.top && cr.bottom <= bounds.bottom
-                val notTinyMenu = cr.width() >= 110 && cr.height() >= 55
-                val notWideTab = !(cr.width() > (screenW * 0.94f).toInt() && cr.height() < 110)
-                val plausibleVideoRow = cr.width() >= (screenW * 0.55f).toInt() && cr.height() in 90..700
-                val plausibleShortTile = cr.width() in (screenW * 0.20f).toInt()..(screenW * 0.50f).toInt() && cr.height() >= 180
-                if (inContent && notTinyMenu && notWideTab && (plausibleVideoRow || plausibleShortTile)) {
-                    found += n to Rect(cr)
-                }
+        val found = mutableListOf<MediaCandidate>()
+        val seenRects = mutableSetOf<String>()
+
+        fun addCandidate(click: AccessibilityNodeInfo) {
+            val cr = Rect(); click.getBoundsInScreen(cr)
+            if (cr.isEmpty || cr.top < bounds.top || cr.bottom > bounds.bottom) return
+            val videoRow = cr.width() >= (screenW * 0.55f).toInt() && cr.height() in 90..720
+            val shortTile = cr.width() in (screenW * 0.20f).toInt()..(screenW * 0.55f).toInt() && cr.height() >= 170
+            if (!videoRow && !shortTile) return
+            if (cr.width() > (screenW * 0.96f).toInt() && cr.height() < 120) return
+
+            val labels = descendantLabels(click)
+            val joined = labels.joinToString(" | ").trim()
+            if (joined.isNotBlank() && rejected.any { bad -> joined.equals(bad, true) }) return
+            val rectKey = "${cr.left / 16}:${cr.top / 16}:${cr.right / 16}:${cr.bottom / 16}"
+            if (!seenRects.add(rectKey)) return
+
+            // Content identity must not depend on screen Y because the same card moves after a
+            // scroll. Prefer YouTube's text/description. Geometry is only a last-resort key.
+            val normalized = labels.joinToString("|") { it.lowercase().replace(Regex("\\s+"), " ").trim() }
+            val key = if (normalized.isNotBlank()) {
+                "txt:${normalized.take(300)}"
+            } else {
+                "geom:${cr.width() / 20}:${cr.height() / 20}:${cr.left / 20}:scroll$autoScrollCount"
             }
+            val title = labels.firstOrNull { it.length >= 3 } ?: "Media ${seq + 1}"
+            found += MediaCandidate(click, Rect(cr), key, title)
+        }
+
+        fun walk(n: AccessibilityNodeInfo) {
+            if (n.isClickable) addCandidate(n)
             for (i in 0 until n.childCount) n.getChild(i)?.let(::walk)
         }
         walk(root)
-        return found
-            .sortedWith(compareBy<Pair<AccessibilityNodeInfo, Rect>> { it.second.top }.thenBy { it.second.left })
-            .distinctBy { p ->
-                val r = p.second
-                "${r.left / 20}:${r.top / 20}:${r.right / 20}:${r.bottom / 20}"
-            }
-            .map { it.first }
-            .take(30)
+
+        return found.sortedWith(compareBy<MediaCandidate> { it.rect.top }.thenBy { it.rect.left }).take(40)
+    }
+
+    private fun scrollCreatorContent(bounds: ContentBounds): Boolean {
+        val dm = resources.displayMetrics
+        val x = dm.widthPixels * 0.5f
+        val startY = (bounds.bottom - 40).coerceAtMost((dm.heightPixels * 0.86f).toInt()).toFloat()
+        val endY = (bounds.top + (bounds.bottom - bounds.top) * 0.28f).toFloat()
+        if (startY <= endY) return false
+        val path = Path().apply {
+            moveTo(x, startY)
+            lineTo(x, endY)
+        }
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0, 420))
+            .build()
+        return dispatchGesture(gesture, null, null)
     }
 
     private fun clickNode(node: AccessibilityNodeInfo): Boolean {
