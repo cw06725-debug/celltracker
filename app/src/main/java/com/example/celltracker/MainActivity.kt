@@ -2495,6 +2495,8 @@ private fun WhatsAppSendScreen(onBack: () -> Unit) {
     preview?.let { d ->
         val values = d.samples.map { it.delayMs }.sorted()
         fun pct(p: Double): Long? = if (values.isEmpty()) null else values[((values.size - 1) * p).toInt().coerceIn(0, values.lastIndex)]
+        var detailTab by remember(d.path) { mutableIntStateOf(0) }
+        val detailTabs = listOf("Summary", "Attempts", "Map")
         Dialog(onDismissRequest = { preview = null }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
             Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                 Scaffold(
@@ -2502,30 +2504,79 @@ private fun WhatsAppSendScreen(onBack: () -> Unit) {
                         TopAppBar(
                             title = { Text("WhatsApp Send Result") },
                             navigationIcon = { TextButton(onClick = { preview = null }) { Text("Back") } },
-                            actions = { TextButton(onClick = { runCatching { WhatsAppSendExporter.export(context, d.path) }.onSuccess { exportResult = it } }) { Text("Share") } }
+                            actions = {
+                                TextButton(onClick = {
+                                    runCatching { WhatsAppSendExporter.export(context, d.path) }
+                                        .onSuccess { exportResult = it }
+                                        .onFailure { Toast.makeText(context, it.message, Toast.LENGTH_LONG).show() }
+                                }) { Text("Share") }
+                            }
                         )
+                    },
+                    bottomBar = {
+                        Surface(tonalElevation = 3.dp) {
+                            Row(
+                                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                OutlinedButton(onClick = { deletePath = d.path }, modifier = Modifier.weight(1f)) { Text("Delete") }
+                                OutlinedButton(onClick = { preview = null }, modifier = Modifier.weight(1f)) { Text("Close") }
+                                Button(onClick = {
+                                    runCatching { WhatsAppSendExporter.export(context, d.path) }
+                                        .onSuccess { exportResult = it }
+                                        .onFailure { Toast.makeText(context, it.message, Toast.LENGTH_LONG).show() }
+                                }, modifier = Modifier.weight(1f)) { Text("Share") }
+                            }
+                        }
                     }
                 ) { p ->
-                    LazyColumn(Modifier.padding(p).fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        item {
-                            Card(Modifier.fillMaxWidth()) {
-                                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Text("Summary", style = MaterialTheme.typography.titleMedium)
-                                    Text("Status: ${d.status}")
-                                    Text("Samples: ${d.samples.size}")
-                                    Text("Average: ${if (values.isEmpty()) "--" else String.format(Locale.US, "%.0f ms", values.average())} · Median: ${pct(.5)?.let { "$it ms" } ?: "--"}")
-                                    Text("P90: ${pct(.9)?.let { "$it ms" } ?: "--"} · P95: ${pct(.95)?.let { "$it ms" } ?: "--"}")
-                                    Text("Min / Max: ${values.minOrNull()?.let { "$it ms" } ?: "--"} / ${values.maxOrNull()?.let { "$it ms" } ?: "--"}")
+                    Column(Modifier.padding(p).fillMaxSize()) {
+                        Surface(modifier = Modifier.fillMaxWidth().zIndex(20f), color = MaterialTheme.colorScheme.surface, tonalElevation = 2.dp) {
+                            TabRow(selectedTabIndex = detailTab) {
+                                detailTabs.forEachIndexed { i, t ->
+                                    Tab(selected = detailTab == i, onClick = { detailTab = i }, text = { Text(t) })
                                 }
                             }
                         }
-                        items(d.samples.size) { i ->
-                            val s = d.samples[i]
-                            Card(Modifier.fillMaxWidth()) {
-                                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    Text("#${s.sequence} · ${s.delayMs} ms", style = MaterialTheme.typography.titleSmall)
-                                    Text("T0: ${java.text.SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(java.util.Date(s.t0Ms))} · T1: ${java.text.SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(java.util.Date(s.t1Ms))}")
-                                    Text("T0 source: ${s.t0Source} · ${s.snapshot.displayRat} · RSRP ${s.snapshot.rsrp} · SINR ${s.snapshot.sinr}", style = MaterialTheme.typography.bodySmall)
+                        Box(Modifier.fillMaxWidth().weight(1f).clipToBounds()) {
+                            when (detailTab) {
+                                0 -> LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    item {
+                                        Card(Modifier.fillMaxWidth()) {
+                                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                Text("Summary", style = MaterialTheme.typography.titleMedium)
+                                                Text("Status: ${d.status}")
+                                                Text("Attempts: ${d.samples.size}")
+                                                Text("Average: ${if (values.isEmpty()) "--" else String.format(Locale.US, "%.0f ms", values.average())} · Median: ${pct(.5)?.let { "$it ms" } ?: "--"}")
+                                                Text("P90: ${pct(.9)?.let { "$it ms" } ?: "--"} · P95: ${pct(.95)?.let { "$it ms" } ?: "--"}")
+                                                Text("Min / Max: ${values.minOrNull()?.let { "$it ms" } ?: "--"} / ${values.maxOrNull()?.let { "$it ms" } ?: "--"}")
+                                                val clickCount = d.samples.count { it.t0Source.equals("CLICK", true) }
+                                                val uiCount = d.samples.count { it.t0Source.contains("UI", true) }
+                                                Text("T0 Source: CLICK $clickCount · UI CHANGE $uiCount")
+                                            }
+                                        }
+                                    }
+                                }
+                                1 -> LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    items(d.samples, key = { it.sequence }) { a ->
+                                        Card(Modifier.fillMaxWidth()) {
+                                            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                                Text("#${a.sequence}  ${a.delayMs} ms", style = MaterialTheme.typography.titleSmall)
+                                                val timeFmt = java.text.SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
+                                                Text("Send ${if (a.t0Ms > 0) timeFmt.format(java.util.Date(a.t0Ms)) else "--"} · Sent ${if (a.t1Ms > 0) timeFmt.format(java.util.Date(a.t1Ms)) else "--"}", style = MaterialTheme.typography.bodySmall)
+                                                Text("T0 Source: ${a.t0Source.ifBlank { "UNKNOWN" }}", style = MaterialTheme.typography.bodySmall)
+                                                Text("${a.snapshot.displayRat} · RSRP ${a.snapshot.rsrp} · RSRQ ${a.snapshot.rsrq} · SINR ${a.snapshot.sinr} · PCI ${a.snapshot.pci}", style = MaterialTheme.typography.bodySmall)
+                                                Text("Band ${a.snapshot.band} · ARFCN ${a.snapshot.arfcn} · ${a.snapshot.operator}", style = MaterialTheme.typography.bodySmall)
+                                            }
+                                        }
+                                    }
+                                }
+                                else -> Box(Modifier.fillMaxSize().padding(8.dp).clipToBounds()) {
+                                    if (d.samples.any { it.snapshot.latitude != null && it.snapshot.longitude != null }) {
+                                        WhatsAppSendMap(d.samples, Modifier.fillMaxSize())
+                                    } else {
+                                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("No GPS points") }
+                                    }
                                 }
                             }
                         }
@@ -2538,21 +2589,19 @@ private fun WhatsAppSendScreen(onBack: () -> Unit) {
     deletePath?.let { path ->
         AlertDialog(
             onDismissRequest = { deletePath = null },
-            title = { Text("Delete WhatsApp result?") },
-            text = { Text(File(path).nameWithoutExtension) },
-            confirmButton = { TextButton(onClick = { repo.delete(path); deletePath = null; preview = null; history = repo.history() }) { Text("Delete") } },
+            title = { Text("Delete WhatsApp test report?") },
+            text = { Text("This deletes the saved WhatsApp image-send test result. This action cannot be undone.") },
+            confirmButton = { TextButton(onClick = {
+                repo.delete(path)
+                if (preview?.path == path) preview = null
+                history = repo.history()
+                deletePath = null
+            }) { Text("Delete") } },
             dismissButton = { TextButton(onClick = { deletePath = null }) { Text("Cancel") } }
         )
     }
 
-    exportResult?.let { result ->
-        AlertDialog(
-            onDismissRequest = { exportResult = null },
-            title = { Text("Report exported") },
-            text = { Text("${result.message}\n\nSaved to Downloads/CellTracker.") },
-            confirmButton = { TextButton(onClick = { exportResult = null }) { Text("OK") } }
-        )
-    }
+    exportResult?.let { result -> ExportSuccessDialog(result = result, onDismiss = { exportResult = null }) }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -2765,6 +2814,67 @@ private fun TestMetadataDialog(initial: TestMetadata, options: TestMetadataOptio
 }
 @Composable private fun EditableMetadataList(title:String,values:List<String>,onChange:(List<String>)->Unit){
     var input by remember{mutableStateOf("")}; Column(verticalArrangement=Arrangement.spacedBy(6.dp)){ Text(title,style=MaterialTheme.typography.titleMedium); values.forEach{v->Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){Text(v);TextButton(onClick={if(values.size>1)onChange(values-v)}){Text("Delete")}}}; Row(verticalAlignment=Alignment.CenterVertically){OutlinedTextField(input,{input=it},label={Text("Add $title")},modifier=Modifier.weight(1f),singleLine=true);TextButton(onClick={val v=input.trim();if(v.isNotEmpty()&&v !in values){onChange(values+v);input=""}}){Text("Add")}} }
+}
+
+@Composable
+private fun WhatsAppSendMap(
+    samples: List<WhatsAppSendSample>,
+    modifier: Modifier = Modifier.fillMaxWidth().height(260.dp)
+) {
+    val context = LocalContext.current
+    val markers = remember(samples) {
+        samples.mapNotNull { sample ->
+            val lat = sample.snapshot.latitude ?: return@mapNotNull null
+            val lon = sample.snapshot.longitude ?: return@mapNotNull null
+            TrackSample(
+                timestampMs = sample.t1Ms.takeIf { it > 0L } ?: sample.t0Ms,
+                simSlot = sample.snapshot.simSlot.takeIf { it >= 0 }?.plus(1) ?: 1,
+                subscriptionId = sample.snapshot.subscriptionId,
+                operator = sample.snapshot.operator,
+                rat = sample.snapshot.rat,
+                displayRat = sample.snapshot.displayRat,
+                mcc = sample.snapshot.mcc,
+                mnc = sample.snapshot.mnc,
+                tac = sample.snapshot.tac,
+                cellId = sample.snapshot.cellId,
+                pci = sample.snapshot.pci,
+                arfcn = sample.snapshot.arfcn,
+                rsrp = sample.snapshot.rsrp,
+                rsrq = sample.snapshot.rsrq,
+                sinr = sample.snapshot.sinr,
+                band = sample.snapshot.band,
+                bandwidth = sample.snapshot.bandwidth,
+                rssi = sample.snapshot.rssi,
+                carrierAggregation = sample.snapshot.carrierAggregation,
+                dataRat = sample.snapshot.dataNetwork,
+                latitude = lat,
+                longitude = lon,
+                altitude = "--",
+                accuracy = sample.snapshot.gpsAccuracy,
+                speedKmh = sample.snapshot.speedKmh,
+                bearing = "--",
+                locationValid = true,
+                isMarker = true,
+                markerId = "whatsapp_${sample.sequence}",
+                eventSource = sample.t0Source,
+                eventType = "WhatsApp #${sample.sequence} ${sample.delayMs} ms",
+                eventNote = "T0 ${sample.t0Source}",
+                dataSimSubscriptionId = sample.snapshot.dataSimSubscriptionId,
+                dataNetwork = sample.snapshot.dataNetwork
+            )
+        }
+    }
+    if (markers.isEmpty()) {
+        Box(modifier, contentAlignment = Alignment.Center) { Text("No GPS points") }
+        return
+    }
+    OsmTrackMap(
+        samples = markers.sortedBy { it.timestampMs },
+        modifier = modifier,
+        detailFields = SettingsRepository(context).load().mapDetailFields,
+        drawTrack = false,
+        showEndpoints = false
+    )
 }
 
 @Composable
