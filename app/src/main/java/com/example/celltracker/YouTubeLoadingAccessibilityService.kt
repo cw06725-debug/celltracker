@@ -433,9 +433,9 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         status.text = "SEMI · ARMING · release START…"
 
         semiRecoveryJob = scope.launch {
-            // Long enough to be beyond the START ACTION_UP and accessibility/window-change burst,
-            // short enough to feel immediate to the tester.
-            delay(320)
+            // Wait only long enough for START ACTION_UP to finish. In explicit manual-START mode
+            // the next content-area tap is authoritative, so a long arming delay is unnecessary.
+            delay(120)
             if (!running || generation != semiFlowGeneration || t0 > 0L || semiIgnorePlaybackUntilList) return@launch
 
             semiAttemptArmed = true
@@ -879,7 +879,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                     val isTap = !multiTouch && duration < longPressMs &&
                         (maxDistanceFromDown <= tapSlopPx || tapLikeWithClickableTarget)
 
-                    if (isTap && inMediaArea && !isPointInsideMiniPlayer(rootInActiveWindow, downX.toInt(), downY.toInt())) {
+                    if (isTap && inMediaArea) {
                         // T0 is the user's real tap-up time.  Remove the capture layer, then replay
                         // the same tap into YouTube.  No Accessibility click event is required.
                         // Use ACTION_DOWN as the user's real click instant. Classification waits until ACTION_UP,
@@ -923,20 +923,6 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                                         installSemiTouchCapture()
                                     }
                                 }
-                            }
-                        }
-                    } else if (isTap && inMediaArea && isPointInsideMiniPlayer(rootInActiveWindow, downX.toInt(), downY.toInt())) {
-                        // A persistent YouTube mini-player is not a new test item. Replay the tap so
-                        // the UI still behaves naturally, but never arm T0 / increment Attempt.
-                        removeSemiTouchCapture()
-                        overlayStatus?.text = "SEMI · mini-player tap ignored · no Attempt"
-                        scope.launch {
-                            delay(70)
-                            dispatchTap(e.rawX, e.rawY)
-                            delay(180)
-                            if (running && config.semiAuto && t0 == 0L && !looksLikePlaybackPage(rootInActiveWindow)) {
-                                installSemiTouchCapture()
-                                overlayStatus?.text = "SEMI · ready · tap the next YouTube video"
                             }
                         }
                     } else {
