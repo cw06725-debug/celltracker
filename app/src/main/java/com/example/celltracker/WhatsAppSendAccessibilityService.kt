@@ -8,7 +8,6 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
-import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -55,8 +54,6 @@ class WhatsAppSendAccessibilityService : AccessibilityService() {
         if (event.eventType != AccessibilityEvent.TYPE_VIEW_CLICKED) return
         val pkg = event.packageName?.toString().orEmpty()
         if (pkg != "com.whatsapp" && pkg != "com.whatsapp.w4b") return
-        if (!isWhatsAppSendClick(event)) return
-
         val clickUptime = event.eventTime
         if (clickUptime - lastAcceptedClickUptime < 500L) return
         lastAcceptedClickUptime = clickUptime
@@ -72,39 +69,11 @@ class WhatsAppSendAccessibilityService : AccessibilityService() {
 
     override fun onInterrupt() = Unit
 
-    private fun isWhatsAppSendClick(event: AccessibilityEvent): Boolean {
-        val source = event.source
-        if (matchesSendNode(source)) return true
-
-        // WhatsApp versions differ in which node emits TYPE_VIEW_CLICKED. Check only
-        // the immediate parent chain so unrelated screen content cannot contaminate it.
-        var parent = source?.parent
-        repeat(2) {
-            if (matchesSendNode(parent)) return true
-            parent = parent?.parent
-        }
-
-        val eventLabel = buildString {
-            append(event.contentDescription?.toString().orEmpty())
-            if (isNotEmpty()) append(' ')
-            append(event.text.joinToString(" ") { it?.toString().orEmpty() })
-        }.trim().lowercase()
-        return eventLabel == "send" || eventLabel.startsWith("send ")
-    }
-
-    private fun matchesSendNode(node: AccessibilityNodeInfo?): Boolean {
-        if (node == null) return false
-        val id = node.viewIdResourceName?.lowercase().orEmpty()
-        val desc = node.contentDescription?.toString()?.trim()?.lowercase().orEmpty()
-        val text = node.text?.toString()?.trim()?.lowercase().orEmpty()
-        val clazz = node.className?.toString()?.lowercase().orEmpty()
-
-        val idMatch = id.endsWith(":id/send") || id.endsWith("/send") ||
-            id.contains(":id/send_button") || id.contains("/send_button")
-        val labelMatch = desc == "send" || text == "send"
-        val buttonLike = clazz.contains("button") || node.isClickable
-        return idMatch || (labelMatch && buttonLike)
-    }
+    // Manual timing mode: START/ARMED is the user's explicit intent.
+    // Therefore the first real click event from WhatsApp after ARMED is T0.
+    // Do not inspect node id/text/contentDescription: those vary by WhatsApp
+    // version, locale and the media-preview screen. CellTracker overlay clicks
+    // are from this app's package and are already excluded by the package gate.
 
     private fun showOverlay() {
         if (overlay != null) return
