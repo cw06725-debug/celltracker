@@ -1,15 +1,14 @@
 package com.example.celltracker
 
 import android.accessibilityservice.AccessibilityService
-import android.accessibilityservice.GestureDescription
-import android.graphics.Path
-import android.graphics.PixelFormat
 import android.os.SystemClock
 import android.telephony.SubscriptionManager
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -28,7 +27,6 @@ class WhatsAppSendAccessibilityService : AccessibilityService() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private lateinit var repo: WhatsAppSendRepository
     private var overlay: View? = null
-    private var capture: View? = null
     private var overlayLp: WindowManager.LayoutParams? = null
     private var statusView: TextView? = null
     private var startButton: Button? = null
@@ -41,6 +39,7 @@ class WhatsAppSendAccessibilityService : AccessibilityService() {
     private var t0Wall = 0L
     private var t0Elapsed = 0L
     private var clockJob: Job? = null
+    private var lastAcceptedClickUptime = 0L
 
     override fun onServiceConnected() {
         activeInstance = this
@@ -48,10 +47,64 @@ class WhatsAppSendAccessibilityService : AccessibilityService() {
         if (repo.isArmed()) showOverlay()
     }
 
-    override fun onAccessibilityEvent(event: android.view.accessibility.AccessibilityEvent?) {
-        if (::repo.isInitialized && repo.isArmed() && overlay == null) showOverlay()
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (!::repo.isInitialized || event == null) return
+        if (repo.isArmed() && overlay == null) showOverlay()
+
+        if (!running || !armed || t0Wall > 0L) return
+        if (event.eventType != AccessibilityEvent.TYPE_VIEW_CLICKED) return
+        val pkg = event.packageName?.toString().orEmpty()
+        if (pkg != "com.whatsapp" && pkg != "com.whatsapp.w4b") return
+        if (!isWhatsAppSendClick(event)) return
+
+        val clickUptime = event.eventTime
+        if (clickUptime - lastAcceptedClickUptime < 500L) return
+        lastAcceptedClickUptime = clickUptime
+
+        seq++
+        val uptimeDelta = (SystemClock.uptimeMillis() - clickUptime).coerceAtLeast(0L)
+        t0Elapsed = (SystemClock.elapsedRealtime() - uptimeDelta).coerceAtLeast(1L)
+        t0Wall = System.currentTimeMillis() - uptimeDelta
+        armed = false
+        startButton?.apply { text = "ACTIVE"; isEnabled = true }
+        statusView?.text = "#$seq · T0 SEND · tap SENT when complete"
     }
+
     override fun onInterrupt() = Unit
+
+    private fun isWhatsAppSendClick(event: AccessibilityEvent): Boolean {
+        val source = event.source
+        if (matchesSendNode(source)) return true
+
+        // WhatsApp versions differ in which node emits TYPE_VIEW_CLICKED. Check only
+        // the immediate parent chain so unrelated screen content cannot contaminate it.
+        var parent = source?.parent
+        repeat(2) {
+            if (matchesSendNode(parent)) return true
+            parent = parent?.parent
+        }
+
+        val eventLabel = buildString {
+            append(event.contentDescription?.toString().orEmpty())
+            if (isNotEmpty()) append(' ')
+            append(event.text.joinToString(" ") { it?.toString().orEmpty() })
+        }.trim().lowercase()
+        return eventLabel == "send" || eventLabel.startsWith("send ")
+    }
+
+    private fun matchesSendNode(node: AccessibilityNodeInfo?): Boolean {
+        if (node == null) return false
+        val id = node.viewIdResourceName?.lowercase().orEmpty()
+        val desc = node.contentDescription?.toString()?.trim()?.lowercase().orEmpty()
+        val text = node.text?.toString()?.trim()?.lowercase().orEmpty()
+        val clazz = node.className?.toString()?.lowercase().orEmpty()
+
+        val idMatch = id.endsWith(":id/send") || id.endsWith("/send") ||
+            id.contains(":id/send_button") || id.contains("/send_button")
+        val labelMatch = desc == "send" || text == "send"
+        val buttonLike = clazz.contains("button") || node.isClickable
+        return idMatch || (labelMatch && buttonLike)
+    }
 
     private fun showOverlay() {
         if (overlay != null) return
@@ -76,7 +129,7 @@ class WhatsAppSendAccessibilityService : AccessibilityService() {
         box.addView(header); box.addView(status); box.addView(clock); box.addView(row); box.addView(row2)
 
         val lp = WindowManager.LayoutParams(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, android.graphics.PixelFormat.TRANSLUCENT
         ).apply { gravity = Gravity.TOP or Gravity.START; x = 24; y = 180 }
         overlayLp = lp
         var dx=0f; var dy=0f; var sx=0; var sy=0
@@ -104,7 +157,7 @@ class WhatsAppSendAccessibilityService : AccessibilityService() {
             } else completeSample(status)
         }
         stop.setOnClickListener {
-            removeCapture(); armed=false
+            armed=false; t0Wall=0; t0Elapsed=0
             file?.let { repo.finish(it, sessionStart, System.currentTimeMillis(), "Stopped") }
             repo.disarm(); running=false; status.text="Stopped"
             scope.launch { delay(700); dismissOverlay() }
@@ -114,61 +167,23 @@ class WhatsAppSendAccessibilityService : AccessibilityService() {
     }
 
     private fun armNext(status: TextView) {
-        removeCapture(); armed=false; t0Wall=0; t0Elapsed=0
+        armed=false; t0Wall=0; t0Elapsed=0
         startButton?.apply { text="ARMING…"; isEnabled=false }
         status.text="ARMING…"
+        // No full-screen capture layer in WhatsApp mode. The short delay only keeps
+        // the START button's own UI transition visually distinct from the armed state.
         scope.launch {
-            delay(120)
+            delay(80)
             if (!running) return@launch
             armed=true
-            installCapture()
-            if (capture != null) {
-                startButton?.apply { text="ARMED"; isEnabled=true }
-                status.text="ARMED · now tap WhatsApp Send"
-            } else {
-                armed=false; startButton?.apply { text="START"; isEnabled=true }; status.text="Arm failed · press START again"
-            }
+            startButton?.apply { text="ARMED"; isEnabled=true }
+            status.text="ARMED · now tap WhatsApp Send"
         }
-    }
-
-    private fun installCapture() {
-        if (!running || !armed || t0Wall>0 || capture!=null) return
-        val wm=getSystemService(WindowManager::class.java)
-        val v=View(this).apply { setBackgroundColor(0x01000000) }
-        val cp=WindowManager.LayoutParams(WindowManager.LayoutParams.MATCH_PARENT,WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-            PixelFormat.TRANSLUCENT).apply{gravity=Gravity.TOP or Gravity.START}
-        var downX=0f;var downY=0f;var downElapsed=0L;var moved=false;var multi=false
-        val slop=64f*resources.displayMetrics.density
-        v.setOnTouchListener { _,e ->
-            when(e.actionMasked){
-                MotionEvent.ACTION_DOWN->{downX=e.rawX;downY=e.rawY;downElapsed=SystemClock.elapsedRealtime();moved=false;multi=false;true}
-                MotionEvent.ACTION_POINTER_DOWN->{multi=true;true}
-                MotionEvent.ACTION_MOVE->{val x=e.rawX-downX;val y=e.rawY-downY;if(kotlin.math.sqrt(x*x+y*y)>slop)moved=true;true}
-                MotionEvent.ACTION_UP->{
-                    val duration=(SystemClock.elapsedRealtime()-downElapsed).coerceAtLeast(1)
-                    if(!multi&&!moved&&duration<650){
-                        seq++; t0Elapsed=downElapsed; t0Wall=System.currentTimeMillis()-duration; armed=false
-                        startButton?.text="ACTIVE"; statusView?.text="#$seq · T0 SEND · tap SENT when complete"
-                        val x=e.rawX;val y=e.rawY;removeCapture()
-                        scope.launch { delay(80); if(!dispatchTap(x,y)){ t0Wall=0;t0Elapsed=0;seq=(seq-1).coerceAtLeast(0);statusView?.text="Tap delivery failed · press START again";startButton?.text="START" } }
-                    } else {
-                        val x0=downX;val y0=downY;val x1=e.rawX;val y1=e.rawY;removeCapture()
-                        scope.launch { delay(60); dispatchSwipe(x0,y0,x1,y1,duration); delay(80); if(running&&armed) installCapture() }
-                    }
-                    true
-                }
-                MotionEvent.ACTION_CANCEL->{true}
-                else->true
-            }
-        }
-        runCatching{wm.addView(v,cp)}.onSuccess{capture=v}
     }
 
     private fun completeSample(status:TextView){
         val startW=t0Wall;val startE=t0Elapsed;if(startW<=0||startE<=0||file==null)return
-        t0Wall=0;t0Elapsed=0;armed=false;removeCapture();startButton?.apply{text="START";isEnabled=true}
+        t0Wall=0;t0Elapsed=0;armed=false;startButton?.apply{text="START";isEnabled=true}
         scope.launch {
             val t1W=System.currentTimeMillis();val t1E=SystemClock.elapsedRealtime();val delay=(t1E-startE).coerceAtLeast(0)
             val snap=withContext(Dispatchers.IO){snapshot()};repo.append(file!!,WhatsAppSendSample(seq,startW,t1W,delay,snap,startE,t1E))
@@ -176,10 +191,7 @@ class WhatsAppSendAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun dispatchTap(x:Float,y:Float):Boolean{val p=Path().apply{moveTo(x,y)};return dispatchGesture(GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(p,0,55)).build(),null,null)}
-    private fun dispatchSwipe(x0:Float,y0:Float,x1:Float,y1:Float,duration:Long):Boolean{val p=Path().apply{moveTo(x0,y0);lineTo(x1,y1)};return dispatchGesture(GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(p,0,duration.coerceIn(100,700))).build(),null,null)}
-    private fun removeCapture(){capture?.let{runCatching{getSystemService(WindowManager::class.java).removeView(it)}};capture=null}
-    private fun dismissOverlay(){removeCapture();clockJob?.cancel();clockJob=null;overlay?.let{runCatching{getSystemService(WindowManager::class.java).removeView(it)}};overlay=null}
+    private fun dismissOverlay(){clockJob?.cancel();clockJob=null;overlay?.let{runCatching{getSystemService(WindowManager::class.java).removeView(it)}};overlay=null}
     private suspend fun snapshot():PingNetworkSnapshot{val sims=runCatching{CellularRepository(this).readAllSims()}.getOrDefault(emptyList());val id=SubscriptionManager.getDefaultDataSubscriptionId();val s=sims.firstOrNull{it.subscriptionId==id}?:sims.firstOrNull();val c=s?.servingCell;val l=LocationStore.latest.value;return PingNetworkSnapshot(subscriptionId=s?.subscriptionId?:-1,simSlot=s?.simSlotIndex?:-1,operator=c?.operator?:"--",rat=c?.rat?:"--",displayRat=c?.displayRat?:"--",rsrp=c?.rsrp?:"--",rsrq=c?.rsrq?:"--",sinr=c?.sinr?:"--",rssi=c?.rssi?:"--",band=c?.band?:"--",pci=c?.pci?:"--",arfcn=c?.arfcn?:"--",latitude=l.latitude.toDoubleOrNull(),longitude=l.longitude.toDoubleOrNull())}
     override fun onDestroy(){if(activeInstance===this)activeInstance=null;dismissOverlay();scope.cancel();super.onDestroy()}
 }
