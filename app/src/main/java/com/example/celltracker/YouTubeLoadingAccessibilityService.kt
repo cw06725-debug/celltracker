@@ -69,6 +69,8 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
     // without this guard that accidental mini-player activation becomes a phantom Attempt.
     private var semiReplayingScroll = false
     private var semiScrollGuardUntilElapsedMs = 0L
+    private var semiRecoveryJob: Job? = null
+    private var semiFlowGeneration = 0
 
     override fun onServiceConnected() {
         activeInstance = this
@@ -117,13 +119,10 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         // If playback appears during the guard, leave the page alone. Once the guard expires the
         // normal touch/accessibility path can establish T0; otherwise LOADED will simply report that
         // no valid T0 was armed instead of navigating behind the user's back.
-        if (semiReplayingScroll || nowElapsed < semiScrollGuardUntilElapsedMs) {
+        if (semiReplayingScroll) {
             semiPendingClickMs = 0L
             semiPendingClickElapsedMs = 0L
             semiPendingTitle = ""
-            if (playbackPage && !wasPlaybackPage) {
-                overlayStatus?.text = "SEMI · playback opened while scroll settled · no auto return"
-            }
             return
         }
 
@@ -241,7 +240,8 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         start.setOnClickListener {
             if (running) {
                 if (config.semiAuto) {
-                    status.text = if (t0 > 0L) "SEMI · #$seq timing… tap LOADED" else "SEMI AUTO · tap the next YouTube video manually"
+                    status.text = "SEMI · RETRYING… resetting touch state"
+                    retrySemi(status)
                 } else if (t0 > 0L) {
                     status.text = "Video $seq/${config.count} is already loading…"
                 } else {
@@ -336,6 +336,9 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         semiLastGestureWallMs = 0L
         semiLastGestureElapsedMs = 0L
         semiLastGestureTitle = ""
+        semiRecoveryJob?.cancel()
+        semiRecoveryJob = null
+        semiFlowGeneration++
         semiReplayingScroll = false
         semiScrollGuardUntilElapsedMs = 0L
         semiIgnorePlaybackUntilList = false
@@ -568,6 +571,84 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         }
     }
 
+    private fun retrySemi(status: TextView) {
+        if (!running || !config.semiAuto) return
+
+        semiRecoveryJob?.cancel()
+        semiRecoveryJob = null
+        semiFlowGeneration++
+        removeSemiTouchCapture()
+
+        // RETRY means discard only the current unfinished attempt and return the interaction
+        // state to a clean READY state. Already-saved rows remain untouched.
+        if (t0 > 0L && seq > 0) seq--
+        t0 = 0L
+        semiT0ElapsedMs = 0L
+        semiT0Source = ""
+        semiSawPlayback = false
+        semiPendingClickMs = 0L
+        semiPendingClickElapsedMs = 0L
+        semiPendingTitle = ""
+        semiLastGestureWallMs = 0L
+        semiLastGestureElapsedMs = 0L
+        semiLastGestureTitle = ""
+        semiReplayingScroll = false
+        semiScrollGuardUntilElapsedMs = 0L
+
+        val onPlayback = looksLikePlaybackPage(rootInActiveWindow)
+        semiLastPlaybackPage = onPlayback
+        if (!onPlayback) {
+            semiIgnorePlaybackUntilList = false
+            installSemiTouchCapture()
+            status.text = "SEMI · RETRY ready · tap the next YouTube video"
+            return
+        }
+
+        // If a video opened without a valid T0, RETRY owns the recovery: exactly one Back,
+        // then wait for a stable list/non-playback page before re-arming capture.
+        semiIgnorePlaybackUntilList = true
+        status.text = "SEMI · RETRY · returning to video list…"
+        val generation = semiFlowGeneration
+        semiRecoveryJob = scope.launch {
+            performGlobalAction(GLOBAL_ACTION_BACK)
+            var stableNonPlayback = 0
+            var waitedMs = 0L
+            while (running && generation == semiFlowGeneration && waitedMs < 8_000L && stableNonPlayback < 3) {
+                delay(160)
+                waitedMs += 160L
+                if (!looksLikePlaybackPage(rootInActiveWindow)) stableNonPlayback++ else stableNonPlayback = 0
+            }
+            if (!running || generation != semiFlowGeneration) return@launch
+
+            if (stableNonPlayback >= 3) {
+                semiIgnorePlaybackUntilList = false
+                semiLastPlaybackPage = false
+                semiPendingClickMs = 0L
+                semiPendingClickElapsedMs = 0L
+                semiPendingTitle = ""
+                installSemiTouchCapture()
+                status.text = "SEMI · RETRY ready · tap the next YouTube video"
+            } else {
+                // Never issue a second automatic Back. Keep stale playback events blocked and let
+                // the tester return once manually; a watcher will re-arm as soon as the list is stable.
+                status.text = "SEMI · RETRY · press Android Back once"
+                var manualStable = 0
+                repeat(100) {
+                    if (!running || generation != semiFlowGeneration) return@launch
+                    delay(200)
+                    if (!looksLikePlaybackPage(rootInActiveWindow)) manualStable++ else manualStable = 0
+                    if (manualStable >= 3) {
+                        semiIgnorePlaybackUntilList = false
+                        semiLastPlaybackPage = false
+                        installSemiTouchCapture()
+                        status.text = "SEMI · RETRY ready · tap the next YouTube video"
+                        return@launch
+                    }
+                }
+            }
+        }
+    }
+
     private fun stopTest(state: String, status: TextView) {
         // STOP must be idempotent and must always provide visible feedback.  Do not let a report
         // finalization or RecordingService failure make the overlay look as if the button did
@@ -586,6 +667,11 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         semiPendingTitle = ""
         semiIgnorePlaybackUntilList = false
         semiLastPlaybackPage = false
+        semiReplayingScroll = false
+        semiScrollGuardUntilElapsedMs = 0L
+        semiRecoveryJob?.cancel()
+        semiRecoveryJob = null
+        semiFlowGeneration++
         removeSemiTouchCapture()
 
         val f = file
@@ -789,15 +875,15 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                             overlayStatus?.text = "SEMI · $why · no T0"
                             if (why == "scroll") {
                                 semiReplayingScroll = true
-                                semiScrollGuardUntilElapsedMs = SystemClock.elapsedRealtime() + duration + 700L
+                                semiScrollGuardUntilElapsedMs = 0L
+                                val replayGeneration = semiFlowGeneration
                                 replaySafeVerticalScroll(points.toList(), duration) {
-                                    semiReplayingScroll = false
-                                    // Keep only a very short settle guard, and do not place the touch layer
-                                    // back on top until that guard has expired. This removes the overlap where
-                                    // a genuine post-scroll tap could be interpreted as part of the scroll.
-                                    semiScrollGuardUntilElapsedMs = SystemClock.elapsedRealtime() + 90L
-                                    scope.launch {
-                                        delay(110)
+                                    if (replayGeneration == semiFlowGeneration) {
+                                        semiReplayingScroll = false
+                                        semiScrollGuardUntilElapsedMs = 0L
+                                        // Re-arm immediately when the injected scroll has completed. 0.9.3.0.10
+                                        // waited another 110 ms here, leaving a real window where YouTube could
+                                        // receive the user's next tap while CellTracker had no touch capture.
                                         if (running && config.semiAuto && t0 == 0L && !looksLikePlaybackPage(rootInActiveWindow)) {
                                             installSemiTouchCapture()
                                             overlayStatus?.text = "SEMI · ready · tap the next YouTube video"
