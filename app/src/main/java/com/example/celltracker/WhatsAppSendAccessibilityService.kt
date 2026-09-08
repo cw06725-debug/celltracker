@@ -104,13 +104,18 @@ class WhatsAppSendAccessibilityService : AccessibilityService() {
         statusView = status
         val clock = TextView(this).apply { setTextColor(0xffffffff.toInt()); text = "TIME --:--:--.---"; setPadding(8,0,8,8) }
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val row2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val row2 = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END
+        }
         val start = Button(this).apply { text = "START" }
         val sent = Button(this).apply { text = "SENT"; visibility = View.GONE }
         val stop = Button(this).apply { text = "STOP"; visibility = View.GONE }
         startButton = start; sentButton = sent
         val weighted = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        row.addView(start, weighted); row.addView(sent, weighted); row2.addView(stop, weighted)
+        row.addView(start, weighted); row.addView(sent, weighted)
+        val stopWidth = (116 * resources.displayMetrics.density).toInt()
+        row2.addView(stop, LinearLayout.LayoutParams(stopWidth, LinearLayout.LayoutParams.WRAP_CONTENT))
         box.addView(header); box.addView(status); box.addView(clock); box.addView(row); box.addView(row2)
 
         val lp = WindowManager.LayoutParams(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
@@ -141,7 +146,26 @@ class WhatsAppSendAccessibilityService : AccessibilityService() {
                 status.text = if (armed) "ARMED · tap WhatsApp Send first" else "Press START, then tap WhatsApp Send first"
             } else completeSample(status)
         }
+        var stopConfirmUntil = 0L
         stop.setOnClickListener {
+            val now = SystemClock.uptimeMillis()
+            if (now > stopConfirmUntil) {
+                stopConfirmUntil = now + 4_000L
+                stop.text = "CONFIRM?"
+                status.text = "Stop test? Tap CONFIRM? again within 4s"
+                scope.launch {
+                    delay(4_050L)
+                    if (SystemClock.uptimeMillis() > stopConfirmUntil && running) {
+                        stop.text = "STOP"
+                        if (t0Wall > 0L) status.text = "#$seq active · tap SENT when sending completes"
+                        else if (armed) status.text = "ARMED · now tap WhatsApp Send"
+                        else status.text = "Ready · press START for next sample"
+                    }
+                }
+                return@setOnClickListener
+            }
+            stopConfirmUntil = 0L
+            stop.text = "STOP"
             armed=false; t0Wall=0; t0Elapsed=0; armedAtUptime=0L; t0Source=""
             file?.let { repo.finish(it, sessionStart, System.currentTimeMillis(), "Stopped") }
             repo.disarm(); running=false; status.text="Stopped"

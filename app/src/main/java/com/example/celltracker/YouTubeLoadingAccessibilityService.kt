@@ -72,6 +72,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
     private var semiRecoveryJob: Job? = null
     private var semiFlowGeneration = 0
     private var semiAttemptArmed = false
+    private var semiArmedAtUptime = 0L
     private var overlayStartButton: Button? = null
 
     override fun onServiceConnected() {
@@ -86,106 +87,73 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         if (event == null || !running || !config.semiAuto) return
         if (event.packageName?.toString() != "com.google.android.youtube") return
 
-        val now = System.currentTimeMillis()
-        val nowElapsed = SystemClock.elapsedRealtime()
         val root = rootInActiveWindow
         val playbackPage = looksLikePlaybackPage(root)
         val wasPlaybackPage = semiLastPlaybackPage
         semiLastPlaybackPage = playbackPage
 
-        // Manual-per-attempt mode: outside an armed/active sample, ignore YouTube events entirely.
-        // This lets the tester scroll and navigate freely before pressing START for the next sample.
+        // Outside an explicitly armed/active sample, YouTube may be scrolled/navigated freely.
         if (!semiAttemptArmed && t0 == 0L) return
+        if (semiIgnorePlaybackUntilList) return
 
-        // After LOADED/AD we perform Back ourselves. YouTube can continue emitting watch-page
-        // accessibility events for a short time while the page is closing. Never interpret those
-        // stale events as a second semi-auto attempt. Re-arm only after the creator/list page is
-        // actually visible again.
-        if (semiIgnorePlaybackUntilList) {
-            // Return handling is owned by completeSemiAttempt(). During YouTube's transition the
-            // accessibility tree can briefly report a non-playback page and then report the old
-            // watch page again. Re-arming here caused the return transition itself to become a
-            // phantom second attempt. Ignore every event until the return coroutine confirms a
-            // stable non-playback page.
-            return
-        }
-
+        // Once T0 exists, LOADED is the only valid T1. If the tester manually returns before
+        // pressing LOADED, cancel the unfinished sample.
         if (t0 > 0L) {
             if (playbackPage) semiSawPlayback = true
-            if (semiSawPlayback && looksLikeCreatorPage(root) && !playbackPage && now - t0 > 300L) {
-                // In manual-per-attempt mode LOADED is the only valid T2. If the tester backs out
-                // before pressing LOADED, discard this unfinished sample instead of inventing T2.
+            if (semiSawPlayback && looksLikeCreatorPage(root) && !playbackPage &&
+                System.currentTimeMillis() - t0 > 300L) {
                 if (seq > 0) seq--
                 t0 = 0L
                 semiT0ElapsedMs = 0L
                 semiT0Source = ""
                 semiSawPlayback = false
                 semiAttemptArmed = false
-                semiPendingClickMs = 0L
-                semiPendingClickElapsedMs = 0L
-                semiPendingTitle = ""
-                removeSemiTouchCapture()
+                semiArmedAtUptime = 0L
                 overlayStartButton?.apply { text = "START"; isEnabled = true }
-                overlayStatus?.text = "SEMI · attempt cancelled · press START for the next sample"
+                overlayStatus?.text = "SEMI · attempt cancelled · press START for next sample"
             }
             return
         }
 
-        // A confirmed scroll must never create an Attempt. During replay/settling, suppress stale
-        // click/page-transition events. IMPORTANT: never auto-BACK here. A real user tap made right
-        // after a scroll can legitimately open a video while the short scroll guard is still active;
-        // the old auto-BACK path would immediately throw the user back to the list even in SEMI mode.
-        // If playback appears during the guard, leave the page alone. Once the guard expires the
-        // normal touch/accessibility path can establish T0; otherwise LOADED will simply report that
-        // no valid T0 was armed instead of navigating behind the user's back.
-        if (semiReplayingScroll) {
-            semiPendingClickMs = 0L
-            semiPendingClickElapsedMs = 0L
-            semiPendingTitle = ""
+        // WhatsApp-style manual timing: after START/ARMED, the next native YouTube click is T0.
+        if (semiAttemptArmed && event.eventType == android.view.accessibility.AccessibilityEvent.TYPE_VIEW_CLICKED) {
+            acceptManualYouTubeT0(event.eventTime, event.source, "ACCESSIBILITY_CLICK")
             return
         }
 
-        // Semi-auto must be tolerant of OEM / YouTube accessibility differences.  Some builds
-        // emit TYPE_VIEW_CLICKED from a thumbnail child, some from the card parent, and some only
-        // expose the watch-page transition.  Keep the most recent plausible YouTube click as T0,
-        // then commit it when the player page becomes visible.
-        if (event.eventType == android.view.accessibility.AccessibilityEvent.TYPE_VIEW_CLICKED && !playbackPage) {
-            // Capture T0 FIRST, validate it only after YouTube reaches a playback page.
-            // AccessibilityEvent.eventTime uses uptimeMillis; convert it to both wall-clock and
-            // elapsedRealtime so the report can be compared with screen recording while duration
-            // uses a monotonic clock.
-            val ageMs = (SystemClock.uptimeMillis() - event.eventTime).coerceAtLeast(0L)
-            val clickElapsed = nowElapsed - ageMs
-            val clickWall = now - ageMs
-            val src = event.source
-            semiPendingClickMs = clickWall
-            semiPendingClickElapsedMs = clickElapsed
-            semiPendingTitle = src?.let {
-                nodeLabel(it).ifBlank { descendantLabels(it).firstOrNull().orEmpty() }
-            }.orEmpty().take(160)
-            overlayStatus?.text = "SEMI · click captured · validating video…"
-        }
-
-        if (playbackPage && t0 == 0L) {
-            // Normally the click event arrives first. If YouTube suppresses TYPE_VIEW_CLICKED,
-            // allow a creator/list -> playback transition as a fallback. Do not repeatedly create
-            // attempts from multiple events while we are already sitting on the same watch page.
-            val pendingAge = if (semiPendingClickMs > 0L) now - semiPendingClickMs else Long.MAX_VALUE
-            val hasFreshClick = pendingAge in 0..10_000L && semiPendingClickElapsedMs > 0L
-            if (!hasFreshClick) return
-            seq++
-            currentTitle = semiPendingTitle.ifBlank { "Manual media $seq" }
-            t0 = semiPendingClickMs
-            semiT0ElapsedMs = semiPendingClickElapsedMs
-            semiT0Source = "ACCESSIBILITY_CLICK"
-            overlayStatus?.text = "SEMI · #$seq timing · T0 CLICK · tap LOADED when ready"
-            semiSawPlayback = true
-            overlayStartButton?.text = "ACTIVE"
-            semiPendingClickMs = 0L
-            semiPendingClickElapsedMs = 0L
-            semiPendingTitle = ""
+        // Fallback for YouTube builds that suppress TYPE_VIEW_CLICKED on thumbnails/cards:
+        // only accept the first list -> playback transition, never an arbitrary content change.
+        if (semiAttemptArmed &&
+            event.eventType == android.view.accessibility.AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED &&
+            !wasPlaybackPage && playbackPage &&
+            event.eventTime >= semiArmedAtUptime + 120L) {
+            acceptManualYouTubeT0(event.eventTime, event.source, "UI_CHANGE")
         }
     }
+
+    private fun acceptManualYouTubeT0(
+        eventUptime: Long,
+        sourceNode: AccessibilityNodeInfo?,
+        source: String
+    ) {
+        if (!running || !config.semiAuto || !semiAttemptArmed || t0 > 0L) return
+        val ageMs = (SystemClock.uptimeMillis() - eventUptime).coerceAtLeast(0L)
+        val eventElapsed = (SystemClock.elapsedRealtime() - ageMs).coerceAtLeast(1L)
+        val eventWall = System.currentTimeMillis() - ageMs
+        seq++
+        currentTitle = sourceNode?.let {
+            nodeLabel(it).ifBlank { descendantLabels(it).firstOrNull().orEmpty() }
+        }.orEmpty().ifBlank { "Manual media $seq" }.take(160)
+        t0 = eventWall
+        semiT0ElapsedMs = eventElapsed
+        semiT0Source = source
+        semiAttemptArmed = false
+        semiArmedAtUptime = 0L
+        semiSawPlayback = looksLikePlaybackPage(rootInActiveWindow)
+        overlayStartButton?.apply { text = "ACTIVE"; isEnabled = true }
+        overlayStatus?.text = "SEMI · #$seq T0 · $source · tap LOADED for T1"
+    }
+
     override fun onInterrupt() {}
 
     private fun showOverlay() {
@@ -213,7 +181,10 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             setPadding(8, 0, 8, 8)
         }
         val rowTop = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val rowBottom = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val rowBottom = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END
+        }
         val start = Button(this).apply { text = "START" }
         overlayStartButton = start
         val loaded = Button(this).apply { text = "LOADED"; visibility = View.GONE }
@@ -223,7 +194,8 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         rowTop.addView(start, weighted)
         rowTop.addView(loaded, weighted)
         rowBottom.addView(ad, weighted)
-        rowBottom.addView(stop, weighted)
+        val stopWidth = (116 * resources.displayMetrics.density).toInt()
+        rowBottom.addView(stop, LinearLayout.LayoutParams(stopWidth, LinearLayout.LayoutParams.WRAP_CONTENT))
         box.addView(header); box.addView(status); box.addView(clock); box.addView(rowTop); box.addView(rowBottom)
 
         val lp = WindowManager.LayoutParams(
@@ -278,29 +250,15 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             }
         }
         loaded.setOnClickListener {
-            if (running && config.semiAuto && semiAttemptArmed && t0 == 0L && semiLastGestureElapsedMs > 0L) {
-                // Final semi-auto safety net: if YouTube actually opened the video but its page
-                // structure never became detectable, the tester's LOADED press is authoritative.
-                // Use the most recent retained content-area ACTION_DOWN as T0 instead of losing the sample.
-                val age = SystemClock.elapsedRealtime() - semiLastGestureElapsedMs
-                if (age in 0..30_000L) {
-                    seq++
-                    currentTitle = semiLastGestureTitle.ifBlank { "Manual media $seq" }
-                    t0 = semiLastGestureWallMs
-                    semiT0ElapsedMs = semiLastGestureElapsedMs
-                    semiT0Source = "OVERLAY_CONFIRMED_BY_LOADED"
-                    semiSawPlayback = true
-                    semiLastGestureWallMs = 0L
-                    semiLastGestureElapsedMs = 0L
-                    semiLastGestureTitle = ""
-                    completeSemiAttempt("PASS", "MANUAL_BUTTON", status, performBack = true)
-                } else {
-                    status.text = "SEMI · no recent video tap · tap video first"
-                }
-            } else if (running && t0 > 0) {
+            if (running && t0 > 0L) {
                 if (config.semiAuto) completeSemiAttempt("PASS", "MANUAL_BUTTON", status, performBack = true)
                 else completeAttempt("PASS", "MANUAL", status)
-            } else status.text = if (config.semiAuto) "SEMI · press START, then tap one YouTube video" else "Nothing is loading · LOADED ignored"
+            } else {
+                status.text = if (config.semiAuto) {
+                    if (semiAttemptArmed) "SEMI · ARMED · tap one YouTube video first"
+                    else "SEMI · press START, then tap one YouTube video"
+                } else "Nothing is loading · LOADED ignored"
+            }
         }
         ad.setOnClickListener {
             if (running && t0 > 0) {
@@ -308,9 +266,27 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                 else completeAttempt("AD", "MANUAL_AD", status)
             } else status.text = "No active video · AD ignored"
         }
+        var stopConfirmUntil = 0L
         stop.setOnClickListener {
-            // Give immediate UI feedback before repository/export work starts so STOP never feels
-            // unresponsive on slower devices.
+            val now = SystemClock.uptimeMillis()
+            if (now > stopConfirmUntil) {
+                stopConfirmUntil = now + 4_000L
+                stop.text = "CONFIRM?"
+                status.text = "Stop test? Tap CONFIRM? again within 4s"
+                scope.launch {
+                    delay(4_050L)
+                    if (SystemClock.uptimeMillis() > stopConfirmUntil && running) {
+                        stop.text = "STOP"
+                        status.text = when {
+                            t0 > 0L -> "SEMI · #$seq active · tap LOADED for T1"
+                            semiAttemptArmed -> "SEMI · ARMED · tap one YouTube video for T0"
+                            else -> "SEMI · ready · press START for next sample"
+                        }
+                    }
+                }
+                return@setOnClickListener
+            }
+            stopConfirmUntil = 0L
             status.text = "STOPPING… saving current results"
             start.isEnabled = false
             loaded.isEnabled = false
@@ -361,6 +337,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         semiScrollGuardUntilElapsedMs = 0L
         semiIgnorePlaybackUntilList = false
         semiAttemptArmed = false
+        semiArmedAtUptime = 0L
         semiLastPlaybackPage = looksLikePlaybackPage(rootInActiveWindow)
         sessionMode = detectCreatorMode(rootInActiveWindow)
         val initialBounds = creatorContentBounds(rootInActiveWindow) ?: safeContentBounds()
@@ -399,22 +376,16 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
     private fun armSemiAttempt(status: TextView) {
         if (!running || !config.semiAuto) return
         if (t0 > 0L) {
-            status.text = "SEMI · current attempt active · tap LOADED first"
+            status.text = "SEMI · current attempt active · tap LOADED for T1"
             return
         }
-
-        // Every sample is explicitly armed by START. IMPORTANT: do not create the full-screen
-        // capture overlay from inside START's onClick. TYPE_ACCESSIBILITY_OVERLAY is re-stacked by
-        // WindowManager when the capture/control windows are removed/re-added; doing that during the
-        // same input transaction can leak the tail of START to the YouTube view underneath (most
-        // visibly the mini-player). Keep the sample IDLE for a short settle period, then declare
-        // ARMED only after the capture view has actually been installed.
         semiRecoveryJob?.cancel()
         semiRecoveryJob = null
         removeSemiTouchCapture()
         semiFlowGeneration++
         val generation = semiFlowGeneration
         semiAttemptArmed = false
+        semiArmedAtUptime = 0L
         semiSawPlayback = false
         semiPendingClickMs = 0L
         semiPendingClickElapsedMs = 0L
@@ -426,36 +397,18 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         semiScrollGuardUntilElapsedMs = 0L
         semiIgnorePlaybackUntilList = false
         semiLastPlaybackPage = looksLikePlaybackPage(rootInActiveWindow)
-        overlayStartButton?.apply {
-            text = "ARMING…"
-            isEnabled = false
-        }
-        status.text = "SEMI · ARMING · release START…"
+        overlayStartButton?.apply { text = "ARMING…"; isEnabled = false }
+        status.text = "SEMI · ARMING…"
 
+        // Same model as WhatsApp: no full-screen touch-capture overlay. Let YouTube receive the
+        // user's real tap directly and observe it through Accessibility.
         semiRecoveryJob = scope.launch {
-            // Wait only long enough for START ACTION_UP to finish. In explicit manual-START mode
-            // the next content-area tap is authoritative, so a long arming delay is unnecessary.
-            delay(120)
-            if (!running || generation != semiFlowGeneration || t0 > 0L || semiIgnorePlaybackUntilList) return@launch
-
+            delay(80)
+            if (!running || generation != semiFlowGeneration || t0 > 0L) return@launch
             semiAttemptArmed = true
-            installSemiTouchCapture()
-            if (semiCaptureOverlay != null) {
-                overlayStartButton?.apply {
-                    text = "ARMED"
-                    isEnabled = true
-                }
-                status.text = "SEMI · ARMED · tap one YouTube video for T0"
-            } else {
-                // Never expose a fake ARMED state. If WindowManager rejected the capture layer,
-                // return to a clean START state and let the tester try again.
-                semiAttemptArmed = false
-                overlayStartButton?.apply {
-                    text = "START"
-                    isEnabled = true
-                }
-                status.text = "SEMI · arm failed · press START again"
-            }
+            semiArmedAtUptime = SystemClock.uptimeMillis()
+            overlayStartButton?.apply { text = "ARMED"; isEnabled = true }
+            status.text = "SEMI · ARMED · tap one YouTube video for T0"
         }
     }
 
@@ -562,6 +515,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         if (startWall <= 0L || startElapsed <= 0L || file == null) return
         t0 = 0L
         semiAttemptArmed = false
+        semiArmedAtUptime = 0L
         removeSemiTouchCapture()
         overlayStartButton?.apply { text = "START"; isEnabled = true }
         semiT0ElapsedMs = 0L
@@ -575,7 +529,8 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             val loadedWall = System.currentTimeMillis()
             val loadedElapsed = SystemClock.elapsedRealtime()
             val delay = (loadedElapsed - startElapsed).coerceAtLeast(0L)
-            val accurate = source == "ACCESSIBILITY_CLICK" || source == "OVERLAY_TOUCH_HIGH" || source == "OVERLAY_RECOVERED_TAP" || source == "OVERLAY_CONFIRMED_BY_LOADED"
+            val accurate = source == "ACCESSIBILITY_CLICK" || source == "UI_CHANGE" ||
+                source == "OVERLAY_TOUCH_HIGH" || source == "OVERLAY_RECOVERED_TAP" || source == "OVERLAY_CONFIRMED_BY_LOADED"
             val storedResult = when {
                 result == "AD" -> "AD"
                 accurate -> "PASS"

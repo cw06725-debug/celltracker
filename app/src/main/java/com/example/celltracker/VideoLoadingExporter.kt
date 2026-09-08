@@ -72,7 +72,7 @@ object VideoLoadingExporter {
             append("</head><body><h1>YouTube Video Page Loading</h1>")
             append("<div class='card'>Attempts ${d.samples.size} · Success $successCount · Timeout $timeoutCount · AD $adCount<br>")
             append("Average $averageText · P90 $p90Text · P95 $p95Text</div>")
-            append("<table><tr><th>#</th><th>Title</th><th>Delay</th><th>Result</th><th>Detection</th><th>Click Time</th><th>Loaded Time</th><th>T0 Source</th><th>RAT</th><th>RSRP</th><th>SINR</th><th>PCI</th></tr>")
+            append("<table><tr><th>#</th><th>Title</th><th>Delay</th><th>Result</th><th>Detection</th><th>Click Time</th><th>T1 Loaded Time</th><th>T0 Source</th><th>RAT</th><th>RSRP</th><th>SINR</th><th>PCI</th></tr>")
             d.samples.forEach { sample ->
                 val delayText = sample.delayMs?.toString() ?: "--"
                 append("<tr><td>${sample.sequence}</td><td>${escape(sample.title)}</td><td>$delayText ms</td><td>${sample.result}</td><td>${sample.detection}</td><td>${fmtTime(sample.startMs)}</td><td>${fmtTime(sample.loadedMs)}</td><td>${escape(sample.t0Source)}</td><td>${escape(sample.snapshot.displayRat)}</td><td>${escape(sample.snapshot.rsrp)}</td><td>${escape(sample.snapshot.sinr)}</td><td>${escape(sample.snapshot.pci)}</td></tr>")
