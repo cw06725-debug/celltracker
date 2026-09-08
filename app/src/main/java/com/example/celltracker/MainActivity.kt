@@ -2632,16 +2632,77 @@ private fun TestMetadataDialog(initial: TestMetadata, options: TestMetadataOptio
     var input by remember{mutableStateOf("")}; Column(verticalArrangement=Arrangement.spacedBy(6.dp)){ Text(title,style=MaterialTheme.typography.titleMedium); values.forEach{v->Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){Text(v);TextButton(onClick={if(values.size>1)onChange(values-v)}){Text("Delete")}}}; Row(verticalAlignment=Alignment.CenterVertically){OutlinedTextField(input,{input=it},label={Text("Add $title")},modifier=Modifier.weight(1f),singleLine=true);TextButton(onClick={val v=input.trim();if(v.isNotEmpty()&&v !in values){onChange(values+v);input=""}}){Text("Add")}} }
 }
 
-@Composable private fun VideoLoadingMap(samples:List<VideoLoadingSample>, recordingPath:String?, modifier:Modifier = Modifier.fillMaxWidth().height(260.dp)){
-    val context=LocalContext.current
-    val route = remember(recordingPath) { recordingPath?.let { runCatching { RecordingDetailRepository.loadSamples(it) }.getOrDefault(emptyList()) } ?: emptyList() }
-    val pts=samples.mapNotNull{s-> val la=s.snapshot.latitude;val lo=s.snapshot.longitude;if(la!=null&&lo!=null) Triple(s,la,lo) else null}
-    if(pts.isEmpty()){Text("No GPS points");return}
-    AndroidView(factory={MapView(context).apply{setMultiTouchControls(true)}},modifier=modifier,update={map->
-        map.overlays.clear();
-        val routePts=route.filter{it.locationValid && it.latitude!=null && it.longitude!=null}.map{GeoPoint(it.latitude!!,it.longitude!!)}
-        if(routePts.size>1){map.overlays.add(Polyline().apply{setPoints(routePts)})}
-        pts.forEach{(s,la,lo)->map.overlays.add(Marker(map).apply{position=GeoPoint(la,lo);title="#${s.sequence} ${s.delayMs?.let{"$it ms"}?:s.result}";snippet="${s.result} · ${s.snapshot.displayRat} · RSRP ${s.snapshot.rsrp}";setAnchor(Marker.ANCHOR_CENTER,Marker.ANCHOR_BOTTOM)})};
-        if(pts.size>1){map.overlays.add(Polyline().apply{setPoints(pts.map{GeoPoint(it.second,it.third)})})}; val bb=BoundingBox.fromGeoPoints(pts.map{GeoPoint(it.second,it.third)}); map.post{if(pts.size>1)map.zoomToBoundingBox(bb,true,60) else {map.controller.setZoom(16.0);map.controller.setCenter(GeoPoint(pts[0].second,pts[0].third))}};map.invalidate()
-    })
+@Composable
+private fun VideoLoadingMap(
+    samples: List<VideoLoadingSample>,
+    recordingPath: String?,
+    modifier: Modifier = Modifier.fillMaxWidth().height(260.dp)
+) {
+    val context = LocalContext.current
+    val route = remember(recordingPath) {
+        recordingPath?.let { runCatching { RecordingDetailRepository.loadSamples(it) }.getOrDefault(emptyList()) }
+            ?: emptyList()
+    }
+
+    // Reuse the exact same map renderer as Recording/History. This gives YouTube results the
+    // canonical OSM tile endpoint + User-Agent, the same RAT-coloured route, circle markers,
+    // zoom behaviour and point inspector. It also avoids osmdroid's blocked legacy MAPNIK tiles.
+    val attemptMarkers = remember(samples) {
+        samples.mapNotNull { sample ->
+            val lat = sample.snapshot.latitude ?: return@mapNotNull null
+            val lon = sample.snapshot.longitude ?: return@mapNotNull null
+            TrackSample(
+                timestampMs = sample.loadedMs.takeIf { it > 0L } ?: sample.startMs,
+                simSlot = sample.snapshot.simSlot.takeIf { it >= 0 }?.plus(1) ?: 1,
+                subscriptionId = sample.snapshot.subscriptionId,
+                operator = sample.snapshot.operator,
+                rat = sample.snapshot.rat,
+                displayRat = sample.snapshot.displayRat,
+                mcc = sample.snapshot.mcc,
+                mnc = sample.snapshot.mnc,
+                tac = sample.snapshot.tac,
+                cellId = sample.snapshot.cellId,
+                pci = sample.snapshot.pci,
+                arfcn = sample.snapshot.arfcn,
+                rsrp = sample.snapshot.rsrp,
+                rsrq = sample.snapshot.rsrq,
+                sinr = sample.snapshot.sinr,
+                band = sample.snapshot.band,
+                bandwidth = sample.snapshot.bandwidth,
+                rssi = sample.snapshot.rssi,
+                carrierAggregation = sample.snapshot.carrierAggregation,
+                dataRat = sample.snapshot.dataNetwork,
+                latitude = lat,
+                longitude = lon,
+                altitude = "--",
+                accuracy = sample.snapshot.gpsAccuracy,
+                speedKmh = sample.snapshot.speedKmh,
+                bearing = "--",
+                locationValid = true,
+                isMarker = true,
+                markerId = "youtube_${sample.sequence}",
+                eventSource = sample.detection,
+                eventType = "Video #${sample.sequence} ${sample.delayMs?.let { "$it ms" } ?: sample.result}",
+                eventNote = sample.title,
+                dataSimSubscriptionId = sample.snapshot.dataSimSubscriptionId,
+                dataNetwork = sample.snapshot.dataNetwork
+            )
+        }
+    }
+
+    val mapSamples = remember(route, attemptMarkers) {
+        (route + attemptMarkers).sortedBy { it.timestampMs }
+    }
+    if (mapSamples.none { it.latitude != null && it.longitude != null }) {
+        Box(modifier, contentAlignment = Alignment.Center) { Text("No GPS points") }
+        return
+    }
+
+    OsmTrackMap(
+        samples = mapSamples,
+        modifier = modifier,
+        detailFields = SettingsRepository(context).load().mapDetailFields,
+        drawTrack = route.isNotEmpty(),
+        showEndpoints = route.isNotEmpty()
+    )
 }
