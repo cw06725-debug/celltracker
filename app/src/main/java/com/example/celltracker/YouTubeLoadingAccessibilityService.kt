@@ -125,7 +125,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                 semiPendingClickElapsedMs = 0L
                 semiPendingTitle = ""
                 removeSemiTouchCapture()
-                overlayStartButton?.text = "START"
+                overlayStartButton?.apply { text = "START"; isEnabled = true }
                 overlayStatus?.text = "SEMI · attempt cancelled · press START for the next sample"
             }
             return
@@ -270,7 +270,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                 status.text = "STARTING…"
                 val accepted = startTest(status)
                 if (accepted) {
-                    start.text = if (config.semiAuto) "ARMED" else "RETRY"
+                    if (!config.semiAuto) start.text = "RETRY"
                     loaded.visibility = View.VISIBLE
                     ad.visibility = View.VISIBLE
                     stop.visibility = View.VISIBLE
@@ -384,9 +384,11 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             recordingStarted = true
         }
         if (config.semiAuto) {
-            semiAttemptArmed = true
-            status.text = "SEMI · ARMED · tap one YouTube video for T0"
-            scope.launch { delay(120); installSemiTouchCapture() }
+            // Use exactly the same safe arming path for the first and every later sample.
+            // The START button ACTION_UP/window re-layout must be completely finished before the
+            // full-screen capture overlay exists, otherwise the tail of START can land on the
+            // YouTube mini-player underneath the floating controls.
+            armSemiAttempt(status)
         } else {
             status.text = "Started · locating Video #1…"
             scope.launch { delay(500); next(status) }
@@ -400,12 +402,19 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             status.text = "SEMI · current attempt active · tap LOADED first"
             return
         }
-        // Every sample is explicitly armed by START. While unarmed the tester can freely
-        // scroll/navigate the YouTube list and CellTracker will not intercept or classify touches.
+
+        // Every sample is explicitly armed by START. IMPORTANT: do not create the full-screen
+        // capture overlay from inside START's onClick. TYPE_ACCESSIBILITY_OVERLAY is re-stacked by
+        // WindowManager when the capture/control windows are removed/re-added; doing that during the
+        // same input transaction can leak the tail of START to the YouTube view underneath (most
+        // visibly the mini-player). Keep the sample IDLE for a short settle period, then declare
+        // ARMED only after the capture view has actually been installed.
         semiRecoveryJob?.cancel()
         semiRecoveryJob = null
+        removeSemiTouchCapture()
         semiFlowGeneration++
-        semiAttemptArmed = true
+        val generation = semiFlowGeneration
+        semiAttemptArmed = false
         semiSawPlayback = false
         semiPendingClickMs = 0L
         semiPendingClickElapsedMs = 0L
@@ -417,9 +426,37 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         semiScrollGuardUntilElapsedMs = 0L
         semiIgnorePlaybackUntilList = false
         semiLastPlaybackPage = looksLikePlaybackPage(rootInActiveWindow)
-        overlayStartButton?.text = "ARMED"
-        status.text = "SEMI · ARMED · tap one YouTube video for T0"
-        installSemiTouchCapture()
+        overlayStartButton?.apply {
+            text = "ARMING…"
+            isEnabled = false
+        }
+        status.text = "SEMI · ARMING · release START…"
+
+        semiRecoveryJob = scope.launch {
+            // Long enough to be beyond the START ACTION_UP and accessibility/window-change burst,
+            // short enough to feel immediate to the tester.
+            delay(320)
+            if (!running || generation != semiFlowGeneration || t0 > 0L || semiIgnorePlaybackUntilList) return@launch
+
+            semiAttemptArmed = true
+            installSemiTouchCapture()
+            if (semiCaptureOverlay != null) {
+                overlayStartButton?.apply {
+                    text = "ARMED"
+                    isEnabled = true
+                }
+                status.text = "SEMI · ARMED · tap one YouTube video for T0"
+            } else {
+                // Never expose a fake ARMED state. If WindowManager rejected the capture layer,
+                // return to a clean START state and let the tester try again.
+                semiAttemptArmed = false
+                overlayStartButton?.apply {
+                    text = "START"
+                    isEnabled = true
+                }
+                status.text = "SEMI · arm failed · press START again"
+            }
+        }
     }
 
     private suspend fun next(status: TextView) {
@@ -526,7 +563,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         t0 = 0L
         semiAttemptArmed = false
         removeSemiTouchCapture()
-        overlayStartButton?.text = "START"
+        overlayStartButton?.apply { text = "START"; isEnabled = true }
         semiT0ElapsedMs = 0L
         semiT0Source = ""
         semiSawPlayback = false
@@ -591,7 +628,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                     semiLastGestureTitle = ""
                     semiLastPlaybackPage = looksLikePlaybackPage(rootInActiveWindow)
                     status?.text = "SEMI · ready · press START for the next sample"
-                    overlayStartButton?.text = "START"
+                    overlayStartButton?.apply { text = "START"; isEnabled = true }
                 } else if (running) {
                     // Do not issue a second automatic Back. Let the tester press Android Back once;
                     // keep the guard active so that manual return can never become a new attempt.
@@ -612,7 +649,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                                 semiLastGestureTitle = ""
                                 semiLastPlaybackPage = looksLikePlaybackPage(rootInActiveWindow)
                                 status?.text = "SEMI · ready · press START for the next sample"
-                                overlayStartButton?.text = "START"
+                                overlayStartButton?.apply { text = "START"; isEnabled = true }
                                 return@launch
                             }
                         }
@@ -630,7 +667,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         semiFlowGeneration++
         removeSemiTouchCapture()
         semiAttemptArmed = false
-        overlayStartButton?.text = "START"
+        overlayStartButton?.apply { text = "START"; isEnabled = true }
 
         // RETRY means discard only the current unfinished attempt and return the interaction
         // state to a clean READY state. Already-saved rows remain untouched.
