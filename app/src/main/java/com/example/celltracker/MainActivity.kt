@@ -2438,32 +2438,43 @@ private fun WhatsAppSendScreen(onBack: () -> Unit) {
     val repo = remember { WhatsAppSendRepository(context) }
     var autoRecord by rememberSaveable { mutableStateOf(repo.loadConfig().autoRecord) }
     var history by remember { mutableStateOf(repo.history()) }
+    var preview by remember { mutableStateOf<WhatsAppSendDetail?>(null) }
+    var deletePath by remember { mutableStateOf<String?>(null) }
+    var exportResult by remember { mutableStateOf<ExportResult?>(null) }
     val metaRepo = remember { TestMetadataRepository(context) }
     var showMetadata by remember { mutableStateOf(false) }
 
     Scaffold(topBar = { TopAppBar(title = { Text("WhatsApp Image Send") }, navigationIcon = { TextButton(onClick = onBack) { Text("Back") } }) }) { pad ->
         Column(Modifier.padding(pad).padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Manual timing", style = MaterialTheme.typography.titleMedium)
-            Text("Open a WhatsApp chat and prepare an image. For each sample: START → wait for ARMED → tap WhatsApp Send (T0) → tap SENT when the image is sent (T1). CellTracker calculates T1 - T0.", style = MaterialTheme.typography.bodySmall)
-            Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(autoRecord, { autoRecord = it }); Text("Auto Network Recording (reserved)") }
+            Text("Open a WhatsApp chat and prepare an image. For each sample: START → ARMED → tap Send (T0) → tap SENT (T1).", style = MaterialTheme.typography.bodySmall)
+            Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(autoRecord, { autoRecord = it }); Text("Auto Network Recording") }
             Button(onClick = { context.startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }) { Text("1. Enable WhatsApp Send Accessibility") }
             Button(onClick = { showMetadata = true }) { Text("2. PREPARE TEST / Open WhatsApp") }
-            Text("No automatic WhatsApp UI detection is used. After ARMED, the next normal single tap is T0, so press START only when you are ready to tap Send.", style = MaterialTheme.typography.bodySmall)
             TextButton(onClick = { history = repo.history() }) { Text("Refresh History") }
             Text("History", style = MaterialTheme.typography.titleMedium)
             if (history.isEmpty()) Text("No WhatsApp send sessions yet", style = MaterialTheme.typography.bodySmall)
             history.forEach { d ->
                 Card(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
                         Text(File(d.path).nameWithoutExtension, style = MaterialTheme.typography.titleSmall)
                         val vals = d.samples.map { it.delayMs }
                         Text("${d.status} · ${d.samples.size} samples · Avg ${vals.takeIf { it.isNotEmpty() }?.average()?.let { String.format(Locale.US, "%.0f ms", it) } ?: "--"}")
-                        d.samples.takeLast(5).forEach { s -> Text("#${s.sequence}  ${s.delayMs} ms", style = MaterialTheme.typography.bodySmall) }
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = { preview = repo.load(d.path) }, modifier = Modifier.weight(1f)) { Text("View Details") }
+                            Button(onClick = {
+                                runCatching { WhatsAppSendExporter.export(context, d.path) }
+                                    .onSuccess { exportResult = it }
+                                    .onFailure { Toast.makeText(context, it.message, Toast.LENGTH_LONG).show() }
+                            }, modifier = Modifier.weight(1f)) { Text("Export / Share") }
+                        }
+                        OutlinedButton(onClick = { deletePath = d.path }, modifier = Modifier.fillMaxWidth()) { Text("Delete") }
                     }
                 }
             }
         }
     }
+
     if (showMetadata) {
         TestMetadataDialog(
             initial = metaRepo.last().copy(task = "WhatsApp Image Send"),
@@ -2478,6 +2489,68 @@ private fun WhatsAppSendScreen(onBack: () -> Unit) {
                     ?: context.packageManager.getLaunchIntentForPackage("com.whatsapp.w4b")
                 if (launch != null) context.startActivity(launch) else Toast.makeText(context, "WhatsApp is not installed", Toast.LENGTH_SHORT).show()
             }
+        )
+    }
+
+    preview?.let { d ->
+        val values = d.samples.map { it.delayMs }.sorted()
+        fun pct(p: Double): Long? = if (values.isEmpty()) null else values[((values.size - 1) * p).toInt().coerceIn(0, values.lastIndex)]
+        Dialog(onDismissRequest = { preview = null }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+            Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                Scaffold(
+                    topBar = {
+                        TopAppBar(
+                            title = { Text("WhatsApp Send Result") },
+                            navigationIcon = { TextButton(onClick = { preview = null }) { Text("Back") } },
+                            actions = { TextButton(onClick = { runCatching { WhatsAppSendExporter.export(context, d.path) }.onSuccess { exportResult = it } }) { Text("Share") } }
+                        )
+                    }
+                ) { p ->
+                    LazyColumn(Modifier.padding(p).fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        item {
+                            Card(Modifier.fillMaxWidth()) {
+                                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text("Summary", style = MaterialTheme.typography.titleMedium)
+                                    Text("Status: ${d.status}")
+                                    Text("Samples: ${d.samples.size}")
+                                    Text("Average: ${if (values.isEmpty()) "--" else String.format(Locale.US, "%.0f ms", values.average())} · Median: ${pct(.5)?.let { "$it ms" } ?: "--"}")
+                                    Text("P90: ${pct(.9)?.let { "$it ms" } ?: "--"} · P95: ${pct(.95)?.let { "$it ms" } ?: "--"}")
+                                    Text("Min / Max: ${values.minOrNull()?.let { "$it ms" } ?: "--"} / ${values.maxOrNull()?.let { "$it ms" } ?: "--"}")
+                                }
+                            }
+                        }
+                        items(d.samples.size) { i ->
+                            val s = d.samples[i]
+                            Card(Modifier.fillMaxWidth()) {
+                                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text("#${s.sequence} · ${s.delayMs} ms", style = MaterialTheme.typography.titleSmall)
+                                    Text("T0: ${java.text.SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(java.util.Date(s.t0Ms))} · T1: ${java.text.SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(java.util.Date(s.t1Ms))}")
+                                    Text("T0 source: ${s.t0Source} · ${s.snapshot.displayRat} · RSRP ${s.snapshot.rsrp} · SINR ${s.snapshot.sinr}", style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    deletePath?.let { path ->
+        AlertDialog(
+            onDismissRequest = { deletePath = null },
+            title = { Text("Delete WhatsApp result?") },
+            text = { Text(File(path).nameWithoutExtension) },
+            confirmButton = { TextButton(onClick = { repo.delete(path); deletePath = null; preview = null; history = repo.history() }) { Text("Delete") } },
+            dismissButton = { TextButton(onClick = { deletePath = null }) { Text("Cancel") } }
+        )
+    }
+
+    exportResult?.let { result ->
+        AlertDialog(
+            onDismissRequest = { exportResult = null },
+            title = { Text("Report exported") },
+            text = { Text("${result.message}\n\nSaved to Downloads/CellTracker.") },
+            confirmButton = { TextButton(onClick = { exportResult = null }) { Text("OK") } }
         )
     }
 }
