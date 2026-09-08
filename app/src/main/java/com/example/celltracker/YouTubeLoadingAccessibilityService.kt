@@ -640,7 +640,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         // Real scrolling is detected from the maximum displacement during the whole gesture, not only UP-DOWN.
         // YouTube often interprets a short 30-60dp finger drift as a tap. Be conservative about
         // calling something a scroll: only a clearly intentional movement is replayed as scrolling.
-        val tapSlopPx = 72f * density
+        val tapSlopPx = 96f * density
         val longPressMs = 650L
         var downX = 0f
         var downY = 0f
@@ -696,14 +696,14 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                     val clickTargetAtDown = if (!multiTouch && isSemiMediaTapArea(downX, downY)) {
                         findClickableNodeAt(rootInActiveWindow, downX.toInt(), downY.toInt())
                     } else null
-                    val hardScrollPx = 110f * density
+                    val hardScrollPx = 165f * density
                     val netDistance = kotlin.math.sqrt(dx * dx + dy * dy)
                     val tapLikeWithClickableTarget = clickTargetAtDown != null &&
-                        maxDistanceFromDown <= hardScrollPx && netDistance <= hardScrollPx
+                        maxDistanceFromDown <= hardScrollPx && netDistance <= hardScrollPx && duration < 520L
                     val isTap = !multiTouch && duration < longPressMs &&
                         (maxDistanceFromDown <= tapSlopPx || tapLikeWithClickableTarget)
 
-                    if (isTap && inMediaArea) {
+                    if (isTap && inMediaArea && !isPointInsideMiniPlayer(rootInActiveWindow, downX.toInt(), downY.toInt())) {
                         // T0 is the user's real tap-up time.  Remove the capture layer, then replay
                         // the same tap into YouTube.  No Accessibility click event is required.
                         // Use ACTION_DOWN as the user's real click instant. Classification waits until ACTION_UP,
@@ -746,6 +746,20 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                                         installSemiTouchCapture()
                                     }
                                 }
+                            }
+                        }
+                    } else if (isTap && inMediaArea && isPointInsideMiniPlayer(rootInActiveWindow, downX.toInt(), downY.toInt())) {
+                        // A persistent YouTube mini-player is not a new test item. Replay the tap so
+                        // the UI still behaves naturally, but never arm T0 / increment Attempt.
+                        removeSemiTouchCapture()
+                        overlayStatus?.text = "SEMI · mini-player tap ignored · no Attempt"
+                        scope.launch {
+                            delay(70)
+                            dispatchTap(e.rawX, e.rawY)
+                            delay(180)
+                            if (running && config.semiAuto && t0 == 0L && !looksLikePlaybackPage(rootInActiveWindow)) {
+                                installSemiTouchCapture()
+                                overlayStatus?.text = "SEMI · ready · tap the next YouTube video"
                             }
                         }
                     } else {
@@ -829,6 +843,34 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         val bottom = (lockedContentBottom.takeIf { it > top } ?: fallback.bottom)
             .coerceAtMost(h - (72 * resources.displayMetrics.density).toInt())
         return y.toInt() in top..bottom
+    }
+
+    private fun isPointInsideMiniPlayer(root: AccessibilityNodeInfo?, x: Int, y: Int): Boolean {
+        if (root == null) return false
+        val screenW = resources.displayMetrics.widthPixels
+        val screenH = resources.displayMetrics.heightPixels
+        var hit = false
+        fun walk(n: AccessibilityNodeInfo) {
+            if (hit) return
+            val r = Rect(); n.getBoundsInScreen(r)
+            if (!r.isEmpty && r.contains(x, y)) {
+                val labels = (nodeLabel(n) + " | " + descendantLabels(n).joinToString(" | ")).lowercase()
+                val explicitMini = labels.contains("miniplayer") || labels.contains("mini player") ||
+                    labels.contains("close player") || labels.contains("expand player") ||
+                    labels.contains("迷你播放器") || labels.contains("关闭播放器") || labels.contains("展开播放器")
+                // Some YouTube builds expose the mini-player only as a compact lower-right player
+                // containing Pause/Play + Close. Geometry is used only together with player controls,
+                // so ordinary creator thumbnails are not filtered out.
+                val playerControls = (labels.contains("pause") || labels.contains("play") || labels.contains("暂停") || labels.contains("播放")) &&
+                    (labels.contains("close") || labels.contains("关闭"))
+                val compactLowerPlayer = r.centerY() > (screenH * 0.62f).toInt() &&
+                    r.width() < (screenW * 0.72f).toInt() && r.height() < (screenH * 0.38f).toInt()
+                if (explicitMini || (playerControls && compactLowerPlayer)) { hit = true; return }
+                for (i in 0 until n.childCount) n.getChild(i)?.let(::walk)
+            }
+        }
+        walk(root)
+        return hit
     }
 
     private fun isMiniPlayerNode(node: AccessibilityNodeInfo?): Boolean {
