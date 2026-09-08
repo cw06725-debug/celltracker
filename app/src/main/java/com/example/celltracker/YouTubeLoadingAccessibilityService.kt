@@ -64,6 +64,11 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
     private var semiLastGestureWallMs = 0L
     private var semiLastGestureElapsedMs = 0L
     private var semiLastGestureTitle = ""
+    // While replaying a confirmed list scroll, suppress YouTube click/page-transition events.
+    // Some YouTube builds make the mini-player clickable and a replayed swipe can graze it;
+    // without this guard that accidental mini-player activation becomes a phantom Attempt.
+    private var semiReplayingScroll = false
+    private var semiScrollGuardUntilElapsedMs = 0L
 
     override fun onServiceConnected() {
         activeInstance = this
@@ -101,6 +106,24 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             if (playbackPage) semiSawPlayback = true
             if (semiSawPlayback && looksLikeCreatorPage(root) && !playbackPage && now - t0 > 300L) {
                 completeSemiAttempt("PASS", "MANUAL_BACK", overlayStatus, performBack = false)
+            }
+            return
+        }
+
+        // A confirmed scroll must never create an Attempt. During gesture replay YouTube may
+        // accidentally activate its mini-player (or emit a stale TYPE_VIEW_CLICKED). Ignore those
+        // events for a short guard window. If the replay actually opened a playback page, undo it
+        // once and return to the list instead of counting it.
+        if (semiReplayingScroll || nowElapsed < semiScrollGuardUntilElapsedMs) {
+            semiPendingClickMs = 0L
+            semiPendingClickElapsedMs = 0L
+            semiPendingTitle = ""
+            if (playbackPage && !wasPlaybackPage) {
+                overlayStatus?.text = "SEMI · scroll touched player · returning to list"
+                scope.launch {
+                    delay(120)
+                    performGlobalAction(GLOBAL_ACTION_BACK)
+                }
             }
             return
         }
@@ -314,6 +337,8 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         semiLastGestureWallMs = 0L
         semiLastGestureElapsedMs = 0L
         semiLastGestureTitle = ""
+        semiReplayingScroll = false
+        semiScrollGuardUntilElapsedMs = 0L
         semiIgnorePlaybackUntilList = false
         semiLastPlaybackPage = looksLikePlaybackPage(rootInActiveWindow)
         sessionMode = detectCreatorMode(rootInActiveWindow)
@@ -745,14 +770,28 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                             semiLastGestureWallMs = 0L
                             semiLastGestureElapsedMs = 0L
                             semiLastGestureTitle = ""
+                            semiPendingClickMs = 0L
+                            semiPendingClickElapsedMs = 0L
+                            semiPendingTitle = ""
                             overlayStatus?.text = "SEMI · $why · no T0"
-                            replayGesture(points.toList(), duration) {
-                                // Re-arm immediately after Android confirms the scroll replay finished.
-                                // This removes the dead window in which the next real tap could bypass
-                                // CellTracker and force an inaccurate page-transition fallback.
-                                if (running && config.semiAuto && t0 == 0L && !looksLikePlaybackPage(rootInActiveWindow)) {
-                                    installSemiTouchCapture()
-                                    overlayStatus?.text = "SEMI · ready · tap the next YouTube video"
+                            if (why == "scroll") {
+                                semiReplayingScroll = true
+                                semiScrollGuardUntilElapsedMs = SystemClock.elapsedRealtime() + duration + 700L
+                                replaySafeVerticalScroll(points.toList(), duration) {
+                                    semiReplayingScroll = false
+                                    semiScrollGuardUntilElapsedMs = SystemClock.elapsedRealtime() + 260L
+                                    // Re-arm immediately after Android confirms the scroll replay finished.
+                                    if (running && config.semiAuto && t0 == 0L && !looksLikePlaybackPage(rootInActiveWindow)) {
+                                        installSemiTouchCapture()
+                                        overlayStatus?.text = "SEMI · ready · tap the next YouTube video"
+                                    }
+                                }
+                            } else {
+                                replayGesture(points.toList(), duration) {
+                                    if (running && config.semiAuto && t0 == 0L && !looksLikePlaybackPage(rootInActiveWindow)) {
+                                        installSemiTouchCapture()
+                                        overlayStatus?.text = "SEMI · ready · tap the next YouTube video"
+                                    }
                                 }
                             }
                         }
@@ -786,6 +825,57 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         val bottom = (lockedContentBottom.takeIf { it > top } ?: fallback.bottom)
             .coerceAtMost(h - (72 * resources.displayMetrics.density).toInt())
         return y.toInt() in top..bottom
+    }
+
+    private fun isMiniPlayerNode(node: AccessibilityNodeInfo?): Boolean {
+        if (node == null) return false
+        val labels = descendantLabels(node).joinToString(" | ").lowercase()
+        if (labels.contains("miniplayer") || labels.contains("mini player") ||
+            labels.contains("close player") || labels.contains("expand player") ||
+            labels.contains("迷你播放器") || labels.contains("关闭播放器") || labels.contains("展开播放器")) return true
+        // Also inspect a few ancestors: on some YouTube versions the touched child is unlabeled
+        // while the mini-player container carries the accessibility description.
+        var p = node.parent
+        repeat(3) {
+            val a = p ?: return@repeat
+            val t = (nodeLabel(a) + " | " + descendantLabels(a).joinToString(" | ")).lowercase()
+            if (t.contains("miniplayer") || t.contains("mini player") || t.contains("close player") ||
+                t.contains("expand player") || t.contains("迷你播放器") || t.contains("关闭播放器")) return true
+            p = a.parent
+        }
+        return false
+    }
+
+    /**
+     * Replay a confirmed vertical scroll on a safe central X instead of the user's exact path.
+     * Exact replay can graze YouTube's persistent mini-player and turn a swipe into a click.
+     * We preserve direction/distance while keeping the gesture in the creator content area.
+     */
+    private fun replaySafeVerticalScroll(points: List<Pair<Float, Float>>, durationMs: Long, onDone: () -> Unit) {
+        if (points.size < 2) { onDone(); return }
+        val dm = resources.displayMetrics
+        val fallback = safeContentBounds()
+        val top = (lockedContentTop.takeIf { it > 0 } ?: fallback.top) + (28f * dm.density).toInt()
+        val bottom = (lockedContentBottom.takeIf { it > top } ?: fallback.bottom) - (96f * dm.density).toInt()
+        if (bottom <= top) { replayGesture(points, durationMs, onDone); return }
+        val deltaY = points.last().second - points.first().second
+        val minSwipe = 90f * dm.density
+        if (kotlin.math.abs(deltaY) < minSwipe) { onDone(); return }
+        val x = dm.widthPixels * 0.5f
+        val startY = if (deltaY < 0f) bottom.toFloat() else top.toFloat()
+        val maxTravel = (bottom - top).toFloat() * 0.78f
+        val travel = kotlin.math.min(kotlin.math.abs(deltaY), maxTravel)
+        val endY = (startY + if (deltaY < 0f) -travel else travel).coerceIn(top.toFloat(), bottom.toFloat())
+        val path = Path().apply { moveTo(x, startY); lineTo(x, endY) }
+        val duration = durationMs.coerceIn(120L, 900L)
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0L, duration))
+            .build()
+        val accepted = dispatchGesture(gesture, object : AccessibilityService.GestureResultCallback() {
+            override fun onCompleted(gestureDescription: GestureDescription?) { scope.launch { delay(70); onDone() } }
+            override fun onCancelled(gestureDescription: GestureDescription?) { scope.launch { delay(70); onDone() } }
+        }, null)
+        if (!accepted) scope.launch { delay(duration + 90); onDone() }
     }
 
     private fun replayGesture(points: List<Pair<Float, Float>>, durationMs: Long, onDone: () -> Unit) {
@@ -834,7 +924,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             val r = Rect()
             n.getBoundsInScreen(r)
             if (!r.isEmpty && r.contains(x, y)) {
-                if (n.isClickable) {
+                if (n.isClickable && !isMiniPlayerNode(n)) {
                     val area = r.width().toLong() * r.height().toLong()
                     if (r.width() > 80 && r.height() > 48 && area < bestArea) {
                         best = n
