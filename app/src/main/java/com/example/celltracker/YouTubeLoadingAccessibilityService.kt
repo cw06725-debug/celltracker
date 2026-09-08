@@ -110,20 +110,19 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             return
         }
 
-        // A confirmed scroll must never create an Attempt. During gesture replay YouTube may
-        // accidentally activate its mini-player (or emit a stale TYPE_VIEW_CLICKED). Ignore those
-        // events for a short guard window. If the replay actually opened a playback page, undo it
-        // once and return to the list instead of counting it.
+        // A confirmed scroll must never create an Attempt. During replay/settling, suppress stale
+        // click/page-transition events. IMPORTANT: never auto-BACK here. A real user tap made right
+        // after a scroll can legitimately open a video while the short scroll guard is still active;
+        // the old auto-BACK path would immediately throw the user back to the list even in SEMI mode.
+        // If playback appears during the guard, leave the page alone. Once the guard expires the
+        // normal touch/accessibility path can establish T0; otherwise LOADED will simply report that
+        // no valid T0 was armed instead of navigating behind the user's back.
         if (semiReplayingScroll || nowElapsed < semiScrollGuardUntilElapsedMs) {
             semiPendingClickMs = 0L
             semiPendingClickElapsedMs = 0L
             semiPendingTitle = ""
             if (playbackPage && !wasPlaybackPage) {
-                overlayStatus?.text = "SEMI · scroll touched player · returning to list"
-                scope.launch {
-                    delay(120)
-                    performGlobalAction(GLOBAL_ACTION_BACK)
-                }
+                overlayStatus?.text = "SEMI · playback opened while scroll settled · no auto return"
             }
             return
         }
@@ -779,11 +778,16 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                                 semiScrollGuardUntilElapsedMs = SystemClock.elapsedRealtime() + duration + 700L
                                 replaySafeVerticalScroll(points.toList(), duration) {
                                     semiReplayingScroll = false
-                                    semiScrollGuardUntilElapsedMs = SystemClock.elapsedRealtime() + 260L
-                                    // Re-arm immediately after Android confirms the scroll replay finished.
-                                    if (running && config.semiAuto && t0 == 0L && !looksLikePlaybackPage(rootInActiveWindow)) {
-                                        installSemiTouchCapture()
-                                        overlayStatus?.text = "SEMI · ready · tap the next YouTube video"
+                                    // Keep only a very short settle guard, and do not place the touch layer
+                                    // back on top until that guard has expired. This removes the overlap where
+                                    // a genuine post-scroll tap could be interpreted as part of the scroll.
+                                    semiScrollGuardUntilElapsedMs = SystemClock.elapsedRealtime() + 90L
+                                    scope.launch {
+                                        delay(110)
+                                        if (running && config.semiAuto && t0 == 0L && !looksLikePlaybackPage(rootInActiveWindow)) {
+                                            installSemiTouchCapture()
+                                            overlayStatus?.text = "SEMI · ready · tap the next YouTube video"
+                                        }
                                     }
                                 }
                             } else {
