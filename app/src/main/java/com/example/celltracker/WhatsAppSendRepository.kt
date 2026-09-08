@@ -39,7 +39,7 @@ class WhatsAppSendRepository(private val context: Context) {
     }
     fun append(file:File,s:WhatsAppSendSample){
         val n=s.snapshot
-        val v=listOf(s.sequence,s.t0Ms,fmt(s.t0Ms),s.t1Ms,fmt(s.t1Ms),s.delayMs,s.t0ElapsedMs,s.t1ElapsedMs,n.subscriptionId,n.simSlot+1,n.operator,n.displayRat,n.rsrp,n.rsrq,n.sinr,n.rssi,n.band,n.pci,n.arfcn,n.latitude?:"",n.longitude?:"")
+        val v=listOf(s.sequence,s.t0Ms,fmt(s.t0Ms),s.t1Ms,fmt(s.t1Ms),s.delayMs,s.t0ElapsedMs,s.t1ElapsedMs,s.t0Source,n.subscriptionId,n.simSlot+1,n.operator,n.displayRat,n.rsrp,n.rsrq,n.sinr,n.rssi,n.band,n.pci,n.arfcn,n.latitude?:"",n.longitude?:"")
         FileWriter(file,true).use{ it.appendLine(v.joinToString(","){x->csv(x.toString())}) }
     }
     fun finish(file:File,start:Long,end:Long,status:String){meta(file,start,end,status)}
@@ -51,7 +51,7 @@ class WhatsAppSendRepository(private val context: Context) {
         val samples=rows.drop(1).mapNotNull{raw-> val r=parse(raw); val seq=g(r,"sequence").toIntOrNull()?:return@mapNotNull null
             WhatsAppSendSample(seq,g(r,"t0_ms").toLongOrNull()?:0,g(r,"t1_ms").toLongOrNull()?:0,g(r,"delay_ms").toLongOrNull()?:0,
                 PingNetworkSnapshot(subscriptionId=g(r,"subscription_id").toIntOrNull()?:-1,simSlot=(g(r,"sim_slot").toIntOrNull()?:1)-1,operator=g(r,"operator"),displayRat=g(r,"rat"),rsrp=g(r,"rsrp"),rsrq=g(r,"rsrq"),sinr=g(r,"sinr"),rssi=g(r,"rssi"),band=g(r,"band"),pci=g(r,"pci"),arfcn=g(r,"arfcn"),latitude=g(r,"latitude").toDoubleOrNull(),longitude=g(r,"longitude").toDoubleOrNull()),
-                g(r,"t0_elapsed_ms").toLongOrNull()?:0,g(r,"t1_elapsed_ms").toLongOrNull()?:0)
+                g(r,"t0_elapsed_ms").toLongOrNull()?:0,g(r,"t1_elapsed_ms").toLongOrNull()?:0,g(r,"t0_source"))
         }
         val p=Properties(); val mf=File(f.parentFile,f.nameWithoutExtension+".meta"); if(mf.exists()) mf.inputStream().use{p.load(it)}
         return WhatsAppSendDetail(path,p.getProperty("started")?.toLongOrNull()?:f.lastModified(),p.getProperty("ended")?.toLongOrNull()?:0,p.getProperty("status","Completed"),samples)
@@ -61,5 +61,5 @@ class WhatsAppSendRepository(private val context: Context) {
     private fun fmt(t:Long)=SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS",Locale.US).format(Date(t))
     private fun csv(v:String)="\""+v.replace("\"","\"\"")+"\""
     private fun parse(s:String):List<String>{val out=mutableListOf<String>();val b=StringBuilder();var q=false;var i=0;while(i<s.length){val c=s[i];if(c=='\"'&&q&&i+1<s.length&&s[i+1]=='\"'){b.append('\"');i++}else if(c=='\"')q=!q else if(c==','&&!q){out+=b.toString();b.setLength(0)}else b.append(c);i++};out+=b.toString();return out}
-    companion object{const val HEADER="sequence,t0_ms,t0_time,t1_ms,t1_time,delay_ms,t0_elapsed_ms,t1_elapsed_ms,subscription_id,sim_slot,operator,rat,rsrp,rsrq,sinr,rssi,band,pci,arfcn,latitude,longitude"}
+    companion object{const val HEADER="sequence,t0_ms,t0_time,t1_ms,t1_time,delay_ms,t0_elapsed_ms,t1_elapsed_ms,t0_source,subscription_id,sim_slot,operator,rat,rsrp,rsrq,sinr,rssi,band,pci,arfcn,latitude,longitude"}
 }

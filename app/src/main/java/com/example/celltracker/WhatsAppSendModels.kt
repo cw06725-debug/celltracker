@@ -12,7 +12,8 @@ data class WhatsAppSendSample(
     val delayMs:Long,
     val snapshot:PingNetworkSnapshot=PingNetworkSnapshot(),
     val t0ElapsedMs:Long=0L,
-    val t1ElapsedMs:Long=0L
+    val t1ElapsedMs:Long=0L,
+    val t0Source:String=""
 )
 
 data class WhatsAppSendDetail(

@@ -39,6 +39,8 @@ class WhatsAppSendAccessibilityService : AccessibilityService() {
     private var t0Elapsed = 0L
     private var clockJob: Job? = null
     private var lastAcceptedClickUptime = 0L
+    private var armedAtUptime = 0L
+    private var t0Source = ""
 
     override fun onServiceConnected() {
         activeInstance = this
@@ -51,23 +53,37 @@ class WhatsAppSendAccessibilityService : AccessibilityService() {
         if (repo.isArmed() && overlay == null) showOverlay()
 
         if (!running || !armed || t0Wall > 0L) return
-        if (event.eventType != AccessibilityEvent.TYPE_VIEW_CLICKED) return
         val pkg = event.packageName?.toString().orEmpty()
         if (pkg != "com.whatsapp" && pkg != "com.whatsapp.w4b") return
-        val clickUptime = event.eventTime
-        if (clickUptime - lastAcceptedClickUptime < 500L) return
-        lastAcceptedClickUptime = clickUptime
 
-        seq++
-        val uptimeDelta = (SystemClock.uptimeMillis() - clickUptime).coerceAtLeast(0L)
-        t0Elapsed = (SystemClock.elapsedRealtime() - uptimeDelta).coerceAtLeast(1L)
-        t0Wall = System.currentTimeMillis() - uptimeDelta
-        armed = false
-        startButton?.apply { text = "ACTIVE"; isEnabled = true }
-        statusView?.text = "#$seq · T0 SEND · tap SENT when complete"
+        when (event.eventType) {
+            AccessibilityEvent.TYPE_VIEW_CLICKED -> acceptT0(event.eventTime, "CLICK")
+            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
+                // Some WhatsApp builds/custom send controls do not emit TYPE_VIEW_CLICKED.
+                // In explicit manual START mode, use the first WhatsApp content mutation
+                // after ARMED as a fallback marker for the send action. Ignore stale changes
+                // immediately after arming so the START transition cannot become T0.
+                if (event.eventTime >= armedAtUptime + 120L) acceptT0(event.eventTime, "UI CHANGE")
+            }
+        }
     }
 
     override fun onInterrupt() = Unit
+
+    private fun acceptT0(eventUptime: Long, source: String) {
+        if (!running || !armed || t0Wall > 0L) return
+        if (eventUptime - lastAcceptedClickUptime < 250L) return
+        lastAcceptedClickUptime = eventUptime
+        seq++
+        val uptimeDelta = (SystemClock.uptimeMillis() - eventUptime).coerceAtLeast(0L)
+        t0Elapsed = (SystemClock.elapsedRealtime() - uptimeDelta).coerceAtLeast(1L)
+        t0Wall = System.currentTimeMillis() - uptimeDelta
+        t0Source = source
+        armed = false
+        startButton?.apply { text = "ACTIVE"; isEnabled = true }
+        statusView?.text = "#$seq · T0 SEND · $source · tap SENT when complete"
+    }
+
 
     // Manual timing mode: START/ARMED is the user's explicit intent.
     // Therefore the first real click event from WhatsApp after ARMED is T0.
@@ -126,7 +142,7 @@ class WhatsAppSendAccessibilityService : AccessibilityService() {
             } else completeSample(status)
         }
         stop.setOnClickListener {
-            armed=false; t0Wall=0; t0Elapsed=0
+            armed=false; t0Wall=0; t0Elapsed=0; armedAtUptime=0L; t0Source=""
             file?.let { repo.finish(it, sessionStart, System.currentTimeMillis(), "Stopped") }
             repo.disarm(); running=false; status.text="Stopped"
             scope.launch { delay(700); dismissOverlay() }
@@ -136,7 +152,7 @@ class WhatsAppSendAccessibilityService : AccessibilityService() {
     }
 
     private fun armNext(status: TextView) {
-        armed=false; t0Wall=0; t0Elapsed=0
+        armed=false; t0Wall=0; t0Elapsed=0; armedAtUptime=0L; t0Source=""
         startButton?.apply { text="ARMING…"; isEnabled=false }
         status.text="ARMING…"
         // No full-screen capture layer in WhatsApp mode. The short delay only keeps
@@ -145,17 +161,18 @@ class WhatsAppSendAccessibilityService : AccessibilityService() {
             delay(80)
             if (!running) return@launch
             armed=true
+            armedAtUptime = SystemClock.uptimeMillis()
             startButton?.apply { text="ARMED"; isEnabled=true }
             status.text="ARMED · now tap WhatsApp Send"
         }
     }
 
     private fun completeSample(status:TextView){
-        val startW=t0Wall;val startE=t0Elapsed;if(startW<=0||startE<=0||file==null)return
-        t0Wall=0;t0Elapsed=0;armed=false;startButton?.apply{text="START";isEnabled=true}
+        val startW=t0Wall;val startE=t0Elapsed;val source=t0Source;if(startW<=0||startE<=0||file==null)return
+        t0Wall=0;t0Elapsed=0;t0Source="";armed=false;armedAtUptime=0L;startButton?.apply{text="START";isEnabled=true}
         scope.launch {
             val t1W=System.currentTimeMillis();val t1E=SystemClock.elapsedRealtime();val delay=(t1E-startE).coerceAtLeast(0)
-            val snap=withContext(Dispatchers.IO){snapshot()};repo.append(file!!,WhatsAppSendSample(seq,startW,t1W,delay,snap,startE,t1E))
+            val snap=withContext(Dispatchers.IO){snapshot()};repo.append(file!!,WhatsAppSendSample(seq,startW,t1W,delay,snap,startE,t1E,source))
             status.text="#$seq · $delay ms · saved · press START for next sample"
         }
     }
