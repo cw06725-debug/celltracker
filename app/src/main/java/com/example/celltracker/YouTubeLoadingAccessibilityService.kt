@@ -71,6 +71,8 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
     private var semiScrollGuardUntilElapsedMs = 0L
     private var semiRecoveryJob: Job? = null
     private var semiFlowGeneration = 0
+    private var semiAttemptArmed = false
+    private var overlayStartButton: Button? = null
 
     override fun onServiceConnected() {
         activeInstance = this
@@ -91,6 +93,10 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         val wasPlaybackPage = semiLastPlaybackPage
         semiLastPlaybackPage = playbackPage
 
+        // Manual-per-attempt mode: outside an armed/active sample, ignore YouTube events entirely.
+        // This lets the tester scroll and navigate freely before pressing START for the next sample.
+        if (!semiAttemptArmed && t0 == 0L) return
+
         // After LOADED/AD we perform Back ourselves. YouTube can continue emitting watch-page
         // accessibility events for a short time while the page is closing. Never interpret those
         // stale events as a second semi-auto attempt. Re-arm only after the creator/list page is
@@ -107,7 +113,20 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         if (t0 > 0L) {
             if (playbackPage) semiSawPlayback = true
             if (semiSawPlayback && looksLikeCreatorPage(root) && !playbackPage && now - t0 > 300L) {
-                completeSemiAttempt("PASS", "MANUAL_BACK", overlayStatus, performBack = false)
+                // In manual-per-attempt mode LOADED is the only valid T2. If the tester backs out
+                // before pressing LOADED, discard this unfinished sample instead of inventing T2.
+                if (seq > 0) seq--
+                t0 = 0L
+                semiT0ElapsedMs = 0L
+                semiT0Source = ""
+                semiSawPlayback = false
+                semiAttemptArmed = false
+                semiPendingClickMs = 0L
+                semiPendingClickElapsedMs = 0L
+                semiPendingTitle = ""
+                removeSemiTouchCapture()
+                overlayStartButton?.text = "START"
+                overlayStatus?.text = "SEMI · attempt cancelled · press START for the next sample"
             }
             return
         }
@@ -153,24 +172,15 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             // attempts from multiple events while we are already sitting on the same watch page.
             val pendingAge = if (semiPendingClickMs > 0L) now - semiPendingClickMs else Long.MAX_VALUE
             val hasFreshClick = pendingAge in 0..10_000L && semiPendingClickElapsedMs > 0L
-            val freshPageTransition = !wasPlaybackPage
-            if (!hasFreshClick && !freshPageTransition) return
+            if (!hasFreshClick) return
             seq++
             currentTitle = semiPendingTitle.ifBlank { "Manual media $seq" }
-            if (hasFreshClick) {
-                t0 = semiPendingClickMs
-                semiT0ElapsedMs = semiPendingClickElapsedMs
-                semiT0Source = "ACCESSIBILITY_CLICK"
-                overlayStatus?.text = "SEMI · #$seq timing · T0 CLICK · tap LOADED when ready"
-            } else {
-                // Keep the session usable, but mark fallback timing LOW confidence. It will not be
-                // included in normal PASS delay statistics.
-                t0 = now
-                semiT0ElapsedMs = nowElapsed
-                semiT0Source = "PAGE_FALLBACK_LOW"
-                overlayStatus?.text = "SEMI · #$seq LOW accuracy T0 · tap LOADED when ready"
-            }
+            t0 = semiPendingClickMs
+            semiT0ElapsedMs = semiPendingClickElapsedMs
+            semiT0Source = "ACCESSIBILITY_CLICK"
+            overlayStatus?.text = "SEMI · #$seq timing · T0 CLICK · tap LOADED when ready"
             semiSawPlayback = true
+            overlayStartButton?.text = "ACTIVE"
             semiPendingClickMs = 0L
             semiPendingClickElapsedMs = 0L
             semiPendingTitle = ""
@@ -205,6 +215,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         val rowTop = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         val rowBottom = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         val start = Button(this).apply { text = "START" }
+        overlayStartButton = start
         val loaded = Button(this).apply { text = "LOADED"; visibility = View.GONE }
         val ad = Button(this).apply { text = "AD / SKIP"; visibility = View.GONE }
         val stop = Button(this).apply { text = "STOP"; visibility = View.GONE }
@@ -240,8 +251,15 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         start.setOnClickListener {
             if (running) {
                 if (config.semiAuto) {
-                    status.text = "SEMI · RETRYING… resetting touch state"
-                    retrySemi(status)
+                    when {
+                        t0 > 0L -> {
+                            status.text = "SEMI · current attempt active · use LOADED or RETRY after return"
+                        }
+                        semiAttemptArmed -> {
+                            status.text = "SEMI · armed · now tap one YouTube video"
+                        }
+                        else -> armSemiAttempt(status)
+                    }
                 } else if (t0 > 0L) {
                     status.text = "Video $seq/${config.count} is already loading…"
                 } else {
@@ -252,7 +270,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                 status.text = "STARTING…"
                 val accepted = startTest(status)
                 if (accepted) {
-                    start.text = "RETRY"
+                    start.text = if (config.semiAuto) "ARMED" else "RETRY"
                     loaded.visibility = View.VISIBLE
                     ad.visibility = View.VISIBLE
                     stop.visibility = View.VISIBLE
@@ -260,7 +278,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             }
         }
         loaded.setOnClickListener {
-            if (running && config.semiAuto && t0 == 0L && semiLastGestureElapsedMs > 0L) {
+            if (running && config.semiAuto && semiAttemptArmed && t0 == 0L && semiLastGestureElapsedMs > 0L) {
                 // Final semi-auto safety net: if YouTube actually opened the video but its page
                 // structure never became detectable, the tester's LOADED press is authoritative.
                 // Use the most recent retained content-area ACTION_DOWN as T0 instead of losing the sample.
@@ -282,7 +300,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             } else if (running && t0 > 0) {
                 if (config.semiAuto) completeSemiAttempt("PASS", "MANUAL_BUTTON", status, performBack = true)
                 else completeAttempt("PASS", "MANUAL", status)
-            } else status.text = if (config.semiAuto) "SEMI · tap a YouTube video first" else "Nothing is loading · LOADED ignored"
+            } else status.text = if (config.semiAuto) "SEMI · press START, then tap one YouTube video" else "Nothing is loading · LOADED ignored"
         }
         ad.setOnClickListener {
             if (running && t0 > 0) {
@@ -342,6 +360,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         semiReplayingScroll = false
         semiScrollGuardUntilElapsedMs = 0L
         semiIgnorePlaybackUntilList = false
+        semiAttemptArmed = false
         semiLastPlaybackPage = looksLikePlaybackPage(rootInActiveWindow)
         sessionMode = detectCreatorMode(rootInActiveWindow)
         val initialBounds = creatorContentBounds(rootInActiveWindow) ?: safeContentBounds()
@@ -365,13 +384,42 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             recordingStarted = true
         }
         if (config.semiAuto) {
-            status.text = "SEMI AUTO · tap a video · touch T0 armed"
-            scope.launch { delay(250); installSemiTouchCapture() }
+            semiAttemptArmed = true
+            status.text = "SEMI · ARMED · tap one YouTube video for T0"
+            scope.launch { delay(120); installSemiTouchCapture() }
         } else {
             status.text = "Started · locating Video #1…"
             scope.launch { delay(500); next(status) }
         }
         return true
+    }
+
+    private fun armSemiAttempt(status: TextView) {
+        if (!running || !config.semiAuto) return
+        if (t0 > 0L) {
+            status.text = "SEMI · current attempt active · tap LOADED first"
+            return
+        }
+        // Every sample is explicitly armed by START. While unarmed the tester can freely
+        // scroll/navigate the YouTube list and CellTracker will not intercept or classify touches.
+        semiRecoveryJob?.cancel()
+        semiRecoveryJob = null
+        semiFlowGeneration++
+        semiAttemptArmed = true
+        semiSawPlayback = false
+        semiPendingClickMs = 0L
+        semiPendingClickElapsedMs = 0L
+        semiPendingTitle = ""
+        semiLastGestureWallMs = 0L
+        semiLastGestureElapsedMs = 0L
+        semiLastGestureTitle = ""
+        semiReplayingScroll = false
+        semiScrollGuardUntilElapsedMs = 0L
+        semiIgnorePlaybackUntilList = false
+        semiLastPlaybackPage = looksLikePlaybackPage(rootInActiveWindow)
+        overlayStartButton?.text = "ARMED"
+        status.text = "SEMI · ARMED · tap one YouTube video for T0"
+        installSemiTouchCapture()
     }
 
     private suspend fun next(status: TextView) {
@@ -476,6 +524,9 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         val source = semiT0Source
         if (startWall <= 0L || startElapsed <= 0L || file == null) return
         t0 = 0L
+        semiAttemptArmed = false
+        removeSemiTouchCapture()
+        overlayStartButton?.text = "START"
         semiT0ElapsedMs = 0L
         semiT0Source = ""
         semiSawPlayback = false
@@ -508,8 +559,8 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                 t0Source = source
             ))
             status?.text = when (storedResult) {
-                "PASS" -> "SEMI · #$seq ${delay} ms · saved · tap next video"
-                "AD" -> "SEMI · #$seq AD · excluded · tap next video"
+                "PASS" -> "SEMI · #$seq ${delay} ms · saved · press START for next sample"
+                "AD" -> "SEMI · #$seq AD · excluded · press START for next sample"
                 else -> "SEMI · #$seq ${delay} ms · LOW accuracy · excluded"
             }
             if (performBack) {
@@ -539,8 +590,8 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                     semiLastGestureElapsedMs = 0L
                     semiLastGestureTitle = ""
                     semiLastPlaybackPage = looksLikePlaybackPage(rootInActiveWindow)
-                    status?.text = "SEMI · ready · tap the next YouTube video"
-                    installSemiTouchCapture()
+                    status?.text = "SEMI · ready · press START for the next sample"
+                    overlayStartButton?.text = "START"
                 } else if (running) {
                     // Do not issue a second automatic Back. Let the tester press Android Back once;
                     // keep the guard active so that manual return can never become a new attempt.
@@ -560,8 +611,8 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                                 semiLastGestureElapsedMs = 0L
                                 semiLastGestureTitle = ""
                                 semiLastPlaybackPage = looksLikePlaybackPage(rootInActiveWindow)
-                                status?.text = "SEMI · ready · tap the next YouTube video"
-                                installSemiTouchCapture()
+                                status?.text = "SEMI · ready · press START for the next sample"
+                                overlayStartButton?.text = "START"
                                 return@launch
                             }
                         }
@@ -578,6 +629,8 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         semiRecoveryJob = null
         semiFlowGeneration++
         removeSemiTouchCapture()
+        semiAttemptArmed = false
+        overlayStartButton?.text = "START"
 
         // RETRY means discard only the current unfinished attempt and return the interaction
         // state to a clean READY state. Already-saved rows remain untouched.
@@ -599,8 +652,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         semiLastPlaybackPage = onPlayback
         if (!onPlayback) {
             semiIgnorePlaybackUntilList = false
-            installSemiTouchCapture()
-            status.text = "SEMI · RETRY ready · tap the next YouTube video"
+            status.text = "SEMI · RETRY ready · press START for the next sample"
             return
         }
 
@@ -623,11 +675,11 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             if (stableNonPlayback >= 3) {
                 semiIgnorePlaybackUntilList = false
                 semiLastPlaybackPage = false
+                semiAttemptArmed = false
                 semiPendingClickMs = 0L
                 semiPendingClickElapsedMs = 0L
                 semiPendingTitle = ""
-                installSemiTouchCapture()
-                status.text = "SEMI · RETRY ready · tap the next YouTube video"
+                status.text = "SEMI · RETRY ready · press START for the next sample"
             } else {
                 // Never issue a second automatic Back. Keep stale playback events blocked and let
                 // the tester return once manually; a watcher will re-arm as soon as the list is stable.
@@ -640,8 +692,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                     if (manualStable >= 3) {
                         semiIgnorePlaybackUntilList = false
                         semiLastPlaybackPage = false
-                        installSemiTouchCapture()
-                        status.text = "SEMI · RETRY ready · tap the next YouTube video"
+                        status.text = "SEMI · RETRY ready · press START for the next sample"
                         return@launch
                     }
                 }
@@ -667,6 +718,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         semiPendingTitle = ""
         semiIgnorePlaybackUntilList = false
         semiLastPlaybackPage = false
+        semiAttemptArmed = false
         semiReplayingScroll = false
         semiScrollGuardUntilElapsedMs = 0L
         semiRecoveryJob?.cancel()
@@ -705,10 +757,11 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         runCatching { getSystemService(WindowManager::class.java).removeView(view) }
         if (overlay === view) overlay = null
         overlayStatus = null
+        overlayStartButton = null
     }
 
     private fun installSemiTouchCapture() {
-        if (!running || !config.semiAuto || t0 > 0L || semiCaptureOverlay != null) return
+        if (!running || !config.semiAuto || !semiAttemptArmed || t0 > 0L || semiCaptureOverlay != null) return
         val wm = getSystemService(WindowManager::class.java)
         val main = overlay ?: return
         val mainLp = overlayLp ?: return
@@ -808,6 +861,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                         semiLastGestureWallMs = 0L
                         semiLastGestureElapsedMs = 0L
                         semiLastGestureTitle = ""
+                        overlayStartButton?.text = "ACTIVE"
                         overlayStatus?.text = "SEMI · #$seq T0 TOUCH · tap LOADED at first frame"
                         // First try Accessibility ACTION_CLICK on the actual YouTube node under
                         // the user's finger. This is much more reliable than dispatchGesture for the
