@@ -141,6 +141,7 @@ class MainActivity : ComponentActivity() {
                 var showPingTest by remember { mutableStateOf(false) }
                 var showCallSetup by remember { mutableStateOf(false) }
                 var showVideoLoading by remember { mutableStateOf(false) }
+                var showWhatsAppSend by remember { mutableStateOf(false) }
                 val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { vm.start() }
                 var overlayPermissionRequestedForRecording by remember { mutableStateOf(false) }
                 val overlayPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
@@ -207,11 +208,12 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                BackHandler(enabled = showSettings || detailPath != null || showPingTest || showCallSetup || showVideoLoading) {
+                BackHandler(enabled = showSettings || detailPath != null || showPingTest || showCallSetup || showVideoLoading || showWhatsAppSend) {
                     when {
                         detailPath != null -> detailPath = null
                         showCallSetup -> showCallSetup = false
                         showVideoLoading -> showVideoLoading = false
+                        showWhatsAppSend -> showWhatsAppSend = false
                         showPingTest -> showPingTest = false
                         showSettings -> showSettings = false
                     }
@@ -225,6 +227,7 @@ class MainActivity : ComponentActivity() {
                     detailPath != null -> RootDestination.Detail(detailPath!!)
                     showCallSetup -> RootDestination.CallSetup
                     showVideoLoading -> RootDestination.VideoLoading
+                    showWhatsAppSend -> RootDestination.WhatsAppSend
                     showPingTest -> RootDestination.PingTest
                     showSettings -> RootDestination.Settings
                     else -> RootDestination.Main
@@ -253,6 +256,7 @@ class MainActivity : ComponentActivity() {
                         onDelete = { path -> vm.deleteRecording(path); detailPath = null }
                     )
                     RootDestination.VideoLoading -> VideoLoadingScreen(onBack = { showVideoLoading = false })
+                    RootDestination.WhatsAppSend -> WhatsAppSendScreen(onBack = { showWhatsAppSend = false })
                     RootDestination.PingTest -> PingTestScreen(
                         state = state.pingTest,
                         history = state.pingHistory,
@@ -307,6 +311,7 @@ class MainActivity : ComponentActivity() {
                         },
                         onPingTest = { showPingTest = true },
                         onVideoLoading = { showVideoLoading = true },
+                        onWhatsAppSend = { showWhatsAppSend = true },
                         onCallSetup = { showCallSetup = true },
                         onDismissMessage = vm::clearMessage
                     )
@@ -327,6 +332,7 @@ private sealed interface RootDestination {
     data object Main : RootDestination
     data object Settings : RootDestination
     data object VideoLoading : RootDestination
+    data object WhatsAppSend : RootDestination
     data object PingTest : RootDestination
     data object CallSetup : RootDestination
     data class Detail(val path: String) : RootDestination
@@ -350,6 +356,7 @@ private fun MainScreen(
     onSettings: () -> Unit,
     onPingTest: () -> Unit,
     onVideoLoading: () -> Unit,
+    onWhatsAppSend: () -> Unit,
     onCallSetup: () -> Unit,
     onDismissMessage: () -> Unit
 ) {
@@ -551,6 +558,10 @@ private fun MainScreen(
                 Text("YouTube Video Loading", style = MaterialTheme.typography.titleSmall)
                 Text("Automated channel-video page loading delay via Accessibility, with network snapshots and reports.", style = MaterialTheme.typography.bodySmall)
                 Button(onClick = onVideoLoading) { Text("Configure Video Loading") }
+                HorizontalDivider(Modifier.padding(vertical = 10.dp))
+                Text("WhatsApp Image Send", style = MaterialTheme.typography.titleSmall)
+                Text("Manual image-send delay: START → tap Send (T0) → SENT (T1).", style = MaterialTheme.typography.bodySmall)
+                Button(onClick = onWhatsAppSend) { Text("Configure WhatsApp Send") }
                 HorizontalDivider(Modifier.padding(vertical = 10.dp))
                 Text("Dual-DUT Call Setup", style = MaterialTheme.typography.titleSmall)
                 Text("Bluetooth-linked MO/MT setup success rate with two-ended state validation.", style = MaterialTheme.typography.bodySmall)
@@ -2418,6 +2429,57 @@ private fun valueWithUnit(value: String, unit: String): String = if (value == "-
 private fun formatElapsed(ms: Long): String {
     val total = ms / 1000; val h = total / 3600; val m = (total % 3600) / 60; val s = total % 60
     return String.format(Locale.US, "%02d:%02d:%02d", h, m, s)
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun WhatsAppSendScreen(onBack: () -> Unit) {
+    val context = LocalContext.current
+    val repo = remember { WhatsAppSendRepository(context) }
+    var autoRecord by rememberSaveable { mutableStateOf(repo.loadConfig().autoRecord) }
+    var history by remember { mutableStateOf(repo.history()) }
+    val metaRepo = remember { TestMetadataRepository(context) }
+    var showMetadata by remember { mutableStateOf(false) }
+
+    Scaffold(topBar = { TopAppBar(title = { Text("WhatsApp Image Send") }, navigationIcon = { TextButton(onClick = onBack) { Text("Back") } }) }) { pad ->
+        Column(Modifier.padding(pad).padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Manual timing", style = MaterialTheme.typography.titleMedium)
+            Text("Open a WhatsApp chat and prepare an image. For each sample: START → wait for ARMED → tap WhatsApp Send (T0) → tap SENT when the image is sent (T1). CellTracker calculates T1 - T0.", style = MaterialTheme.typography.bodySmall)
+            Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(autoRecord, { autoRecord = it }); Text("Auto Network Recording (reserved)") }
+            Button(onClick = { context.startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }) { Text("1. Enable WhatsApp Send Accessibility") }
+            Button(onClick = { showMetadata = true }) { Text("2. PREPARE TEST / Open WhatsApp") }
+            Text("No automatic WhatsApp UI detection is used. After ARMED, the next normal single tap is T0, so press START only when you are ready to tap Send.", style = MaterialTheme.typography.bodySmall)
+            TextButton(onClick = { history = repo.history() }) { Text("Refresh History") }
+            Text("History", style = MaterialTheme.typography.titleMedium)
+            if (history.isEmpty()) Text("No WhatsApp send sessions yet", style = MaterialTheme.typography.bodySmall)
+            history.forEach { d ->
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(File(d.path).nameWithoutExtension, style = MaterialTheme.typography.titleSmall)
+                        val vals = d.samples.map { it.delayMs }
+                        Text("${d.status} · ${d.samples.size} samples · Avg ${vals.takeIf { it.isNotEmpty() }?.average()?.let { String.format(Locale.US, "%.0f ms", it) } ?: "--"}")
+                        d.samples.takeLast(5).forEach { s -> Text("#${s.sequence}  ${s.delayMs} ms", style = MaterialTheme.typography.bodySmall) }
+                    }
+                }
+            }
+        }
+    }
+    if (showMetadata) {
+        TestMetadataDialog(
+            initial = metaRepo.last().copy(task = "WhatsApp Image Send"),
+            options = metaRepo.options(),
+            onDismiss = { showMetadata = false },
+            onConfirm = { meta ->
+                metaRepo.saveLast(meta)
+                repo.arm(WhatsAppSendConfig(autoRecord = autoRecord, metadata = meta))
+                showMetadata = false
+                WhatsAppSendAccessibilityService.requestOverlay()
+                val launch = context.packageManager.getLaunchIntentForPackage("com.whatsapp")
+                    ?: context.packageManager.getLaunchIntentForPackage("com.whatsapp.w4b")
+                if (launch != null) context.startActivity(launch) else Toast.makeText(context, "WhatsApp is not installed", Toast.LENGTH_SHORT).show()
+            }
+        )
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
