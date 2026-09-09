@@ -1,3 +1,3 @@
-<resources>    <string name="accessibility_youtube_loading_desc">Automates YouTube video page loading tests and measures page-ready delay.</string>
+<resources>    <string name="accessibility_youtube_loading_desc">CellTracker manual timing for YouTube loading and WhatsApp image sending.</string>
     <string name="accessibility_whatsapp_send_desc">CellTracker WhatsApp image send manual timing</string>
 </resources>

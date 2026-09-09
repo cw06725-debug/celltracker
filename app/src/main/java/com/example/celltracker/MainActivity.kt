@@ -2484,7 +2484,7 @@ private fun WhatsAppSendScreen(onBack: () -> Unit) {
                 metaRepo.saveLast(meta)
                 repo.arm(WhatsAppSendConfig(autoRecord = autoRecord, metadata = meta))
                 showMetadata = false
-                WhatsAppSendAccessibilityService.requestOverlay()
+                YouTubeLoadingAccessibilityService.requestWhatsAppOverlay()
                 val launch = context.packageManager.getLaunchIntentForPackage("com.whatsapp")
                     ?: context.packageManager.getLaunchIntentForPackage("com.whatsapp.w4b")
                 if (launch != null) context.startActivity(launch) else Toast.makeText(context, "WhatsApp is not installed", Toast.LENGTH_SHORT).show()

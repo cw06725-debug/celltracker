@@ -13,6 +13,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityEvent
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -26,7 +27,15 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         /** Called after Video Loading is armed. AccessibilityService may already be connected. */
         fun requestOverlay() {
             activeInstance?.scope?.launch {
+                activeInstance?.dismissWhatsAppOverlay()
                 if (activeInstance?.repo?.isArmed() == true) activeInstance?.showOverlay()
+            }
+        }
+
+        fun requestWhatsAppOverlay() {
+            activeInstance?.scope?.launch {
+                activeInstance?.dismissOverlay()
+                if (activeInstance?.waRepo?.isArmed() == true) activeInstance?.showWhatsAppOverlay()
             }
         }
     }
@@ -75,83 +84,138 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
     private var semiArmedAtUptime = 0L
     private var overlayStartButton: Button? = null
 
+    // WhatsApp manual-timing controller shares this single AccessibilityService so Android
+    // Settings exposes only one CellTracker accessibility switch.
+    private lateinit var waRepo: WhatsAppSendRepository
+    private var waOverlay: View? = null
+    private var waOverlayLp: WindowManager.LayoutParams? = null
+    private var waStatusView: TextView? = null
+    private var waStartButton: Button? = null
+    private var waSentButton: Button? = null
+    private var waFile: java.io.File? = null
+    private var waSessionStart = 0L
+    private var waRunning = false
+    private var waArmed = false
+    private var waSeq = 0
+    private var waT0Wall = 0L
+    private var waT0Elapsed = 0L
+    private var waClockJob: Job? = null
+    private var waLastAcceptedClickUptime = 0L
+    private var waArmedAtUptime = 0L
+    private var waT0Source = ""
+
     override fun onServiceConnected() {
         activeInstance = this
         repo = VideoLoadingRepository(this)
+        waRepo = WhatsAppSendRepository(this)
         config = repo.loadConfig()
-        if (repo.isArmed()) showOverlay()
-    }
-
-    override fun onAccessibilityEvent(event: android.view.accessibility.AccessibilityEvent?) {
-        if (::repo.isInitialized && repo.isArmed() && overlay == null) showOverlay()
-        if (event == null || !running || !config.semiAuto) return
-        if (event.packageName?.toString() != "com.google.android.youtube") return
-
-        val root = rootInActiveWindow
-        val playbackPage = looksLikePlaybackPage(root)
-        val wasPlaybackPage = semiLastPlaybackPage
-        semiLastPlaybackPage = playbackPage
-
-        // Outside an explicitly armed/active sample, YouTube may be scrolled/navigated freely.
-        if (!semiAttemptArmed && t0 == 0L) return
-        if (semiIgnorePlaybackUntilList) return
-
-        // Once T0 exists, LOADED is the only valid T1. If the tester manually returns before
-        // pressing LOADED, cancel the unfinished sample.
-        if (t0 > 0L) {
-            if (playbackPage) semiSawPlayback = true
-            if (semiSawPlayback && looksLikeCreatorPage(root) && !playbackPage &&
-                System.currentTimeMillis() - t0 > 300L) {
-                if (seq > 0) seq--
-                t0 = 0L
-                semiT0ElapsedMs = 0L
-                semiT0Source = ""
-                semiSawPlayback = false
-                semiAttemptArmed = false
-                semiArmedAtUptime = 0L
-                overlayStartButton?.apply { text = "START"; isEnabled = true }
-                overlayStatus?.text = "SEMI · attempt cancelled · press START for next sample"
-            }
-            return
-        }
-
-        // WhatsApp-style manual timing: after START/ARMED, the next native YouTube click is T0.
-        if (semiAttemptArmed && event.eventType == android.view.accessibility.AccessibilityEvent.TYPE_VIEW_CLICKED) {
-            acceptManualYouTubeT0(event.eventTime, event.source, "ACCESSIBILITY_CLICK")
-            return
-        }
-
-        // Fallback for YouTube builds that suppress TYPE_VIEW_CLICKED on thumbnails/cards:
-        // only accept the first list -> playback transition, never an arbitrary content change.
-        if (semiAttemptArmed &&
-            event.eventType == android.view.accessibility.AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED &&
-            !wasPlaybackPage && playbackPage &&
-            event.eventTime >= semiArmedAtUptime + 120L) {
-            acceptManualYouTubeT0(event.eventTime, event.source, "UI_CHANGE")
+        when {
+            repo.isArmed() -> showOverlay()
+            waRepo.isArmed() -> showWhatsAppOverlay()
         }
     }
 
-    private fun acceptManualYouTubeT0(
-        eventUptime: Long,
-        sourceNode: AccessibilityNodeInfo?,
-        source: String
-    ) {
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (event == null) return
+        val pkg = event.packageName?.toString().orEmpty()
+
+        if (::waRepo.isInitialized && waRepo.isArmed() && waOverlay == null &&
+            (pkg == "com.whatsapp" || pkg == "com.whatsapp.w4b")) {
+            showWhatsAppOverlay()
+        }
+        if (pkg == "com.whatsapp" || pkg == "com.whatsapp.w4b") {
+            handleWhatsAppEvent(event)
+            return
+        }
+
+        if (::repo.isInitialized && repo.isArmed() && overlay == null && pkg == "com.google.android.youtube") {
+            showOverlay()
+        }
+        if (pkg != "com.google.android.youtube" || !running || !config.semiAuto) return
+
+        // Manual mode is intentionally event-light. Once T0 has been captured, LOADED is the
+        // authoritative T1, so page-tree scanning during playback only steals UI time.
+        if (t0 > 0L || semiIgnorePlaybackUntilList || !semiAttemptArmed) return
+
+        if (event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED) {
+            acceptManualYouTubeT0(event, "ACCESSIBILITY_CLICK")
+        }
+    }
+
+    private fun acceptManualYouTubeT0(event: AccessibilityEvent, source: String) {
         if (!running || !config.semiAuto || !semiAttemptArmed || t0 > 0L) return
+        val eventUptime = event.eventTime
         val ageMs = (SystemClock.uptimeMillis() - eventUptime).coerceAtLeast(0L)
         val eventElapsed = (SystemClock.elapsedRealtime() - ageMs).coerceAtLeast(1L)
         val eventWall = System.currentTimeMillis() - ageMs
         seq++
-        currentTitle = sourceNode?.let {
-            nodeLabel(it).ifBlank { descendantLabels(it).firstOrNull().orEmpty() }
-        }.orEmpty().ifBlank { "Manual media $seq" }.take(160)
+        currentTitle = lightweightClickedTitle(event).ifBlank { "Manual media $seq" }.take(160)
         t0 = eventWall
         semiT0ElapsedMs = eventElapsed
         semiT0Source = source
         semiAttemptArmed = false
         semiArmedAtUptime = 0L
-        semiSawPlayback = looksLikePlaybackPage(rootInActiveWindow)
         overlayStartButton?.apply { text = "ACTIVE"; isEnabled = true }
-        overlayStatus?.text = "SEMI · #$seq T0 · $source · tap LOADED for T1"
+        overlayStatus?.text = "SEMI · #$seq T0 · tap LOADED for T1"
+    }
+
+    /**
+     * Read only the clicked node and its immediate family. The previous whole-page walk could
+     * freeze the Accessibility/UI thread when YouTube emitted a burst of events.
+     */
+    private fun lightweightClickedTitle(event: AccessibilityEvent): String {
+        val candidates = linkedSetOf<String>()
+        event.text?.forEach { it?.toString()?.trim()?.takeIf(String::isNotBlank)?.let(candidates::add) }
+        var node = event.source
+        repeat(3) {
+            val n = node ?: return@repeat
+            nodeLabel(n).takeIf(String::isNotBlank)?.let(candidates::add)
+            val parent = n.parent
+            if (parent != null) {
+                nodeLabel(parent).takeIf(String::isNotBlank)?.let(candidates::add)
+                val limit = minOf(parent.childCount, 8)
+                for (i in 0 until limit) {
+                    parent.getChild(i)?.let { child ->
+                        nodeLabel(child).takeIf(String::isNotBlank)?.let(candidates::add)
+                    }
+                }
+            }
+            node = parent
+        }
+        val rejected = listOf("more", "actions", "play", "pause", "share", "comments", "comment",
+            "更多", "播放", "暂停", "分享", "评论", "订阅", "subscribe")
+        fun score(v: String): Int {
+            val t = v.trim()
+            if (t.length < 4 || t.matches(Regex("\d{1,2}:\d{2}(:\d{2})?"))) return -1000
+            val low = t.lowercase()
+            if (rejected.any { low == it || low.startsWith("$it ") }) return -1000
+            return t.length.coerceAtMost(120)
+        }
+        return candidates.maxByOrNull(::score)?.takeIf { score(it) > 0 }.orEmpty()
+    }
+
+    private fun handleWhatsAppEvent(event: AccessibilityEvent) {
+        if (!waRunning || !waArmed || waT0Wall > 0L) return
+        when (event.eventType) {
+            AccessibilityEvent.TYPE_VIEW_CLICKED -> acceptWhatsAppT0(event.eventTime, "CLICK")
+            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
+                if (event.eventTime >= waArmedAtUptime + 120L) acceptWhatsAppT0(event.eventTime, "UI CHANGE")
+            }
+        }
+    }
+
+    private fun acceptWhatsAppT0(eventUptime: Long, source: String) {
+        if (!waRunning || !waArmed || waT0Wall > 0L) return
+        if (eventUptime - waLastAcceptedClickUptime < 250L) return
+        waLastAcceptedClickUptime = eventUptime
+        waSeq++
+        val uptimeDelta = (SystemClock.uptimeMillis() - eventUptime).coerceAtLeast(0L)
+        waT0Elapsed = (SystemClock.elapsedRealtime() - uptimeDelta).coerceAtLeast(1L)
+        waT0Wall = System.currentTimeMillis() - uptimeDelta
+        waT0Source = source
+        waArmed = false
+        waStartButton?.apply { text = "ACTIVE"; isEnabled = true }
+        waStatusView?.text = "#$waSeq · T0 SEND · $source · tap SENT when complete"
     }
 
     override fun onInterrupt() {}
@@ -331,11 +395,13 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
     }
 
     private fun startTest(status: TextView, fileAlreadyCreated: Boolean = false): Boolean {
-        if (rootInActiveWindow?.packageName?.toString() != "com.google.android.youtube") {
+        config = repo.loadConfig()
+        // Manual timing does not need to inspect the creator page at START. Avoiding a full
+        // Accessibility tree walk keeps the floating clock responsive.
+        if (!config.semiAuto && rootInActiveWindow?.packageName?.toString() != "com.google.android.youtube") {
             status.text = "START failed · open YouTube creator Videos page"
             return false
         }
-        config = repo.loadConfig()
         if (!fileAlreadyCreated || file == null) file = repo.create(System.currentTimeMillis())
         running = true; seq = 0
         testedContentKeys.clear()
@@ -356,21 +422,27 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         semiIgnorePlaybackUntilList = false
         semiAttemptArmed = false
         semiArmedAtUptime = 0L
-        semiLastPlaybackPage = looksLikePlaybackPage(rootInActiveWindow)
-        sessionMode = detectCreatorMode(rootInActiveWindow)
-        val initialBounds = creatorContentBounds(rootInActiveWindow) ?: safeContentBounds()
-        if (!config.semiAuto && sessionMode == null) {
-            sessionMode = inferModeFromVisibleGeometry(rootInActiveWindow, initialBounds)
+        if (config.semiAuto) {
+            semiLastPlaybackPage = false
+            sessionMode = null
+            val initialBounds = safeContentBounds()
+            lockedContentTop = initialBounds.top
+            lockedContentBottom = initialBounds.bottom
+        } else {
+            semiLastPlaybackPage = looksLikePlaybackPage(rootInActiveWindow)
+            sessionMode = detectCreatorMode(rootInActiveWindow)
+            val initialBounds = creatorContentBounds(rootInActiveWindow) ?: safeContentBounds()
+            if (sessionMode == null) sessionMode = inferModeFromVisibleGeometry(rootInActiveWindow, initialBounds)
+            if (sessionMode == null) {
+                running = false
+                file?.delete()
+                file = null
+                status.text = "START failed · open creator Videos/Shorts list or use SEMI AUTO"
+                return false
+            }
+            lockedContentTop = initialBounds.top
+            lockedContentBottom = initialBounds.bottom
         }
-        if (!config.semiAuto && sessionMode == null) {
-            running = false
-            file?.delete()
-            file = null
-            status.text = "START failed · open creator Videos/Shorts list or use SEMI AUTO"
-            return false
-        }
-        lockedContentTop = initialBounds.top
-        lockedContentBottom = initialBounds.bottom
         if (config.autoRecord && !RecordingState.status.value.isRecording) {
             val sub = SubscriptionManager.getDefaultDataSubscriptionId()
             ContextCompat.startForegroundService(this, Intent(this, RecordingService::class.java)
@@ -414,7 +486,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         semiReplayingScroll = false
         semiScrollGuardUntilElapsedMs = 0L
         semiIgnorePlaybackUntilList = false
-        semiLastPlaybackPage = looksLikePlaybackPage(rootInActiveWindow)
+        semiLastPlaybackPage = false
         overlayStartButton?.apply { text = "ARMING…"; isEnabled = false }
         status.text = "SEMI · ARMING…"
 
@@ -578,58 +650,21 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             }
             if (performBack) {
                 status?.text = "SEMI · #$seq ${delay} ms · saved · RETURNING…"
-                removeSemiTouchCapture()
-                // Exactly ONE Back. A timed second Back is unsafe: YouTube may still expose the old
-                // watch-page tree while the first Back is already navigating, so the second Back can
-                // jump past the creator video list to Home. The returning guard blocks all events
-                // until a stable non-playback page is observed.
+                // Manual mode does not need page-tree confirmation. One Back + a short settle delay
+                // avoids the expensive repeated root scans that caused visible clock freezes.
                 performGlobalAction(GLOBAL_ACTION_BACK)
-
-                var stableNonPlayback = 0
-                var waitedMs = 0L
-                while (waitedMs < 10_000L && stableNonPlayback < 3 && running) {
-                    delay(180)
-                    waitedMs += 180L
-                    if (!looksLikePlaybackPage(rootInActiveWindow)) stableNonPlayback++ else stableNonPlayback = 0
-                }
-
-                if (stableNonPlayback >= 3 && running) {
-                    delay(350)
-                    semiIgnorePlaybackUntilList = false
-                    semiPendingClickMs = 0L
-                    semiPendingClickElapsedMs = 0L
-                    semiPendingTitle = ""
-                    semiLastGestureWallMs = 0L
-                    semiLastGestureElapsedMs = 0L
-                    semiLastGestureTitle = ""
-                    semiLastPlaybackPage = looksLikePlaybackPage(rootInActiveWindow)
+                delay(700)
+                semiIgnorePlaybackUntilList = false
+                semiPendingClickMs = 0L
+                semiPendingClickElapsedMs = 0L
+                semiPendingTitle = ""
+                semiLastGestureWallMs = 0L
+                semiLastGestureElapsedMs = 0L
+                semiLastGestureTitle = ""
+                semiLastPlaybackPage = false
+                if (running) {
                     status?.text = "SEMI · ready · press START for the next sample"
                     overlayStartButton?.apply { text = "START"; isEnabled = true }
-                } else if (running) {
-                    // Do not issue a second automatic Back. Let the tester press Android Back once;
-                    // keep the guard active so that manual return can never become a new attempt.
-                    status?.text = "SEMI · return not confirmed · press Android Back once"
-                    scope.launch {
-                        var manualStable = 0
-                        repeat(80) {
-                            delay(200)
-                            if (!running || !semiIgnorePlaybackUntilList) return@launch
-                            if (!looksLikePlaybackPage(rootInActiveWindow)) manualStable++ else manualStable = 0
-                            if (manualStable >= 3) {
-                                semiIgnorePlaybackUntilList = false
-                                semiPendingClickMs = 0L
-                                semiPendingClickElapsedMs = 0L
-                                semiPendingTitle = ""
-                                semiLastGestureWallMs = 0L
-                                semiLastGestureElapsedMs = 0L
-                                semiLastGestureTitle = ""
-                                semiLastPlaybackPage = looksLikePlaybackPage(rootInActiveWindow)
-                                status?.text = "SEMI · ready · press START for the next sample"
-                                overlayStartButton?.apply { text = "START"; isEnabled = true }
-                                return@launch
-                            }
-                        }
-                    }
                 }
             }
         }
@@ -757,6 +792,85 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             }
         }
     }
+
+    private fun showWhatsAppOverlay() {
+        if (waOverlay != null) return
+        val wm = getSystemService(WindowManager::class.java)
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(20, 14, 20, 14)
+            setBackgroundColor(0xE6202124.toInt())
+        }
+        val header = TextView(this).apply { setTextColor(0xffffffff.toInt()); text = "WhatsApp Image Send  ·  drag here"; setPadding(8,8,8,12) }
+        val status = TextView(this).apply { setTextColor(0xffffffff.toInt()); text = "Ready · open WhatsApp image preview"; setPadding(8,0,8,8) }
+        waStatusView = status
+        val clock = TextView(this).apply { setTextColor(0xffffffff.toInt()); text = "TIME --:--:--.---"; setPadding(8,0,8,8) }
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val start = Button(this).apply { text = "START" }
+        val sent = Button(this).apply { text = "SENT"; visibility = View.GONE }
+        val stop = Button(this).apply { text = "STOP"; visibility = View.GONE }
+        waStartButton = start; waSentButton = sent
+        val weighted = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        val stopWidth = (92 * resources.displayMetrics.density).toInt()
+        row.addView(start, weighted); row.addView(sent, weighted)
+        row.addView(stop, LinearLayout.LayoutParams(stopWidth, LinearLayout.LayoutParams.WRAP_CONTENT).apply { marginStart = (6 * resources.displayMetrics.density).toInt() })
+        box.addView(header); box.addView(status); box.addView(clock); box.addView(row)
+
+        val lp = WindowManager.LayoutParams(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT
+        ).apply { gravity = Gravity.TOP or Gravity.START; x = 24; y = 180 }
+        waOverlayLp = lp
+        var dx=0f; var dy=0f; var sx=0; var sy=0
+        header.setOnTouchListener { _,e ->
+            when(e.actionMasked){
+                MotionEvent.ACTION_DOWN->{dx=e.rawX;dy=e.rawY;sx=lp.x;sy=lp.y;true}
+                MotionEvent.ACTION_MOVE->{lp.x=(sx+e.rawX-dx).toInt().coerceAtLeast(0);lp.y=(sy+e.rawY-dy).toInt().coerceAtLeast(0);runCatching{wm.updateViewLayout(box,lp)};true}
+                else->true
+            }
+        }
+        start.setOnClickListener {
+            if (!waRunning) {
+                waSessionStart = System.currentTimeMillis(); start.isEnabled=false; start.text="STARTING…"; status.text="Starting…"
+                scope.launch {
+                    val created=withContext(Dispatchers.IO){waRepo.create(waSessionStart)}
+                    if(waOverlay!==box)return@launch
+                    waFile=created;waRunning=true;sent.visibility=View.VISIBLE;stop.visibility=View.VISIBLE;start.isEnabled=true;start.text="START"
+                    armNextWhatsApp(status)
+                }
+                return@setOnClickListener
+            }
+            when { waT0Wall>0L->status.text="#$waSeq active · tap SENT when sending completes"; waArmed->status.text="ARMED · now tap WhatsApp Send"; else->armNextWhatsApp(status) }
+        }
+        sent.setOnClickListener { if(!waRunning||waT0Wall<=0L) status.text=if(waArmed)"ARMED · tap WhatsApp Send first" else "Press START, then tap WhatsApp Send first" else completeWhatsAppSample(status) }
+        var stopConfirmUntil=0L
+        stop.setOnClickListener {
+            val now=SystemClock.uptimeMillis()
+            if(now>stopConfirmUntil){
+                stopConfirmUntil=now+4_000L;stop.text="SURE?";status.text="Stop test? Tap SURE? again within 4s"
+                scope.launch{delay(4_050L);if(SystemClock.uptimeMillis()>stopConfirmUntil&&waRunning){stop.text="STOP";status.text=when{waT0Wall>0L->"#$waSeq active · tap SENT when sending completes";waArmed->"ARMED · now tap WhatsApp Send";else->"Ready · press START for next sample"}}}
+                return@setOnClickListener
+            }
+            stopConfirmUntil=0L;stop.text="STOP";waArmed=false;waT0Wall=0;waT0Elapsed=0;waArmedAtUptime=0;waT0Source=""
+            val f=waFile;val end=System.currentTimeMillis();waRepo.disarm();waRunning=false;status.text="Stopped"
+            scope.launch{if(f!=null)withContext(Dispatchers.IO){waRepo.finish(f,waSessionStart,end,"Stopped")};delay(700);dismissWhatsAppOverlay()}
+        }
+        wm.addView(box,lp);waOverlay=box
+        waClockJob?.cancel();waClockJob=scope.launch{val fmt=java.text.SimpleDateFormat("HH:mm:ss.SSS",java.util.Locale.US);while(isActive&&waOverlay===box){clock.text="TIME "+fmt.format(java.util.Date());delay(50)}}
+    }
+
+    private fun armNextWhatsApp(status: TextView){
+        waArmed=false;waT0Wall=0;waT0Elapsed=0;waArmedAtUptime=0;waT0Source="";waStartButton?.apply{text="ARMING…";isEnabled=false};status.text="ARMING…"
+        scope.launch{delay(80);if(!waRunning)return@launch;waArmed=true;waArmedAtUptime=SystemClock.uptimeMillis();waStartButton?.apply{text="ARMED";isEnabled=true};status.text="ARMED · now tap WhatsApp Send"}
+    }
+
+    private fun completeWhatsAppSample(status:TextView){
+        val startW=waT0Wall;val startE=waT0Elapsed;val source=waT0Source;val target=waFile?:return;if(startW<=0||startE<=0)return
+        val t1W=System.currentTimeMillis();val t1E=SystemClock.elapsedRealtime();val d=(t1E-startE).coerceAtLeast(0)
+        waT0Wall=0;waT0Elapsed=0;waT0Source="";waArmed=false;waArmedAtUptime=0;waStartButton?.apply{text="START";isEnabled=true};status.text="#$waSeq · ${d} ms · saving…"
+        scope.launch{val snap=withContext(Dispatchers.IO){snapshot()};val sample=WhatsAppSendSample(waSeq,startW,t1W,d,snap,startE,t1E,source);withContext(Dispatchers.IO){waRepo.append(target,sample)};if(waRunning)status.text="#$waSeq · ${d} ms · saved · press START for next sample"}
+    }
+
+    private fun dismissWhatsAppOverlay(){waClockJob?.cancel();waClockJob=null;waOverlay?.let{runCatching{getSystemService(WindowManager::class.java).removeView(it)}};waOverlay=null;waStatusView=null;waStartButton=null;waSentButton=null}
 
     private fun dismissOverlay() {
         removeSemiTouchCapture()
