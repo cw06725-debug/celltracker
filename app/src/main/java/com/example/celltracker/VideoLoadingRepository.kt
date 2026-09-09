@@ -168,8 +168,9 @@ class VideoLoadingRepository(private val context: Context) {
             metaFile.inputStream().use { props.load(it) }
         }
 
-        val startedAt = props.getProperty("started")?.toLongOrNull()
-            ?: samples.firstOrNull()?.startMs
+        val metaStarted = props.getProperty("started")?.toLongOrNull()
+        val startedAt = metaStarted?.takeIf { it >= 946684800000L }
+            ?: samples.firstOrNull()?.startMs?.takeIf { it >= 946684800000L }
             ?: file.lastModified()
         val endedAt = props.getProperty("ended")?.toLongOrNull()
             ?: samples.lastOrNull()?.loadedMs

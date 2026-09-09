@@ -45,6 +45,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
     private var file: java.io.File? = null
     private var config = VideoLoadingConfig()
     private var running = false
+    private var sessionStartedAt = 0L
     private var seq = 0
     private var t0 = 0L
     private var currentTitle = ""
@@ -133,12 +134,25 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         }
         if (pkg != "com.google.android.youtube" || !running || !config.semiAuto) return
 
-        // Manual mode is intentionally event-light. Once T0 has been captured, LOADED is the
-        // authoritative T1, so page-tree scanning during playback only steals UI time.
+        // T0 captured -> LOADED is authoritative T1. Do no page-tree work during playback.
         if (t0 > 0L || semiIgnorePlaybackUntilList || !semiAttemptArmed) return
 
-        if (event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED) {
-            acceptManualYouTubeT0(event, "ACCESSIBILITY_CLICK")
+        when (event.eventType) {
+            AccessibilityEvent.TYPE_VIEW_CLICKED -> {
+                acceptManualYouTubeT0(event, "ACCESSIBILITY_CLICK")
+            }
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
+                if (event.eventTime >= semiArmedAtUptime + 120L) {
+                    acceptManualYouTubeT0(event, "WINDOW_CHANGE")
+                }
+            }
+            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
+                // Some YouTube builds/cards don't emit TYPE_VIEW_CLICKED. Use the first post-ARM
+                // native content mutation as fallback without walking rootInActiveWindow.
+                if (event.eventTime >= semiArmedAtUptime + 180L) {
+                    acceptManualYouTubeT0(event, "UI_CHANGE")
+                }
+            }
         }
     }
 
@@ -307,6 +321,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                 start.text = "STARTING…"
                 start.isEnabled = false
                 val requestedStart = System.currentTimeMillis()
+                sessionStartedAt = requestedStart
                 scope.launch {
                     // Report-file creation performs disk I/O; keep it off the Accessibility/UI thread.
                     val created = withContext(Dispatchers.IO) { repo.create(requestedStart) }
@@ -402,7 +417,8 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             status.text = "START failed · open YouTube creator Videos page"
             return false
         }
-        if (!fileAlreadyCreated || file == null) file = repo.create(System.currentTimeMillis())
+        if (sessionStartedAt <= 0L) sessionStartedAt = System.currentTimeMillis()
+        if (!fileAlreadyCreated || file == null) file = repo.create(sessionStartedAt)
         running = true; seq = 0
         testedContentKeys.clear()
         autoScrollCount = 0
@@ -622,6 +638,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         val targetFile = file ?: return
         scope.launch {
             val accurate = source == "ACCESSIBILITY_CLICK" || source == "UI_CHANGE" ||
+                source == "WINDOW_CHANGE" ||
                 source == "OVERLAY_TOUCH_HIGH" || source == "OVERLAY_RECOVERED_TAP" || source == "OVERLAY_CONFIRMED_BY_LOADED"
             val storedResult = when {
                 result == "AD" -> "AD"
@@ -777,6 +794,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         val f = file
         file = null
         val finishedAt = System.currentTimeMillis()
+        val startedAtForFinish = sessionStartedAt.takeIf { it > 0L } ?: f?.lastModified() ?: finishedAt
         val recordingPath = RecordingState.status.value.latestPath
         runCatching {
             if (recordingStarted) {
@@ -788,7 +806,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         status.text = "YouTube Test · $state · results saved"
         if (f != null) {
             scope.launch(Dispatchers.IO) {
-                runCatching { repo.finish(f, 0, finishedAt, state, recordingPath) }
+                runCatching { repo.finish(f, startedAtForFinish, finishedAt, state, recordingPath) }
             }
         }
     }

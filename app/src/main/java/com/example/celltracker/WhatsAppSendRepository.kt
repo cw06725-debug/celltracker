@@ -54,7 +54,9 @@ class WhatsAppSendRepository(private val context: Context) {
                 g(r,"t0_elapsed_ms").toLongOrNull()?:0,g(r,"t1_elapsed_ms").toLongOrNull()?:0,g(r,"t0_source"))
         }
         val p=Properties(); val mf=File(f.parentFile,f.nameWithoutExtension+".meta"); if(mf.exists()) mf.inputStream().use{p.load(it)}
-        return WhatsAppSendDetail(path,p.getProperty("started")?.toLongOrNull()?:f.lastModified(),p.getProperty("ended")?.toLongOrNull()?:0,p.getProperty("status","Completed"),samples)
+        return WhatsAppSendDetail(path,p.getProperty("started")?.toLongOrNull()?.takeIf { it >= 946684800000L }
+            ?: samples.firstOrNull()?.t0Ms?.takeIf { it >= 946684800000L }
+            ?: f.lastModified(),p.getProperty("ended")?.toLongOrNull()?:0,p.getProperty("status","Completed"),samples)
     }
     private fun meta(f:File,s:Long,e:Long,status:String){Properties().apply{setProperty("started",s.toString());setProperty("ended",e.toString());setProperty("status",status)}.store(File(f.parentFile,f.nameWithoutExtension+".meta").outputStream(),"CellTracker WhatsApp Image Send")}
     private fun dir()=File(context.getExternalFilesDir(null),"whatsapp_send_results").apply{mkdirs()}
