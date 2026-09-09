@@ -131,8 +131,22 @@ class WhatsAppSendAccessibilityService : AccessibilityService() {
         }
         start.setOnClickListener {
             if (!running) {
-                sessionStart = System.currentTimeMillis(); file = repo.create(sessionStart); running = true
-                sent.visibility = View.VISIBLE; stop.visibility = View.VISIBLE
+                sessionStart = System.currentTimeMillis()
+                start.isEnabled = false
+                start.text = "STARTING…"
+                status.text = "Starting…"
+                scope.launch {
+                    val created = withContext(Dispatchers.IO) { repo.create(sessionStart) }
+                    if (overlay !== box) return@launch
+                    file = created
+                    running = true
+                    sent.visibility = View.VISIBLE
+                    stop.visibility = View.VISIBLE
+                    start.isEnabled = true
+                    start.text = "START"
+                    armNext(status)
+                }
+                return@setOnClickListener
             }
             when {
                 t0Wall > 0L -> status.text = "#$seq active · tap SENT when sending completes"
@@ -166,12 +180,19 @@ class WhatsAppSendAccessibilityService : AccessibilityService() {
             stopConfirmUntil = 0L
             stop.text = "STOP"
             armed=false; t0Wall=0; t0Elapsed=0; armedAtUptime=0L; t0Source=""
-            file?.let { repo.finish(it, sessionStart, System.currentTimeMillis(), "Stopped") }
+            val finishingFile = file
+            val finishingEnd = System.currentTimeMillis()
             repo.disarm(); running=false; status.text="Stopped"
-            scope.launch { delay(700); dismissOverlay() }
+            scope.launch {
+                if (finishingFile != null) withContext(Dispatchers.IO) {
+                    repo.finish(finishingFile, sessionStart, finishingEnd, "Stopped")
+                }
+                delay(700)
+                dismissOverlay()
+            }
         }
         wm.addView(box,lp); overlay=box
-        clockJob?.cancel(); clockJob=scope.launch { val fmt=java.text.SimpleDateFormat("HH:mm:ss.SSS",java.util.Locale.US); while(isActive&&overlay===box){clock.text="TIME "+fmt.format(java.util.Date());delay(20)} }
+        clockJob?.cancel(); clockJob=scope.launch { val fmt=java.text.SimpleDateFormat("HH:mm:ss.SSS",java.util.Locale.US); while(isActive&&overlay===box){clock.text="TIME "+fmt.format(java.util.Date());delay(50)} }
     }
 
     private fun armNext(status: TextView) {
@@ -191,12 +212,26 @@ class WhatsAppSendAccessibilityService : AccessibilityService() {
     }
 
     private fun completeSample(status:TextView){
-        val startW=t0Wall;val startE=t0Elapsed;val source=t0Source;if(startW<=0||startE<=0||file==null)return
-        t0Wall=0;t0Elapsed=0;t0Source="";armed=false;armedAtUptime=0L;startButton?.apply{text="START";isEnabled=true}
+        val startW=t0Wall
+        val startE=t0Elapsed
+        val source=t0Source
+        val targetFile=file ?: return
+        if(startW<=0||startE<=0)return
+
+        // Lock T1 immediately on the button callback. Saving/report work must never affect timing.
+        val t1W=System.currentTimeMillis()
+        val t1E=SystemClock.elapsedRealtime()
+        val measuredDelay=(t1E-startE).coerceAtLeast(0)
+
+        t0Wall=0;t0Elapsed=0;t0Source="";armed=false;armedAtUptime=0L
+        startButton?.apply{text="START";isEnabled=true}
+        status.text="#$seq · ${measuredDelay} ms · saving…"
+
         scope.launch {
-            val t1W=System.currentTimeMillis();val t1E=SystemClock.elapsedRealtime();val delay=(t1E-startE).coerceAtLeast(0)
-            val snap=withContext(Dispatchers.IO){snapshot()};repo.append(file!!,WhatsAppSendSample(seq,startW,t1W,delay,snap,startE,t1E,source))
-            status.text="#$seq · $delay ms · saved · press START for next sample"
+            val snap=withContext(Dispatchers.IO){ snapshot() }
+            val sample=WhatsAppSendSample(seq,startW,t1W,measuredDelay,snap,startE,t1E,source)
+            withContext(Dispatchers.IO){ repo.append(targetFile,sample) }
+            if (running) status.text="#$seq · ${measuredDelay} ms · saved · press START for next sample"
         }
     }
 

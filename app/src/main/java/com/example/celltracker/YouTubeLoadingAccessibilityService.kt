@@ -240,12 +240,30 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                 }
             } else {
                 status.text = "STARTING…"
-                val accepted = startTest(status)
-                if (accepted) {
-                    if (!config.semiAuto) start.text = "RETRY"
-                    loaded.visibility = View.VISIBLE
-                    ad.visibility = View.VISIBLE
-                    stop.visibility = View.VISIBLE
+                start.text = "STARTING…"
+                start.isEnabled = false
+                val requestedStart = System.currentTimeMillis()
+                scope.launch {
+                    // Report-file creation performs disk I/O; keep it off the Accessibility/UI thread.
+                    val created = withContext(Dispatchers.IO) { repo.create(requestedStart) }
+                    if (overlay !== box) {
+                        withContext(Dispatchers.IO) { runCatching { created.delete() } }
+                        return@launch
+                    }
+                    file = created
+                    val accepted = startTest(status, fileAlreadyCreated = true)
+                    start.isEnabled = true
+                    if (accepted) {
+                        if (!config.semiAuto) start.text = "RETRY"
+                        loaded.visibility = View.VISIBLE
+                        ad.visibility = View.VISIBLE
+                        stop.visibility = View.VISIBLE
+                    } else {
+                        start.text = "START"
+                        val rejected = file
+                        file = null
+                        if (rejected != null) withContext(Dispatchers.IO) { runCatching { rejected.delete() } }
+                    }
                 }
             }
         }
@@ -307,18 +325,18 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             val fmt = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US)
             while (isActive && overlay === box) {
                 clock.text = "TIME " + fmt.format(java.util.Date())
-                delay(20)
+                delay(50)
             }
         }
     }
 
-    private fun startTest(status: TextView): Boolean {
+    private fun startTest(status: TextView, fileAlreadyCreated: Boolean = false): Boolean {
         if (rootInActiveWindow?.packageName?.toString() != "com.google.android.youtube") {
             status.text = "START failed · open YouTube creator Videos page"
             return false
         }
         config = repo.loadConfig()
-        file = repo.create(System.currentTimeMillis())
+        if (!fileAlreadyCreated || file == null) file = repo.create(System.currentTimeMillis())
         running = true; seq = 0
         testedContentKeys.clear()
         autoScrollCount = 0
@@ -525,10 +543,12 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         semiPendingClickElapsedMs = 0L
         semiPendingTitle = ""
         if (performBack) semiIgnorePlaybackUntilList = true
+        // Lock T1 immediately when LOADED is pressed, before snapshot/file I/O.
+        val loadedWall = System.currentTimeMillis()
+        val loadedElapsed = SystemClock.elapsedRealtime()
+        val delay = (loadedElapsed - startElapsed).coerceAtLeast(0L)
+        val targetFile = file ?: return
         scope.launch {
-            val loadedWall = System.currentTimeMillis()
-            val loadedElapsed = SystemClock.elapsedRealtime()
-            val delay = (loadedElapsed - startElapsed).coerceAtLeast(0L)
             val accurate = source == "ACCESSIBILITY_CLICK" || source == "UI_CHANGE" ||
                 source == "OVERLAY_TOUCH_HIGH" || source == "OVERLAY_RECOVERED_TAP" || source == "OVERLAY_CONFIRMED_BY_LOADED"
             val storedResult = when {
@@ -537,7 +557,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                 else -> "LOW_ACCURACY"
             }
             val snap = withContext(Dispatchers.IO) { snapshot() }
-            repo.append(file!!, VideoLoadingSample(
+            val sample = VideoLoadingSample(
                 sequence = seq,
                 title = currentTitle,
                 startMs = startWall,
@@ -549,7 +569,8 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                 startElapsedMs = startElapsed,
                 loadedElapsedMs = loadedElapsed,
                 t0Source = source
-            ))
+            )
+            withContext(Dispatchers.IO) { repo.append(targetFile, sample) }
             status?.text = when (storedResult) {
                 "PASS" -> "SEMI · #$seq ${delay} ms · saved · press START for next sample"
                 "AD" -> "SEMI · #$seq AD · excluded · press START for next sample"
@@ -720,17 +741,8 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
 
         val f = file
         file = null
-        runCatching {
-            if (f != null) {
-                repo.finish(
-                    f,
-                    0,
-                    System.currentTimeMillis(),
-                    state,
-                    RecordingState.status.value.latestPath
-                )
-            }
-        }
+        val finishedAt = System.currentTimeMillis()
+        val recordingPath = RecordingState.status.value.latestPath
         runCatching {
             if (recordingStarted) {
                 stopService(Intent(this, RecordingService::class.java))
@@ -739,6 +751,11 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         }
         runCatching { repo.disarm() }
         status.text = "YouTube Test · $state · results saved"
+        if (f != null) {
+            scope.launch(Dispatchers.IO) {
+                runCatching { repo.finish(f, 0, finishedAt, state, recordingPath) }
+            }
+        }
     }
 
     private fun dismissOverlay() {
