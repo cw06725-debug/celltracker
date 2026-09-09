@@ -1074,7 +1074,7 @@ private fun ExportSuccessDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(result.message)
-                Text("Saved to Downloads/CellTracker", style = MaterialTheme.typography.bodyMedium)
+                Text("Saved under Downloads/CellTracker/<date>/<test type>", style = MaterialTheme.typography.bodyMedium)
                 result.excelName?.let { Text("Excel: $it", style = MaterialTheme.typography.bodySmall) }
                 result.kmlName?.let { Text("KML: $it", style = MaterialTheme.typography.bodySmall) }
                 if (result.screenshotNames.isNotEmpty()) Text("Screenshots: ${result.screenshotNames.size}", style = MaterialTheme.typography.bodySmall)

@@ -186,7 +186,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             "更多", "播放", "暂停", "分享", "评论", "订阅", "subscribe")
         fun score(v: String): Int {
             val t = v.trim()
-            if (t.length < 4 || t.matches(Regex("\d{1,2}:\d{2}(:\d{2})?"))) return -1000
+            if (t.length < 4 || t.matches(Regex("\\d{1,2}:\\d{2}(:\\d{2})?"))) return -1000
             val low = t.lowercase()
             if (rejected.any { low == it || low.startsWith("$it ") }) return -1000
             return t.length.coerceAtMost(120)

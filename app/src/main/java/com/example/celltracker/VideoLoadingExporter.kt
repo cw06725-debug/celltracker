@@ -3,7 +3,6 @@ package com.example.celltracker
 import android.content.ContentValues
 import android.content.Context
 import android.os.Build
-import android.os.Environment
 import android.provider.MediaStore
 import java.io.File
 import java.util.Locale
@@ -14,9 +13,9 @@ object VideoLoadingExporter {
         val d = VideoLoadingRepository(c).load(path)
         val src = File(path)
         val base = src.nameWithoutExtension
-        val csvUri = save(c, src.name, "text/csv", src.readBytes()).toString()
+        val csvUri = save(c, src.name, "text/csv", src.readBytes(), d.startedAt).toString()
         val htmlName = "${base}_summary.html"
-        val htmlUri = save(c, htmlName, "text/html", html(d).toByteArray()).toString()
+        val htmlUri = save(c, htmlName, "text/html", html(d).toByteArray(), d.startedAt).toString()
         val xlsxName = "${base}_report.xlsx"
         val rows = src.readLines().filter { it.isNotBlank() }.map { parse(it) }
         val ok = d.samples.filter { it.result == "PASS" }.mapNotNull { it.delayMs }.sorted()
@@ -43,7 +42,7 @@ object VideoLoadingExporter {
             listOf("Recording Path", d.recordingPath.orEmpty())
         )
         val xlsx = PingExporter.simpleXlsx(listOf("Summary" to summary, "Video Loading" to rows))
-        val xlsxUri = save(c, xlsxName, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", xlsx).toString()
+        val xlsxUri = save(c, xlsxName, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", xlsx, d.startedAt).toString()
         return ExportResult(
             "YouTube Video Loading report exported · HTML + Excel + CSV",
             listOf(csvUri), htmlUri, htmlName, xlsxUri, xlsxName
@@ -83,12 +82,12 @@ object VideoLoadingExporter {
 
     private fun fmtTime(ms: Long): String = if (ms > 0L) java.text.SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(java.util.Date(ms)) else "--"
 
-    private fun save(c: Context, name: String, mime: String, bytes: ByteArray): android.net.Uri {
+    private fun save(c: Context, name: String, mime: String, bytes: ByteArray, startedAt: Long): android.net.Uri {
         if (Build.VERSION.SDK_INT >= 29) {
             val values = ContentValues().apply {
                 put(MediaStore.Downloads.DISPLAY_NAME, name)
                 put(MediaStore.Downloads.MIME_TYPE, mime)
-                put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/CellTracker")
+                put(MediaStore.Downloads.RELATIVE_PATH, ReportStorage.relativePath("YouTube", startedAt))
             }
             val uri = c.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)!!
             c.contentResolver.openOutputStream(uri)!!.use { it.write(bytes) }
