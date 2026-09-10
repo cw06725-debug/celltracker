@@ -1,5 +1,15 @@
 # CellTracker Changelog
 
+## v0.9.3.0.41
+
+- Rebuilt the bottom navigation touch model so the whole glass capsule owns drag/tap input; child items no longer consume the swipe.
+- Swipe left/right now changes one top-level tab reliably.
+- The selected glass lens follows the finger while dragging and snaps to the next/previous item.
+- Strengthened iOS-26-inspired glass appearance: milky translucency, specular highlight, layered radial depth, movable glass lens, soft outer shadow, and translucent border.
+- Removed the flat button-like selected treatment.
+- Kept Settings inline, origin-tab return behavior, and grouped Reports from v0.9.3.0.40.
+- Project remains cleaned to README.md + CHANGELOG.md only.
+
 ## v0.9.3.0.40
 
 - Reworked bottom navigation into a cleaner liquid-glass-inspired floating capsule.

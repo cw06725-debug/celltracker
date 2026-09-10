@@ -59,10 +59,12 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -359,74 +361,196 @@ private fun LiquidGlassBottomBar(selected: String, onSelect: (String) -> Unit) {
         Triple("SETTINGS", "⚙", "Setting"),
         Triple("REPORTS", "▤", "Reports")
     )
+    val selectedIndex = items.indexOfFirst { it.first == selected }.coerceAtLeast(0)
+    val density = LocalDensity.current
     var dragX by remember { mutableFloatStateOf(0f) }
+    var barWidthPx by remember { mutableIntStateOf(1) }
 
     Box(
-        Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 10.dp),
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center
     ) {
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .pointerInput(selected) {
-                    detectHorizontalDragGestures(
-                        onDragStart = { dragX = 0f },
-                        onHorizontalDrag = { _, amount -> dragX += amount },
-                        onDragEnd = {
-                            val current = items.indexOfFirst { it.first == selected }.coerceAtLeast(0)
-                            val next = when {
-                                dragX < -70f -> (current + 1).coerceAtMost(items.lastIndex)
-                                dragX > 70f -> (current - 1).coerceAtLeast(0)
-                                else -> current
-                            }
-                            if (next != current) onSelect(items[next].first)
-                            dragX = 0f
-                        },
-                        onDragCancel = { dragX = 0f }
-                    )
-                }
-                .background(
-                    Brush.verticalGradient(
-                        listOf(
-                            MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
-                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.74f),
-                            MaterialTheme.colorScheme.surface.copy(alpha = 0.88f)
-                        )
-                    ),
-                    RoundedCornerShape(34.dp)
-                )
-                .border(
-                    1.dp,
-                    Brush.verticalGradient(
-                        listOf(
-                            Color.White.copy(alpha = 0.78f),
-                            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
-                        )
-                    ),
-                    RoundedCornerShape(34.dp)
-                )
-                .padding(horizontal = 7.dp, vertical = 7.dp)
+        // Outer shadow capsule.
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(36.dp),
+            color = Color.Transparent,
+            shadowElevation = 18.dp
         ) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-                items.forEach { (key, icon, label) ->
-                    val isSelected = selected == key
-                    val lensAlpha by animateFloatAsState(if (isSelected) 1f else 0f, tween(220), label = "glassLens")
-                    Box(
-                        Modifier
-                            .weight(1f)
-                            .padding(horizontal = 2.dp)
-                            .clip(RoundedCornerShape(25.dp))
-                            .background(
-                                if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f + 0.10f * lensAlpha)
-                                else Color.Transparent
+            BoxWithConstraints(
+                Modifier
+                    .fillMaxWidth()
+                    .height(76.dp)
+                    .onSizeChanged { barWidthPx = it.width.coerceAtLeast(1) }
+                    // Drag and tap are handled on this parent. Children intentionally do not
+                    // consume pointer events, so horizontal swiping works reliably.
+                    .pointerInput(selected, barWidthPx) {
+                        detectHorizontalDragGestures(
+                            onDragStart = { dragX = 0f },
+                            onHorizontalDrag = { change, amount ->
+                                change.consume()
+                                dragX += amount
+                            },
+                            onDragEnd = {
+                                val threshold = (barWidthPx / items.size) * 0.28f
+                                val next = when {
+                                    dragX < -threshold -> (selectedIndex + 1).coerceAtMost(items.lastIndex)
+                                    dragX > threshold -> (selectedIndex - 1).coerceAtLeast(0)
+                                    else -> selectedIndex
+                                }
+                                if (next != selectedIndex) onSelect(items[next].first)
+                                dragX = 0f
+                            },
+                            onDragCancel = { dragX = 0f }
+                        )
+                    }
+                    .pointerInput(barWidthPx) {
+                        detectTapGestures { offset ->
+                            val itemPx = barWidthPx.toFloat() / items.size
+                            val idx = (offset.x / itemPx).toInt().coerceIn(0, items.lastIndex)
+                            onSelect(items[idx].first)
+                        }
+                    }
+            ) {
+                val itemWidth = maxWidth / items.size
+                val maxDragPx = barWidthPx.toFloat() / items.size
+                val clampedDragPx = dragX.coerceIn(-maxDragPx, maxDragPx)
+                val dragDp = with(density) { clampedDragPx.toDp() }
+
+                // Frosted outer glass: milky translucent body + top specular highlight.
+                Box(
+                    Modifier
+                        .matchParentSize()
+                        .background(
+                            Brush.verticalGradient(
+                                0f to Color.White.copy(alpha = 0.78f),
+                                0.30f to MaterialTheme.colorScheme.surface.copy(alpha = 0.68f),
+                                0.72f to MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.56f),
+                                1f to Color.White.copy(alpha = 0.66f)
+                            ),
+                            RoundedCornerShape(36.dp)
+                        )
+                        .border(
+                            1.dp,
+                            Brush.verticalGradient(
+                                listOf(
+                                    Color.White.copy(alpha = 0.95f),
+                                    Color.White.copy(alpha = 0.38f),
+                                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.10f)
+                                )
+                            ),
+                            RoundedCornerShape(36.dp)
+                        )
+                )
+
+                // Soft internal "liquid" blobs. They create depth instead of a flat gray pill.
+                Box(
+                    Modifier
+                        .size(150.dp)
+                        .offset(x = (-35).dp, y = (-58).dp)
+                        .background(
+                            Brush.radialGradient(
+                                listOf(
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                                    Color.Transparent
+                                )
+                            ),
+                            CircleShape
+                        )
+                )
+                Box(
+                    Modifier
+                        .size(170.dp)
+                        .align(Alignment.BottomEnd)
+                        .offset(x = 48.dp, y = 72.dp)
+                        .background(
+                            Brush.radialGradient(
+                                listOf(
+                                    Color.White.copy(alpha = 0.42f),
+                                    Color.Transparent
+                                )
+                            ),
+                            CircleShape
+                        )
+                )
+
+                // The movable iOS-like glass lens. It follows the finger while swiping.
+                Box(
+                    Modifier
+                        .width(itemWidth)
+                        .fillMaxHeight()
+                        .offset(x = itemWidth * selectedIndex + dragDp)
+                        .padding(horizontal = 3.dp, vertical = 4.dp)
+                        .background(
+                            Brush.radialGradient(
+                                listOf(
+                                    Color.White.copy(alpha = 0.90f),
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.17f),
+                                    Color.White.copy(alpha = 0.50f)
+                                )
+                            ),
+                            RoundedCornerShape(31.dp)
+                        )
+                        .border(
+                            1.dp,
+                            Brush.verticalGradient(
+                                listOf(
+                                    Color.White.copy(alpha = 0.98f),
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.24f),
+                                    Color.White.copy(alpha = 0.52f)
+                                )
+                            ),
+                            RoundedCornerShape(31.dp)
+                        )
+                )
+
+                // Thin specular line only inside the capsule, not a page-wide divider.
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .padding(horizontal = 24.dp)
+                        .background(
+                            Brush.horizontalGradient(
+                                listOf(
+                                    Color.Transparent,
+                                    Color.White.copy(alpha = 0.82f),
+                                    Color.Transparent
+                                )
                             )
-                            .clickable { onSelect(key) }
-                            .padding(vertical = 7.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(icon, style = MaterialTheme.typography.titleMedium, color = if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text(label, style = MaterialTheme.typography.labelSmall, color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                        )
+                )
+
+                Row(
+                    Modifier.fillMaxSize(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    items.forEachIndexed { index, (_, icon, label) ->
+                        val isSelected = index == selectedIndex
+                        Column(
+                            Modifier
+                                .width(itemWidth)
+                                .fillMaxHeight(),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            Text(
+                                icon,
+                                style = MaterialTheme.typography.titleMedium,
+                                color = if (isSelected)
+                                    MaterialTheme.colorScheme.onSurface
+                                else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                label,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (isSelected)
+                                    MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
                     }
                 }
