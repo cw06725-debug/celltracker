@@ -2682,6 +2682,7 @@ private fun VisualAiCollectorScreen(onBack: () -> Unit) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun VideoLoadingScreen(onBack: () -> Unit, onVisualAiCollector: () -> Unit) {
     val context = LocalContext.current
