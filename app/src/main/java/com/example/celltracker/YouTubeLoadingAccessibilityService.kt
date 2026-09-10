@@ -4,13 +4,16 @@ import android.accessibilityservice.AccessibilityService
 import android.content.Intent
 import android.graphics.PixelFormat
 import android.graphics.Bitmap
+import android.content.ContentValues
 import android.graphics.Rect
 import android.graphics.Path
 import android.media.AudioManager
 import android.os.SystemClock
+import android.os.Environment
 import android.os.Build
 import android.accessibilityservice.GestureDescription
 import android.telephony.SubscriptionManager
+import android.provider.MediaStore
 import android.view.Gravity
 import android.view.Display
 import android.view.MotionEvent
@@ -24,6 +27,9 @@ import android.widget.TextView
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.*
 import java.util.concurrent.Executors
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.ExecutorService
 import kotlin.coroutines.resume
 
@@ -79,6 +85,11 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
     private val visualExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private var autoCaptureFailureCount = 0
     private var autoLastCaptureError = 0
+    // v0.9.3.0.30 Visual AI Collector.
+    // Every successful Accessibility screenshot is also sampled into PLAYER + RECS ROIs.
+    private var collectorLastSavedElapsed = 0L
+    @Volatile private var collectorPlaybackReady = false
+    @Volatile private var collectorRecommendationsReady = false
     private var semiCaptureOverlay: View? = null
     private var overlayLp: WindowManager.LayoutParams? = null
     // Keep the original touch instant for a short time. If a gesture we classified as a scroll
@@ -180,6 +191,9 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         t0 = eventWall
         semiT0ElapsedMs = eventElapsed
         semiT0Source = source
+        collectorLastSavedElapsed = 0L
+        collectorPlaybackReady = false
+        collectorRecommendationsReady = false
         semiAttemptArmed = false
         semiArmedAtUptime = 0L
         overlayStartButton?.apply { text = "ACTIVE"; isEnabled = true }
@@ -227,6 +241,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                     if (audioStreak >= 2) {
                         playbackReady = true
                         playbackSource = "AUDIO"
+                        collectorPlaybackReady = true
                     }
                 }
 
@@ -244,6 +259,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                             SystemClock.elapsedRealtime() - attemptT0Elapsed >= 500L) {
                             playbackReady = true
                             playbackSource = "VISUAL"
+                            collectorPlaybackReady = true
                         }
                     }
                     previous = signature
@@ -256,6 +272,8 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                     recommendationStreak = if (recReady) recommendationStreak + 1 else 0
                 }
                 val recommendationsReady = recommendationStreak >= 2
+                collectorPlaybackReady = playbackReady
+                collectorRecommendationsReady = recommendationsReady
 
                 overlayStatus?.text = buildString {
                     append("SEMI · #"); append(seq); append(" ")
@@ -290,7 +308,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                     }
                     return@launch
                 }
-                delay(180)
+                delay(550)
             }
         }
     }
@@ -360,7 +378,10 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                             try {
                                 val hardware = Bitmap.wrapHardwareBuffer(buffer, screenshot.colorSpace)
                                 val bitmap = hardware?.copy(Bitmap.Config.ARGB_8888, false)
-                                val signature = bitmap?.let { playerSignature(it) }
+                                val signature = bitmap?.let {
+                                    maybeCollectVisualAiFrame(it)
+                                    playerSignature(it)
+                                }
                                 bitmap?.recycle()
                                 if (cont.isActive) cont.resume(signature)
                             } catch (_: Throwable) {
@@ -381,6 +402,89 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                 if (cont.isActive) cont.resume(null)
             }
         }
+
+    /**
+     * Save lightweight training/debug data for the future on-device Visual AI detector.
+     * Files are intentionally written to public Downloads through MediaStore:
+     * Downloads/CellTracker/VisualAI/<date>/<session>/attempt_XXX/
+     *
+     * File names carry ground-truth-ish runtime state:
+     *   +01234ms_PLAY1_RECS0_PLAYER.jpg
+     *   +01234ms_PLAY1_RECS0_RECS.jpg
+     *
+     * Capture cadence is bounded to >= 500 ms because AccessibilityService.takeScreenshot()
+     * is rate limited on Android/Samsung builds.
+     */
+    private fun maybeCollectVisualAiFrame(bitmap: Bitmap) {
+        val startElapsed = semiT0ElapsedMs
+        if (startElapsed <= 0L || t0 <= 0L) return
+        val nowElapsed = SystemClock.elapsedRealtime()
+        val relativeMs = (nowElapsed - startElapsed).coerceAtLeast(0L)
+        if (collectorLastSavedElapsed > 0L && nowElapsed - collectorLastSavedElapsed < 500L) return
+        collectorLastSavedElapsed = nowElapsed
+
+        val play = if (collectorPlaybackReady) 1 else 0
+        val recs = if (collectorRecommendationsReady) 1 else 0
+        val seqLocal = seq
+        val sessionWall = sessionStartedAt.takeIf { it > 0L } ?: t0
+        val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(sessionWall))
+        val session = SimpleDateFormat("HHmmss", Locale.US).format(Date(sessionWall))
+        val relativePath = "${Environment.DIRECTORY_DOWNLOADS}/CellTracker/VisualAI/$date/session_$session/attempt_${seqLocal.toString().padStart(3, '0')}"
+
+        // Keep ROI definitions aligned with the current detector, but store denser images for later AI training.
+        val pw = bitmap.width
+        val ph = bitmap.height
+        val pLeft = (pw * 0.02f).toInt().coerceIn(0, pw - 1)
+        val pTop = (ph * 0.07f).toInt().coerceIn(0, ph - 1)
+        val pRight = (pw * 0.98f).toInt().coerceIn(pLeft + 1, pw)
+        val pBottom = (ph * 0.55f).toInt().coerceIn(pTop + 1, ph)
+        val rLeft = (pw * 0.02f).toInt().coerceIn(0, pw - 1)
+        val rTop = (ph * 0.43f).toInt().coerceIn(0, ph - 1)
+        val rRight = (pw * 0.98f).toInt().coerceIn(rLeft + 1, pw)
+        val rBottom = (ph * 0.96f).toInt().coerceIn(rTop + 1, ph)
+
+        val player = runCatching { Bitmap.createBitmap(bitmap, pLeft, pTop, pRight - pLeft, pBottom - pTop) }.getOrNull()
+        val rec = runCatching { Bitmap.createBitmap(bitmap, rLeft, rTop, rRight - rLeft, rBottom - rTop) }.getOrNull()
+        val prefix = "+${relativeMs.toString().padStart(5, '0')}ms_PLAY${play}_RECS${recs}"
+
+        // Screenshot callback already runs on visualExecutor, so MediaStore/JPEG work stays off the UI thread.
+        player?.let {
+            saveCollectorJpeg(it, "${prefix}_PLAYER.jpg", relativePath)
+            it.recycle()
+        }
+        rec?.let {
+            saveCollectorJpeg(it, "${prefix}_RECS.jpg", relativePath)
+            it.recycle()
+        }
+    }
+
+    private fun saveCollectorJpeg(bitmap: Bitmap, displayName: String, relativePath: String) {
+        if (Build.VERSION.SDK_INT < 29) return
+        runCatching {
+            val values = ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME, displayName)
+                put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                put(MediaStore.Images.Media.RELATIVE_PATH, relativePath)
+                put(MediaStore.Images.Media.IS_PENDING, 1)
+            }
+            val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return
+            var ok = false
+            try {
+                contentResolver.openOutputStream(uri)?.use { out ->
+                    ok = bitmap.compress(Bitmap.CompressFormat.JPEG, 82, out)
+                }
+                if (ok) {
+                    values.clear()
+                    values.put(MediaStore.Images.Media.IS_PENDING, 0)
+                    contentResolver.update(uri, values, null, null)
+                } else {
+                    contentResolver.delete(uri, null, null)
+                }
+            } catch (_: Throwable) {
+                contentResolver.delete(uri, null, null)
+            }
+        }
+    }
 
     private fun playerSignature(bitmap: Bitmap): IntArray {
         // Broad player ROI. Avoid status/navigation bars and sample sparsely to keep CPU cost tiny.
@@ -874,6 +978,9 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         overlayStartButton?.apply { text = "START"; isEnabled = true }
         semiT0ElapsedMs = 0L
         semiT0Source = ""
+        collectorLastSavedElapsed = 0L
+        collectorPlaybackReady = false
+        collectorRecommendationsReady = false
         semiSawPlayback = false
         semiPendingClickMs = 0L
         semiPendingClickElapsedMs = 0L
@@ -954,6 +1061,9 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         t0 = 0L
         semiT0ElapsedMs = 0L
         semiT0Source = ""
+        collectorLastSavedElapsed = 0L
+        collectorPlaybackReady = false
+        collectorRecommendationsReady = false
         semiSawPlayback = false
         semiPendingClickMs = 0L
         semiPendingClickElapsedMs = 0L
