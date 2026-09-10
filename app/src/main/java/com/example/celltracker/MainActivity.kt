@@ -40,6 +40,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -340,6 +341,72 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@Composable
+private fun LiquidGlassBottomBar(selected: String, onSelect: (String) -> Unit) {
+    Box(
+        Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 10.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Surface(
+            shape = RoundedCornerShape(30.dp),
+            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.82f),
+            tonalElevation = 10.dp,
+            shadowElevation = 10.dp,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f))
+        ) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 7.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                val items = listOf(
+                    Triple("TEST", "◉", "测试"),
+                    Triple("CELL", "▥", "Cell Info"),
+                    Triple("MAP", "⌖", "Map"),
+                    Triple("SETTINGS", "⚙", "Setting"),
+                    Triple("REPORTS", "▤", "Reports")
+                )
+                items.forEach { (key, icon, label) ->
+                    val isSelected = selected == key
+                    Surface(
+                        onClick = { onSelect(key) },
+                        shape = RoundedCornerShape(24.dp),
+                        color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else Color.Transparent
+                    ) {
+                        Column(
+                            Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(icon, style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                label,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GlassSection(title: String, content: @Composable ColumnScope.() -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.58f),
+        tonalElevation = 4.dp,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.10f))
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            content()
+        }
+    }
+}
+
 private sealed interface RootDestination {
     data object Main : RootDestination
     data object Settings : RootDestination
@@ -383,12 +450,13 @@ private fun MainScreen(
     var showLiveMap by remember { mutableStateOf(false) }
     var showMarkDialog by remember { mutableStateOf(false) }
     var showTaskNameDialog by remember { mutableStateOf(false) }
+    var mainTab by rememberSaveable { mutableStateOf("CELL") }
 
     val selected = state.sims.firstOrNull { it.subscriptionId == state.selectedSubscriptionId } ?: state.sims.firstOrNull()
     val context = LocalContext.current
     val recordingMetaRepo = remember { TestMetadataRepository(context) }
     var lastExitBackAt by remember { mutableLongStateOf(0L) }
-    BackHandler(enabled = showLiveMap) { showLiveMap = false }
+    BackHandler(enabled = showLiveMap) { showLiveMap = false; mainTab = "CELL" }
     BackHandler(enabled = !showLiveMap) {
         val now = System.currentTimeMillis()
         if (now - lastExitBackAt <= 2000L) {
@@ -413,17 +481,37 @@ private fun MainScreen(
         }
     }
 
-    Scaffold(topBar = {
-        TopAppBar(
-            title = { Text(if (showLiveMap) "Live Map" else "CellTracker ${BuildConfig.VERSION_NAME}") },
-            navigationIcon = { if (showLiveMap) TextButton(onClick = { showLiveMap = false }) { Text("Back") } },
-            actions = {
-                if (!showLiveMap) TextButton(onClick = { showLiveMap = true }) { Text("Map") }
-                if (showLiveMap && state.isRecording) TextButton(onClick = { showMarkDialog = true }) { Text("Mark") }
-                TextButton(onClick = onSettings) { Text("Settings") }
-            }
-        )
-    }) { padding ->
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Text(
+                        when {
+                            showLiveMap -> "Map"
+                            mainTab == "TEST" -> "Tests"
+                            mainTab == "REPORTS" -> "Reports"
+                            else -> "Cell Info"
+                        }
+                    )
+                },
+                actions = {
+                    if (showLiveMap && state.isRecording) TextButton(onClick = { showMarkDialog = true }) { Text("Mark") }
+                }
+            )
+        },
+        bottomBar = {
+            LiquidGlassBottomBar(
+                selected = if (showLiveMap) "MAP" else mainTab,
+                onSelect = { tab ->
+                    when (tab) {
+                        "MAP" -> { mainTab = "MAP"; showLiveMap = true }
+                        "SETTINGS" -> onSettings()
+                        else -> { mainTab = tab; showLiveMap = false }
+                    }
+                }
+            )
+        }
+    ) { padding ->
         AnimatedContent(
             targetState = showLiveMap,
             transitionSpec = {
@@ -441,7 +529,79 @@ private fun MainScreen(
             LiveMapScreen(state = state, onSelectSim = onSelectSim, modifier = Modifier.padding(padding).fillMaxSize())
         } else Column(
             modifier = Modifier.padding(padding).fillMaxSize()
-        ) {
+        ) mainContent@{
+            if (mainTab == "TEST") {
+                Column(
+                    Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberRetainedScrollState("main.tests")),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    GlassSection("Automated Tests") {
+                        Text("Ping Test", style = MaterialTheme.typography.titleSmall)
+                        Text("Latency, success rate and packet-loss test.", style = MaterialTheme.typography.bodySmall)
+                        Button(onClick = onPingTest, modifier = Modifier.fillMaxWidth()) { Text(if (state.pingTest.isRunning) "Open Ping Test" else "Configure Ping Test") }
+                        HorizontalDivider(Modifier.padding(vertical = 6.dp))
+                        Text("Basement Weak Coverage", style = MaterialTheme.typography.titleSmall)
+                        Text("START → B1 → B2 → B1 → START continuity, fixed-point Ping and recovery.", style = MaterialTheme.typography.bodySmall)
+                        Button(onClick = onBasementTest, modifier = Modifier.fillMaxWidth()) { Text(if (BasementTestStore.state.value.isRunning) "Open Basement Test" else "Configure Basement Test") }
+                        HorizontalDivider(Modifier.padding(vertical = 6.dp))
+                        Text("YouTube Video Loading", style = MaterialTheme.typography.titleSmall)
+                        Button(onClick = onVideoLoading, modifier = Modifier.fillMaxWidth()) { Text("Configure Video Loading") }
+                        HorizontalDivider(Modifier.padding(vertical = 6.dp))
+                        Text("WhatsApp Image Send", style = MaterialTheme.typography.titleSmall)
+                        Button(onClick = onWhatsAppSend, modifier = Modifier.fillMaxWidth()) { Text("Configure WhatsApp Send") }
+                        HorizontalDivider(Modifier.padding(vertical = 6.dp))
+                        Text("Dual-DUT Call Setup", style = MaterialTheme.typography.titleSmall)
+                        Button(onClick = onCallSetup, modifier = Modifier.fillMaxWidth()) { Text(if (state.callSetup.isRunning) "Open Call Setup" else "Configure Call Setup") }
+                    }
+                    GlassSection("Network Recording") {
+                        Field("Status", if (state.isRecording) "Recording" else "Stopped")
+                        Field("Elapsed", formatElapsed(state.recordingElapsedMs))
+                        if (state.isRecording) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Button(onClick = onStopRecording) { Text("Stop") }
+                                OutlinedButton(onClick = { showMarkDialog = true }) { Text("Mark issue") }
+                            }
+                        } else {
+                            Button(onClick = { showTaskNameDialog = true }, enabled = selected != null) { Text("Start Recording") }
+                        }
+                    }
+                }
+                return@mainContent
+            }
+
+            if (mainTab == "REPORTS") {
+                Column(
+                    Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberRetainedScrollState("main.reports")),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    GlassSection("Test Reports") {
+                        Text("Open each test module to browse its saved history and export/share results.", style = MaterialTheme.typography.bodySmall)
+                        Button(onClick = onPingTest, modifier = Modifier.fillMaxWidth()) { Text("Ping Reports") }
+                        Button(onClick = onBasementTest, modifier = Modifier.fillMaxWidth()) { Text("Basement Reports") }
+                        Button(onClick = onVideoLoading, modifier = Modifier.fillMaxWidth()) { Text("YouTube Reports") }
+                        Button(onClick = onWhatsAppSend, modifier = Modifier.fillMaxWidth()) { Text("WhatsApp Reports") }
+                        Button(onClick = onCallSetup, modifier = Modifier.fillMaxWidth()) { Text("Call Setup Reports") }
+                    }
+                    GlassSection("Recording Reports") {
+                        if (state.recordings.isEmpty()) {
+                            Text("No recordings yet", style = MaterialTheme.typography.bodySmall)
+                        } else {
+                            state.recordings.forEach { item ->
+                                Card(Modifier.fillMaxWidth().clickable { onOpenRecording(item.path) }) {
+                                    Column(Modifier.padding(12.dp)) {
+                                        Text(SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(item.startedAt)), style = MaterialTheme.typography.labelLarge)
+                                        Text(recordingDisplayName(item.name), color = MaterialTheme.colorScheme.primary)
+                                        Text("${item.simSummary} · ${formatElapsed(item.durationMs)} · ${item.totalSamples} samples", style = MaterialTheme.typography.bodySmall)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                return@mainContent
+            }
+
+            // CELL INFO
             // Keep the SIM selector outside the scrollable content so it remains visible
             // while the user scrolls through Network / Neighbor / Recording cards.
             Surface(tonalElevation = 2.dp) {
@@ -559,114 +719,8 @@ private fun MainScreen(
                 Field("Accuracy", l.accuracy); Field("Speed", l.speedKmh); Field("Bearing", l.bearing)
             }
 
-            InfoCard("Automated Tests") {
-                Text("Ping Test", style = MaterialTheme.typography.titleSmall)
-                Text("Single-DUT latency, success rate and packet loss with automatic issue markers.", style = MaterialTheme.typography.bodySmall)
-                if (state.pingTest.completed > 0 || state.pingTest.isRunning) {
-                    Field("Status", state.pingTest.statusMessage)
-                    Field("Progress", "${state.pingTest.completed} / ${state.pingTest.config.count}")
-                    Field("Success", String.format(Locale.US, "%.1f%%", state.pingTest.successRate))
-                    Field("Avg latency", state.pingTest.averageLatencyMs?.let { String.format(Locale.US, "%.1f ms", it) } ?: "--")
-                }
-                Button(onClick = onPingTest) { Text(if (state.pingTest.isRunning) "Open Ping Test" else "Configure Ping Test") }
-                HorizontalDivider(Modifier.padding(vertical = 10.dp))
-                Text("Basement Weak Coverage", style = MaterialTheme.typography.titleSmall)
-                Text("START → B1 → B2 → B1 → START continuity test with 1 Hz network logging, fixed-point Ping and recovery timing.", style = MaterialTheme.typography.bodySmall)
-                Button(onClick = onBasementTest) { Text(if (BasementTestStore.state.value.isRunning) "Open Basement Test" else "Configure Basement Test") }
-                HorizontalDivider(Modifier.padding(vertical = 10.dp))
-                Text("YouTube Video Loading", style = MaterialTheme.typography.titleSmall)
-                Text("Automated channel-video page loading delay via Accessibility, with network snapshots and reports.", style = MaterialTheme.typography.bodySmall)
-                Button(onClick = onVideoLoading) { Text("Configure Video Loading") }
-                HorizontalDivider(Modifier.padding(vertical = 10.dp))
-                Text("WhatsApp Image Send", style = MaterialTheme.typography.titleSmall)
-                Text("Manual image-send delay: START → tap Send (T0) → SENT (T1).", style = MaterialTheme.typography.bodySmall)
-                Button(onClick = onWhatsAppSend) { Text("Configure WhatsApp Send") }
-                HorizontalDivider(Modifier.padding(vertical = 10.dp))
-                Text("Dual-DUT Call Setup", style = MaterialTheme.typography.titleSmall)
-                Text("Bluetooth-linked MO/MT setup success rate with two-ended state validation.", style = MaterialTheme.typography.bodySmall)
-                Field("Device Link", state.deviceLink.status.name)
-                if (state.callSetup.attempts.isNotEmpty() || state.callSetup.isRunning) {
-                    Field("Call attempts", "${state.callSetup.attempts.size} · Success ${String.format(Locale.US, "%.1f%%", state.callSetup.successRate)}")
-                }
-                Button(onClick = onCallSetup) { Text(if (state.callSetup.isRunning) "Open Call Setup Test" else "Configure Call Setup") }
-            }
-
-            InfoCard("Recording") {
-                Field("Status", if (state.isRecording) "Recording" else "Stopped")
-                Field("Elapsed", formatElapsed(state.recordingElapsedMs))
-                Field("Record interval", "${state.settings.recordIntervalMs / 1000.0} s")
-                Text("Record scope", style = MaterialTheme.typography.labelLarge)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    RadioButton(selected = state.settings.recordScope == RecordScope.CURRENT_SIM || state.sims.size < 2, enabled = !state.isRecording,
-                        onClick = { onRecordScope(RecordScope.CURRENT_SIM) })
-                    Text("Current SIM")
-                    if (state.sims.size > 1) {
-                        Spacer(Modifier.width(12.dp))
-                        RadioButton(selected = state.settings.recordScope == RecordScope.BOTH_SIMS, enabled = !state.isRecording,
-                            onClick = { onRecordScope(RecordScope.BOTH_SIMS) })
-                        Text("Both SIMs")
-                    }
-                }
-                if (state.sims.size > 1 && state.settings.recordScope == RecordScope.BOTH_SIMS) {
-                    Text("Mark target", style = MaterialTheme.typography.labelLarge)
-                    state.sims.forEach { sim ->
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            val targetId = if (state.isRecording) state.recordingMarkTargetSubscriptionId else state.markTargetSubscriptionId
-                            RadioButton(selected = targetId == sim.subscriptionId, enabled = !state.isRecording, onClick = { onMarkTarget(sim.subscriptionId) })
-                            Text("SIM ${sim.simSlotIndex + 1} · ${sim.servingCell.operator}")
-                        }
-                    }
-                    if (state.isRecording) Text("Mark target is locked during recording", style = MaterialTheme.typography.bodySmall)
-                }
-                val active = pageSelected
-                if (state.isRecording) {
-                    if (state.settings.recordScope == RecordScope.BOTH_SIMS) {
-                        Field("Recording", state.sims.joinToString(" + ") { "SIM ${it.simSlotIndex + 1} ${it.servingCell.operator}" })
-                        state.sims.forEach { Field("SIM ${it.simSlotIndex + 1} samples", (state.recordingSamplesBySubscription[it.subscriptionId] ?: 0).toString()) }
-                    } else if (active != null) {
-                        Field("Recording", "SIM ${active.simSlotIndex + 1} ${active.servingCell.operator}")
-                        Field("Samples", state.recordingSamples.toString())
-                    }
-                    val ageText = if (state.recordingLocationAgeMs == Long.MAX_VALUE) "--" else String.format(Locale.US, "%.1f s ago", state.recordingLocationAgeMs / 1000.0)
-                    Field("Location", if (state.recordingLocationValid) "GPS ready" else "Waiting for GPS...")
-                    Field("Last fix", ageText)
-                }
-                if (state.isRecording) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Button(onClick = onStopRecording) { Text("Stop") }
-                        OutlinedButton(onClick = { showMarkDialog = true }) { Text("Mark issue") }
-                    }
-                } else Button(onClick = { showTaskNameDialog = true }, enabled = active != null) { Text("Start Recording") }
-
-                if (state.recordings.isNotEmpty()) {
-                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Text("Recent recordings", style = MaterialTheme.typography.titleSmall)
-                        TextButton(onClick = { showDeleteAll = true }) { Text("Delete all") }
-                    }
-                    state.recordings.take(5).forEach { item ->
-                        Card(
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable { onOpenRecording(item.path) }
-                        ) {
-                            Column(Modifier.fillMaxWidth().padding(12.dp)) {
-                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Text(SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(item.startedAt)), style = MaterialTheme.typography.labelLarge)
-                                    Text("View ›", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                                }
-                                Text(recordingDisplayName(item.name), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
-                                Text("${item.simSummary} · ${formatElapsed(item.durationMs)} · ${item.totalSamples} samples", style = MaterialTheme.typography.bodySmall)
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    TextButton(onClick = {
-                                        if (item.simCount > 1) { exportPath = item.path; showExportDialog = true }
-                                        else onExportRecording(item.path, CsvExportMode.COMBINED)
-                                    }) { Text("Export") }
-                                    TextButton(onClick = { deletePath = item.path }) { Text("Delete") }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            // Tests and saved report/history cards were moved to the bottom navigation
+            // (Tests / Reports) so Cell Info stays focused on live radio/network data.
             state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             Text("Last cellular update: ${state.lastUpdated}", style = MaterialTheme.typography.bodySmall)
                 }
@@ -2721,7 +2775,10 @@ private fun BasementTestScreen(selectedSim: SimCellState?, onBack: () -> Unit) {
             if (!live.isRunning && live.stage != BasementStage.FINISHED && live.stage != BasementStage.ABORTED) {
                 Text("Test Setup", style = MaterialTheme.typography.titleMedium)
                 Text("Route: START → B1 → B2 → B1 Return → START. Network data is sampled continuously at 1 Hz; B1/B2/B1 Return automatically wait then Ping.", style = MaterialTheme.typography.bodySmall)
-                Field("Selected SIM", selectedSim?.let { "${it.simLabel} · ${it.servingCell.operator} · ${it.servingCell.displayRat}" } ?: "--")
+                Field("Selected SIM", selectedSim?.let {
+                    val op = it.servingCell.operator.trim().ifBlank { "--" }
+                    "SIM ${it.simSlotIndex + 1} · $op"
+                } ?: "--")
                 Text("Before testing: turn Wi-Fi OFF and make this selected SIM the Android default mobile-data SIM, so Ping and network logging refer to the same SIM.", style = MaterialTheme.typography.bodySmall)
                 OutlinedTextField(deviceLabel, { deviceLabel = it }, label = { Text("Device label") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(host, { host = it }, label = { Text("Ping host") }, singleLine = true, modifier = Modifier.fillMaxWidth())
@@ -2742,7 +2799,8 @@ private fun BasementTestScreen(selectedSim: SimCellState?, onBack: () -> Unit) {
                         live.countdownSeconds?.let { Field("Countdown", "${it}s") }
                         if (live.pingTotal > 0) Field("Ping", "${live.pingProgress} / ${live.pingTotal}")
                         live.lastPointResult?.let {
-                            Field("Last Ping", "${it.result} · Loss ${String.format(Locale.US, "%.1f%%", it.lossPct)} · Avg ${it.avgRttMs?.let { v -> String.format(Locale.US, "%.0f ms", v) } ?: "--"}")
+                            val success = if (it.sent > 0) it.received * 100.0 / it.sent else 0.0
+                            Field("Last Ping", "${it.result} · Success ${String.format(Locale.US, "%.1f%%", success)} · Avg ${it.avgRttMs?.let { v -> String.format(Locale.US, "%.0f ms", v) } ?: "--"}")
                         }
                         if (live.stage == BasementStage.RECOVERY || live.stage == BasementStage.RECOVERY_COMPLETE || live.stage == BasementStage.FINISHED) {
                             fun rec(v: Long?, required: Boolean): String = when {

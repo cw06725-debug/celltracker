@@ -745,7 +745,8 @@ class BasementTestService : Service() {
             row(r.point, "Ping Result", r.result)
             row(r.point, "Sent", r.sent.toString())
             row(r.point, "Received", r.received.toString())
-            row(r.point, "Loss", String.format(Locale.US, "%.1f%%", r.lossPct))
+            val successPct = if (r.sent > 0) r.received * 100.0 / r.sent else 0.0
+            row(r.point, "Success Rate", String.format(Locale.US, "%.1f%%", successPct))
             row(r.point, "Avg RTT", r.avgRttMs?.let { String.format(Locale.US, "%.1f ms", it) } ?: "--")
             row(r.point, "Min RTT", r.minRttMs?.let { String.format(Locale.US, "%.1f ms", it) } ?: "--")
             row(r.point, "Max RTT", r.maxRttMs?.let { String.format(Locale.US, "%.1f ms", it) } ?: "--")
@@ -793,6 +794,54 @@ class BasementTestService : Service() {
         }
     }
 
+    private data class BasementTimelineInterval(
+        val startMs: Long,
+        val endMs: Long,
+        val rat: String,
+        val band: String
+    )
+
+    private fun timelineIntervals(segment: String, fallbackEnd: Long): List<BasementTimelineInterval> {
+        val start = segmentStart[segment] ?: return emptyList()
+        val end = (segmentEnd[segment] ?: fallbackEnd).coerceAtLeast(start)
+        if (end <= start) return emptyList()
+
+        val rows = samples.filter { it.segment == segment && it.timestampMs <= end }.sortedBy { it.timestampMs }
+        val previous = samples.filter { it.timestampMs <= start }.maxByOrNull { it.timestampMs }
+        var current = previous ?: rows.firstOrNull() ?: return emptyList()
+        var cursor = start
+        val raw = mutableListOf<BasementTimelineInterval>()
+
+        fun bandOf(row: BasementNetworkSample): String = when (row.rat) {
+            "5G" -> row.nrBand.takeIf { it != "--" } ?: "5G UNKNOWN"
+            "4G" -> row.lteBand.takeIf { it != "--" } ?: "4G UNKNOWN"
+            "3G", "2G" -> row.displayRat.ifBlank { row.rat }
+            "NO_SERVICE" -> "NO SERVICE"
+            else -> row.displayRat.ifBlank { "UNKNOWN" }
+        }
+
+        rows.forEach { row ->
+            val t = row.timestampMs.coerceIn(start, end)
+            if (t > cursor) {
+                raw += BasementTimelineInterval(cursor, t, current.rat, bandOf(current))
+                cursor = t
+            }
+            current = row
+        }
+        if (cursor < end) raw += BasementTimelineInterval(cursor, end, current.rat, bandOf(current))
+
+        // Merge adjacent periods with identical RAT+Band. The transition is then naturally the
+        // boundary between two rows, so distribution and transition data live in one table.
+        val merged = mutableListOf<BasementTimelineInterval>()
+        raw.forEach { row ->
+            val last = merged.lastOrNull()
+            if (last != null && last.rat == row.rat && last.band == row.band && last.endMs == row.startMs) {
+                merged[merged.lastIndex] = last.copy(endMs = row.endMs)
+            } else merged += row
+        }
+        return merged
+    }
+
     private fun buildSummaryHtml(endedAt: Long, status: String): String {
         val st = BasementTestStore.state.value
         val ns = noServiceStats(endedAt)
@@ -803,7 +852,8 @@ class BasementTestService : Service() {
             val network = snap?.let { "${it.rat} ${if (it.rat == "5G") it.nrBand else it.lteBand}" } ?: "--"
             val rsrp = snap?.let { if (it.rat == "5G" && it.nrSsRsrp != "--") it.nrSsRsrp else it.lteRsrp } ?: "--"
             val sinr = snap?.let { if (it.rat == "5G" && it.nrSsSinr != "--") it.nrSsSinr else it.lteSinr } ?: "--"
-            "<tr><td>${html(r.point)}</td><td>${html(network)}</td><td>${html(rsrp)}</td><td>${html(sinr)}</td><td>${html(r.result)}</td><td>${String.format(Locale.US, "%.1f%%", r.lossPct)}</td><td>${r.avgRttMs?.let { String.format(Locale.US, "%.1f ms", it) } ?: "--"}</td></tr>"
+            val success = if (r.sent > 0) r.received * 100.0 / r.sent else 0.0
+            "<tr><td>${html(r.point)}</td><td>${html(network)}</td><td>${html(rsrp)}</td><td>${html(sinr)}</td><td>${html(r.result)}</td><td>${String.format(Locale.US, "%.1f%%", success)}</td><td>${r.avgRttMs?.let { String.format(Locale.US, "%.1f ms", it) } ?: "--"}</td></tr>"
         }
 
         val segmentsHtml = routeSegments.joinToString("") { seg ->
@@ -826,56 +876,49 @@ class BasementTestService : Service() {
             val startMs = segmentStart[seg] ?: sessionStartedAt
             val endMs = segmentEnd[seg] ?: endedAt
             val duration = (endMs - startMs).coerceAtLeast(1L)
-            val ratDist = ratDistribution(seg, endMs)
-            val bandDist = bandDistribution(seg, endMs)
+            val timeline = timelineIntervals(seg, endMs)
 
-            val ratRows = ratDist.entries.sortedByDescending { it.value }.joinToString("") { (k,v) ->
-                "<tr><td>${html(k)}</td><td>${formatDuration(v)}</td><td>${String.format(Locale.US, "%.1f%%", v*100.0/duration)}</td></tr>"
+            val ratTimelineRows = timeline.joinToString("") { row ->
+                val share = (row.endMs-row.startMs) * 100.0 / duration
+                "<tr><td>${html(row.rat)}</td><td>${timeText(row.startMs)}</td><td>${timeText(row.endMs)}</td><td>${formatDuration(row.endMs-row.startMs)}</td><td>${String.format(Locale.US, "%.1f%%", share)}</td><td>${html(row.band)}</td></tr>"
+            }.ifBlank { "<tr><td colspan='6'>No samples</td></tr>" }
+
+            val bandSummary = bandDistribution(seg, endMs).entries.sortedByDescending { it.value }.joinToString("") { (band,ms) ->
+                "<tr><td>${html(band)}</td><td>${formatDuration(ms)}</td><td>${String.format(Locale.US, "%.1f%%", ms*100.0/duration)}</td></tr>"
             }.ifBlank { "<tr><td colspan='3'>No samples</td></tr>" }
 
-            val bandRows = bandDist.entries.sortedByDescending { it.value }.joinToString("") { (k,v) ->
-                "<tr><td>${html(k)}</td><td>${formatDuration(v)}</td><td>${String.format(Locale.US, "%.1f%%", v*100.0/duration)}</td></tr>"
-            }.ifBlank { "<tr><td colspan='3'>No samples</td></tr>" }
-
-            val ratEvents = events.filter { it.segment == seg && it.type == "RAT_CHANGE" }.sortedBy { it.timestampMs }
-            val bandEvents = events.filter { it.segment == seg && it.type == "BAND_CHANGE" }.sortedBy { it.timestampMs }
+            val ratChanges = timeline.zipWithNext().filter { it.first.rat != it.second.rat }
+            val bandChanges = timeline.zipWithNext().filter { it.first.band != it.second.band }
             val otherEvents = events.filter {
                 it.segment == seg && it.type in setOf("CELL_CHANGE","NR_ADD","NR_RELEASE","NO_SERVICE_START","NO_SERVICE_END","DATA_STATE_CHANGE")
             }.sortedBy { it.timestampMs }
 
-            fun elapsedText(e: BasementEvent): String =
-                String.format(Locale.US, "%.1fs", (e.timestampMs - startMs).coerceAtLeast(0L) / 1000.0)
-
-            val ratTransitionRows = ratEvents.joinToString("") { e ->
-                "<tr><td>${elapsedText(e)}</td><td>${html(e.from)}</td><td>${html(e.to)}</td><td>${timeText(e.timestampMs)}</td></tr>"
-            }.ifBlank { "<tr><td colspan='4'>None</td></tr>" }
-
-            val bandTransitionRows = bandEvents.joinToString("") { e ->
-                "<tr><td>${elapsedText(e)}</td><td>${html(e.from)}</td><td>${html(e.to)}</td><td>${timeText(e.timestampMs)}</td></tr>"
-            }.ifBlank { "<tr><td colspan='4'>None</td></tr>" }
+            fun bandAt(ts: Long): String =
+                timeline.firstOrNull { ts >= it.startMs && ts <= it.endMs }?.band ?: "--"
 
             val otherRows = otherEvents.joinToString("") { e ->
-                "<tr><td>${elapsedText(e)}</td><td>${html(e.type)}</td><td>${html(e.from)}</td><td>${html(e.to)}</td></tr>"
-            }.ifBlank { "<tr><td colspan='4'>None</td></tr>" }
+                val nextTs = events.filter { it.segment == seg && it.timestampMs > e.timestampMs }.minOfOrNull { it.timestampMs } ?: endMs
+                val eventEnd = when {
+                    e.durationMs != null -> (e.timestampMs + e.durationMs).coerceAtMost(endMs)
+                    else -> nextTs.coerceAtLeast(e.timestampMs)
+                }
+                "<tr><td>${html(e.type)}</td><td>${timeText(e.timestampMs)}</td><td>${timeText(eventEnd)}</td><td>${formatDuration((eventEnd-e.timestampMs).coerceAtLeast(0L))}</td><td>${html(bandAt(e.timestampMs))}</td><td>${html(e.from)}</td><td>${html(e.to)}</td></tr>"
+            }.ifBlank { "<tr><td colspan='7'>None</td></tr>" }
 
             """
             <section class="segment-block">
               <h3>${html(seg)}</h3>
               <div class="mini-grid">
                 <div><b>Duration</b><br>${formatDuration(duration)}</div>
-                <div><b>RAT transitions</b><br>${ratEvents.size}</div>
-                <div><b>Band transitions</b><br>${bandEvents.size}</div>
+                <div><b>RAT transitions</b><br>${ratChanges.size}</div>
+                <div><b>Band transitions</b><br>${bandChanges.size}</div>
               </div>
-              <h4>Network RAT Distribution</h4>
-              <table><tr><th>RAT</th><th>Duration</th><th>Share</th></tr>$ratRows</table>
+              <h4>RAT / Band Timeline</h4>
+              <table><tr><th>RAT</th><th>Start</th><th>End</th><th>Duration</th><th>Share</th><th>Band</th></tr>$ratTimelineRows</table>
               <h4>Band Distribution</h4>
-              <table><tr><th>Band</th><th>Duration</th><th>Share</th></tr>$bandRows</table>
-              <h4>RAT Transitions (${ratEvents.size})</h4>
-              <table><tr><th>Segment elapsed</th><th>From</th><th>To</th><th>Timestamp</th></tr>$ratTransitionRows</table>
-              <h4>Band Transitions (${bandEvents.size})</h4>
-              <table><tr><th>Segment elapsed</th><th>From</th><th>To</th><th>Timestamp</th></tr>$bandTransitionRows</table>
+              <table><tr><th>Band</th><th>Total Duration</th><th>Share</th></tr>$bandSummary</table>
               <h4>Other Network Events</h4>
-              <table><tr><th>Segment elapsed</th><th>Event</th><th>From</th><th>To</th></tr>$otherRows</table>
+              <table><tr><th>Event</th><th>Start</th><th>End</th><th>Duration</th><th>Band</th><th>From</th><th>To</th></tr>$otherRows</table>
             </section>
             """.trimIndent()
         }
@@ -889,7 +932,7 @@ h1{font-size:24px}.grid,.mini-grid{display:grid;grid-template-columns:repeat(aut
 .card,.segment-block{border:1px solid #ddd;border-radius:12px;padding:12px;margin-bottom:14px}
 .k{font-size:12px;color:#666}.v{font-size:18px;font-weight:700;margin-top:4px}
 table{border-collapse:collapse;width:100%;margin-top:8px;margin-bottom:14px}
-th,td{border-bottom:1px solid #ddd;padding:8px;text-align:left;font-size:13px}
+th,td{border-bottom:1px solid #ddd;padding:8px;text-align:left;font-size:13px;vertical-align:top}
 th{background:#f6f6f6} h3{margin-top:0} h4{margin-bottom:4px}
 .note{background:#f6f7fb;border-radius:10px;padding:10px;font-size:13px}
 </style></head><body>
@@ -903,11 +946,9 @@ th{background:#f6f6f6} h3{margin-top:0} h4{margin-bottom:4px}
 <div class="card"><div class="k">Data Recovery</div><div class="v">${recoveryText(st.dataRecoveryMs, true)}</div></div>
 <div class="card"><div class="k">5G Recovery</div><div class="v">${recoveryText(st.nrRecoveryMs, st.nrRecoveryRequired)}</div></div>
 </div>
-<div class="note">
-<b>Recovery calculation:</b> T0 = ARRIVE START. LTE/5G = 0.0 s if already available at arrival; otherwise the first restored 1 Hz sample time, confirmed by the next consecutive sample. Data = completion time of the first successful recovery Ping minus ARRIVE START. Recovery timeout = ${config.recoverySeconds}s.
-</div>
+<div class="note"><b>Recovery:</b> T0 = ARRIVE START. LTE/5G = 0.0 s if already available at arrival; otherwise first restored 1 Hz sample time, confirmed by the next sample. Data = first successful real recovery Ping completion minus ARRIVE START. Timeout = ${config.recoverySeconds}s.</div>
 <h2>Fixed Points</h2>
-<table><tr><th>Point</th><th>Network</th><th>RSRP</th><th>SINR</th><th>Ping</th><th>Loss</th><th>Avg RTT</th></tr>$points</table>
+<table><tr><th>Point</th><th>Network</th><th>RSRP</th><th>SINR</th><th>Ping</th><th>Success Rate</th><th>Avg RTT</th></tr>$points</table>
 <h2>Route Segments</h2>
 <table><tr><th>Segment</th><th>Duration</th><th>5G</th><th>4G</th><th>3G</th><th>2G</th><th>No Service</th><th>Other</th><th>LTE Avg RSRP</th><th>NR Avg SS-RSRP</th></tr>$segmentsHtml</table>
 <h2>Network Events by Route Segment</h2>
