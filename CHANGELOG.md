@@ -1,5 +1,14 @@
 # CellTracker Changelog
 
+## v0.9.3.0.42
+
+- Unified all five root tabs under one navigation state; Map no longer has a separate navigation boolean.
+- Fixed swipe getting stuck around the first three tabs.
+- A single drag can now travel across all five tabs and snaps to the nearest destination.
+- Bottom glass bar now overlays page content instead of reserving a solid Scaffold bottom region.
+- Strengthened the liquid-glass look with layered translucency, specular highlights, caustic/radial depth and a moving selection lens.
+- Keeps inline Settings, origin-tab return behavior and grouped Reports.
+
 ## v0.9.3.0.41
 
 - Rebuilt the bottom navigation touch model so the whole glass capsule owns drag/tap input; child items no longer consume the swipe.

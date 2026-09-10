@@ -353,7 +353,11 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun LiquidGlassBottomBar(selected: String, onSelect: (String) -> Unit) {
+private fun LiquidGlassBottomBar(
+    selected: String,
+    onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
     val items = listOf(
         Triple("TEST", "◉", "测试"),
         Triple("CELL", "▥", "Cell Info"),
@@ -367,40 +371,37 @@ private fun LiquidGlassBottomBar(selected: String, onSelect: (String) -> Unit) {
     var barWidthPx by remember { mutableIntStateOf(1) }
 
     Box(
-        Modifier
+        modifier
             .fillMaxWidth()
             .padding(horizontal = 14.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center
     ) {
-        // Outer shadow capsule.
         Surface(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(36.dp),
+            shape = RoundedCornerShape(38.dp),
             color = Color.Transparent,
-            shadowElevation = 18.dp
+            shadowElevation = 22.dp
         ) {
             BoxWithConstraints(
                 Modifier
                     .fillMaxWidth()
-                    .height(76.dp)
+                    .height(80.dp)
                     .onSizeChanged { barWidthPx = it.width.coerceAtLeast(1) }
-                    // Drag and tap are handled on this parent. Children intentionally do not
-                    // consume pointer events, so horizontal swiping works reliably.
                     .pointerInput(selected, barWidthPx) {
                         detectHorizontalDragGestures(
                             onDragStart = { dragX = 0f },
                             onHorizontalDrag = { change, amount ->
                                 change.consume()
-                                dragX += amount
+                                val itemPx = barWidthPx.toFloat() / items.size
+                                val minDx = -selectedIndex * itemPx
+                                val maxDx = (items.lastIndex - selectedIndex) * itemPx
+                                dragX = (dragX + amount).coerceIn(minDx, maxDx)
                             },
                             onDragEnd = {
-                                val threshold = (barWidthPx / items.size) * 0.28f
-                                val next = when {
-                                    dragX < -threshold -> (selectedIndex + 1).coerceAtMost(items.lastIndex)
-                                    dragX > threshold -> (selectedIndex - 1).coerceAtLeast(0)
-                                    else -> selectedIndex
-                                }
-                                if (next != selectedIndex) onSelect(items[next].first)
+                                val itemPx = barWidthPx.toFloat() / items.size
+                                val steps = kotlin.math.round(-dragX / itemPx).toInt()
+                                val target = (selectedIndex + steps).coerceIn(0, items.lastIndex)
+                                if (target != selectedIndex) onSelect(items[target].first)
                                 dragX = 0f
                             },
                             onDragCancel = { dragX = 0f }
@@ -415,45 +416,40 @@ private fun LiquidGlassBottomBar(selected: String, onSelect: (String) -> Unit) {
                     }
             ) {
                 val itemWidth = maxWidth / items.size
-                val maxDragPx = barWidthPx.toFloat() / items.size
-                val clampedDragPx = dragX.coerceIn(-maxDragPx, maxDragPx)
-                val dragDp = with(density) { clampedDragPx.toDp() }
+                val dragDp = with(density) { dragX.toDp() }
 
-                // Frosted outer glass: milky translucent body + top specular highlight.
                 Box(
-                    Modifier
-                        .matchParentSize()
+                    Modifier.matchParentSize()
                         .background(
                             Brush.verticalGradient(
-                                0f to Color.White.copy(alpha = 0.78f),
-                                0.30f to MaterialTheme.colorScheme.surface.copy(alpha = 0.68f),
-                                0.72f to MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.56f),
-                                1f to Color.White.copy(alpha = 0.66f)
+                                0f to Color.White.copy(alpha = 0.46f),
+                                0.18f to Color.White.copy(alpha = 0.28f),
+                                0.55f to MaterialTheme.colorScheme.surface.copy(alpha = 0.30f),
+                                1f to MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.22f)
                             ),
-                            RoundedCornerShape(36.dp)
+                            RoundedCornerShape(38.dp)
                         )
                         .border(
-                            1.dp,
+                            1.2.dp,
                             Brush.verticalGradient(
                                 listOf(
-                                    Color.White.copy(alpha = 0.95f),
+                                    Color.White.copy(alpha = 0.98f),
                                     Color.White.copy(alpha = 0.38f),
                                     MaterialTheme.colorScheme.onSurface.copy(alpha = 0.10f)
                                 )
                             ),
-                            RoundedCornerShape(36.dp)
+                            RoundedCornerShape(38.dp)
                         )
                 )
 
-                // Soft internal "liquid" blobs. They create depth instead of a flat gray pill.
                 Box(
-                    Modifier
-                        .size(150.dp)
-                        .offset(x = (-35).dp, y = (-58).dp)
+                    Modifier.size(210.dp)
+                        .offset(x = (-58).dp, y = (-100).dp)
                         .background(
                             Brush.radialGradient(
                                 listOf(
-                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.22f),
+                                    Color.White.copy(alpha = 0.16f),
                                     Color.Transparent
                                 )
                             ),
@@ -461,14 +457,14 @@ private fun LiquidGlassBottomBar(selected: String, onSelect: (String) -> Unit) {
                         )
                 )
                 Box(
-                    Modifier
-                        .size(170.dp)
+                    Modifier.size(240.dp)
                         .align(Alignment.BottomEnd)
-                        .offset(x = 48.dp, y = 72.dp)
+                        .offset(x = 80.dp, y = 110.dp)
                         .background(
                             Brush.radialGradient(
                                 listOf(
-                                    Color.White.copy(alpha = 0.42f),
+                                    Color.White.copy(alpha = 0.34f),
+                                    MaterialTheme.colorScheme.tertiary.copy(alpha = 0.10f),
                                     Color.Transparent
                                 )
                             ),
@@ -476,81 +472,56 @@ private fun LiquidGlassBottomBar(selected: String, onSelect: (String) -> Unit) {
                         )
                 )
 
-                // The movable iOS-like glass lens. It follows the finger while swiping.
                 Box(
-                    Modifier
-                        .width(itemWidth)
+                    Modifier.width(itemWidth)
                         .fillMaxHeight()
                         .offset(x = itemWidth * selectedIndex + dragDp)
                         .padding(horizontal = 3.dp, vertical = 4.dp)
                         .background(
                             Brush.radialGradient(
                                 listOf(
-                                    Color.White.copy(alpha = 0.90f),
-                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.17f),
-                                    Color.White.copy(alpha = 0.50f)
+                                    Color.White.copy(alpha = 0.76f),
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.18f),
+                                    Color.White.copy(alpha = 0.38f)
                                 )
                             ),
-                            RoundedCornerShape(31.dp)
+                            RoundedCornerShape(32.dp)
                         )
                         .border(
                             1.dp,
                             Brush.verticalGradient(
                                 listOf(
-                                    Color.White.copy(alpha = 0.98f),
-                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.24f),
-                                    Color.White.copy(alpha = 0.52f)
+                                    Color.White.copy(alpha = 1f),
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.26f),
+                                    Color.White.copy(alpha = 0.38f)
                                 )
                             ),
-                            RoundedCornerShape(31.dp)
+                            RoundedCornerShape(32.dp)
                         )
                 )
 
-                // Thin specular line only inside the capsule, not a page-wide divider.
                 Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .height(1.dp)
-                        .padding(horizontal = 24.dp)
+                    Modifier.fillMaxWidth().height(1.5.dp).padding(horizontal = 26.dp)
                         .background(
                             Brush.horizontalGradient(
-                                listOf(
-                                    Color.Transparent,
-                                    Color.White.copy(alpha = 0.82f),
-                                    Color.Transparent
-                                )
+                                listOf(Color.Transparent, Color.White.copy(alpha = 0.94f), Color.Transparent)
                             )
                         )
                 )
 
-                Row(
-                    Modifier.fillMaxSize(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
                     items.forEachIndexed { index, (_, icon, label) ->
                         val isSelected = index == selectedIndex
                         Column(
-                            Modifier
-                                .width(itemWidth)
-                                .fillMaxHeight(),
+                            Modifier.width(itemWidth).fillMaxHeight(),
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.Center
                         ) {
-                            Text(
-                                icon,
-                                style = MaterialTheme.typography.titleMedium,
-                                color = if (isSelected)
-                                    MaterialTheme.colorScheme.onSurface
-                                else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            Text(icon, style = MaterialTheme.typography.titleMedium,
+                                color = if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
                             Spacer(Modifier.height(2.dp))
-                            Text(
-                                label,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (isSelected)
-                                    MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            Text(label, style = MaterialTheme.typography.labelSmall,
+                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
@@ -764,7 +735,6 @@ private fun MainScreen(
     var exportPath by remember { mutableStateOf<String?>(null) }
     var deletePath by remember { mutableStateOf<String?>(null) }
     var showDeleteAll by remember { mutableStateOf(false) }
-    var showLiveMap by remember { mutableStateOf(false) }
     var showMarkDialog by remember { mutableStateOf(false) }
     var showTaskNameDialog by remember { mutableStateOf(false) }
 
@@ -772,8 +742,7 @@ private fun MainScreen(
     val context = LocalContext.current
     val recordingMetaRepo = remember { TestMetadataRepository(context) }
     var lastExitBackAt by remember { mutableLongStateOf(0L) }
-    BackHandler(enabled = showLiveMap) { showLiveMap = false; onMainTabChange("CELL") }
-    BackHandler(enabled = !showLiveMap) {
+    BackHandler {
         val now = System.currentTimeMillis()
         if (now - lastExitBackAt <= 2000L) {
             (context as? Activity)?.finish()
@@ -802,51 +771,44 @@ private fun MainScreen(
             TopAppBar(
                 title = {
                     Text(
-                        when {
-                            showLiveMap -> "Map"
-                            mainTab == "TEST" -> "Tests"
-                            mainTab == "REPORTS" -> "Reports"
-                            mainTab == "SETTINGS" -> "Setting"
+                        when (mainTab) {
+                            "TEST" -> "Tests"
+                            "MAP" -> "Map"
+                            "SETTINGS" -> "Setting"
+                            "REPORTS" -> "Reports"
                             else -> "Cell Info"
                         }
                     )
                 },
                 actions = {
-                    if (showLiveMap && state.isRecording) TextButton(onClick = { showMarkDialog = true }) { Text("Mark") }
-                }
-            )
-        },
-        bottomBar = {
-            LiquidGlassBottomBar(
-                selected = if (showLiveMap) "MAP" else mainTab,
-                onSelect = { tab ->
-                    when (tab) {
-                        "MAP" -> { onMainTabChange("MAP"); showLiveMap = true }
-                        else -> { onMainTabChange(tab); showLiveMap = false }
-                    }
+                    if (mainTab == "MAP" && state.isRecording) TextButton(onClick = { showMarkDialog = true }) { Text("Mark") }
                 }
             )
         }
     ) { padding ->
-        AnimatedContent(
-            targetState = showLiveMap,
-            transitionSpec = {
-                if (targetState) {
-                    (slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(220)) + fadeIn(tween(170)))
-                        .togetherWith(slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(220)) + fadeOut(tween(150)))
-                } else {
-                    (slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Right, tween(220)) + fadeIn(tween(170)))
-                        .togetherWith(slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Right, tween(220)) + fadeOut(tween(150)))
-                }
-            },
-            label = "mainLiveMap"
-        ) { liveMapVisible ->
-        if (liveMapVisible) {
-            LiveMapScreen(state = state, onSelectSim = onSelectSim, modifier = Modifier.padding(padding).fillMaxSize())
-        } else Column(
-            modifier = Modifier.padding(padding).fillMaxSize()
-        ) mainContent@{
-            if (mainTab == "TEST") {
+        Box(Modifier.padding(padding).fillMaxSize()) {
+            AnimatedContent(
+                targetState = mainTab,
+                transitionSpec = {
+                    val order = listOf("TEST", "CELL", "MAP", "SETTINGS", "REPORTS")
+                    val forward = order.indexOf(targetState) > order.indexOf(initialState)
+                    val direction = if (forward) AnimatedContentTransitionScope.SlideDirection.Left else AnimatedContentTransitionScope.SlideDirection.Right
+                    (slideIntoContainer(direction, tween(220)) + fadeIn(tween(160)))
+                        .togetherWith(slideOutOfContainer(direction, tween(220)) + fadeOut(tween(140)))
+                },
+                label = "mainTabs",
+                modifier = Modifier.fillMaxSize()
+            ) { tab ->
+                if (tab == "MAP") {
+                    LiveMapScreen(
+                        state = state,
+                        onSelectSim = onSelectSim,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else Column(
+                    modifier = Modifier.fillMaxSize()
+                ) mainContent@{
+            if (tab == "TEST") {
                 Column(
                     Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberRetainedScrollState("main.tests")),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -885,7 +847,7 @@ private fun MainScreen(
                 return@mainContent
             }
 
-            if (mainTab == "SETTINGS") {
+            if (tab == "SETTINGS") {
                 SettingsScreen(
                     settings = state.settings,
                     visitId = settingsVisitId,
@@ -896,7 +858,7 @@ private fun MainScreen(
                 return@mainContent
             }
 
-            if (mainTab == "REPORTS") {
+            if (tab == "REPORTS") {
                 ReportsHome(state = state, modifier = Modifier.fillMaxSize().padding(16.dp))
                 return@mainContent
             }
@@ -1025,7 +987,14 @@ private fun MainScreen(
             Text("Last cellular update: ${state.lastUpdated}", style = MaterialTheme.typography.bodySmall)
                 }
             }
-        }
+                }
+            }
+
+            LiquidGlassBottomBar(
+                selected = mainTab,
+                onSelect = onMainTabChange,
+                modifier = Modifier.align(Alignment.BottomCenter)
+            )
         }
     }
 
