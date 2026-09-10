@@ -2654,16 +2654,25 @@ private fun VisualAiCollectorScreen(onBack: () -> Unit) {
                     Text("PLAYER images: $frames")
                     Text("RECS images: $frames")
                     if (failures > 0) Text("Save failures: $failures")
+                    if (active && frames == 0) Text("Waiting for first MediaProjection frame…", style = MaterialTheme.typography.bodySmall)
                     if (lastPath.isNotBlank()) Text("Saved: $lastPath", style = MaterialTheme.typography.bodySmall)
                 }
             }
             if (!active) {
                 Button(onClick = {
-                    ScreenCaptureService.collectorSaveFailures = 0
-                    val mgr = context.getSystemService(android.media.projection.MediaProjectionManager::class.java)
-                    permissionLauncher.launch(mgr.createScreenCaptureIntent())
+                    if (!android.provider.Settings.canDrawOverlays(context)) {
+                        Toast.makeText(context, "Please enable 'Display over other apps', then tap START COLLECTION again.", Toast.LENGTH_LONG).show()
+                        context.startActivity(Intent(
+                            android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            Uri.parse("package:${context.packageName}")
+                        ))
+                    } else {
+                        ScreenCaptureService.collectorSaveFailures = 0
+                        val mgr = context.getSystemService(android.media.projection.MediaProjectionManager::class.java)
+                        permissionLauncher.launch(mgr.createScreenCaptureIntent())
+                    }
                 }, modifier = Modifier.fillMaxWidth()) { Text("START COLLECTION") }
-                Text("Android will ask for screen-sharing permission once. After approval CellTracker opens YouTube automatically.", style = MaterialTheme.typography.bodySmall)
+                Text("First enable floating-window permission if requested. Then Android asks for screen-sharing permission and opens YouTube. A top floating bar will show Frames and T0 / PLAY / RECS / STOP.", style = MaterialTheme.typography.bodySmall)
             } else {
                 Text("Ground Truth Labels", style = MaterialTheme.typography.titleSmall)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {

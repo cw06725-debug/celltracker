@@ -16,8 +16,14 @@ import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.IBinder
 import android.os.Process
+import android.provider.Settings
 import android.util.DisplayMetrics
 import android.view.WindowManager
+import android.view.Gravity
+import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.TextView
+import android.graphics.Color
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.*
@@ -42,6 +48,9 @@ class ScreenCaptureService : Service() {
     private var visualAiT0Elapsed = 0L
     private var visualAiPlayOkElapsed = 0L
     private var visualAiRecsOkElapsed = 0L
+    private var visualAiCaptureJob: Job? = null
+    private var visualAiOverlay: android.view.View? = null
+    private var visualAiOverlayStatus: TextView? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -105,47 +114,139 @@ class ScreenCaptureService : Service() {
 
     private fun startVisualAiCollector() {
         val r = reader ?: return
+        visualAiCaptureJob?.cancel()
         visualAiCollectorActive = true
         visualAiSessionStartedAt = System.currentTimeMillis()
         visualAiFrameCount = 0
         visualAiLastFrameElapsed = 0L
+        visualAiAttempt = 0
+        visualAiT0Elapsed = 0L
+        visualAiPlayOkElapsed = 0L
+        visualAiRecsOkElapsed = 0L
         collectorFrameCount = 0
+        collectorAttempt = 0
+        collectorPhase = "UNLABELED"
+        collectorSaveFailures = 0
+        collectorLastPath = ""
         collectorActive = true
 
-        r.setOnImageAvailableListener({ imageReader ->
-            if (!visualAiCollectorActive) {
-                imageReader.acquireLatestImage()?.close()
-                return@setOnImageAvailableListener
-            }
-            val now = android.os.SystemClock.elapsedRealtime()
-            if (visualAiLastFrameElapsed > 0L && now - visualAiLastFrameElapsed < 500L) {
-                imageReader.acquireLatestImage()?.close()
-                return@setOnImageAvailableListener
-            }
-            val image = imageReader.acquireLatestImage() ?: return@setOnImageAvailableListener
-            visualAiLastFrameElapsed = now
-            try {
-                val plane = image.planes[0]
-                val buffer = plane.buffer
-                val pixelStride = plane.pixelStride
-                val rowStride = plane.rowStride
-                val rowPadding = rowStride - pixelStride * width
-                val full = Bitmap.createBitmap(width + rowPadding / pixelStride, height, Bitmap.Config.ARGB_8888)
-                full.copyPixelsFromBuffer(buffer)
-                val screen = Bitmap.createBitmap(full, 0, 0, width, height)
-                full.recycle()
+        // Do not depend on ImageReader callbacks. Some Samsung/Android builds keep the
+        // MediaProjection alive but never deliver the listener callback reliably. Poll the
+        // latest buffer from an IO coroutine instead; this is also how the existing mark
+        // screenshot path has proven stable.
+        r.setOnImageAvailableListener(null, null)
+        showVisualAiOverlay()
 
-                visualAiFrameCount++
-                collectorFrameCount = visualAiFrameCount
-                val relative = System.currentTimeMillis() - visualAiSessionStartedAt
-                saveVisualAiRois(screen, visualAiSessionStartedAt, visualAiFrameCount, relative)
-                screen.recycle()
-            } catch (_: Throwable) {
-                collectorSaveFailures++
-            } finally {
-                image.close()
+        visualAiCaptureJob = scope.launch {
+            delay(250)
+            while (isActive && visualAiCollectorActive && projection != null) {
+                val cycleStart = android.os.SystemClock.elapsedRealtime()
+                val image = runCatching { r.acquireLatestImage() }.getOrNull()
+                if (image != null) {
+                    try {
+                        val plane = image.planes[0]
+                        val buffer = plane.buffer
+                        val pixelStride = plane.pixelStride
+                        val rowStride = plane.rowStride
+                        val rowPadding = rowStride - pixelStride * width
+                        val full = Bitmap.createBitmap(
+                            width + rowPadding / pixelStride,
+                            height,
+                            Bitmap.Config.ARGB_8888
+                        )
+                        full.copyPixelsFromBuffer(buffer)
+                        val screen = Bitmap.createBitmap(full, 0, 0, width, height)
+                        full.recycle()
+
+                        visualAiFrameCount++
+                        collectorFrameCount = visualAiFrameCount
+                        val relative = System.currentTimeMillis() - visualAiSessionStartedAt
+                        saveVisualAiRois(screen, visualAiSessionStartedAt, visualAiFrameCount, relative)
+                        screen.recycle()
+                        updateVisualAiOverlay()
+                    } catch (_: Throwable) {
+                        collectorSaveFailures++
+                        updateVisualAiOverlay()
+                    } finally {
+                        runCatching { image.close() }
+                    }
+                }
+
+                // Target roughly 2 fps. If no fresh frame was available, retry sooner so startup
+                // does not sit at Frames: 0 for seconds.
+                val spent = android.os.SystemClock.elapsedRealtime() - cycleStart
+                delay(if (image == null) 120L else (500L - spent).coerceAtLeast(80L))
             }
-        }, android.os.Handler(mainLooper))
+        }
+    }
+
+    private fun showVisualAiOverlay() {
+        if (!Settings.canDrawOverlays(this) || visualAiOverlay != null) return
+        val wm = getSystemService(WINDOW_SERVICE) as WindowManager
+        val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(6, 2, 6, 2)
+            setBackgroundColor(0xDD202124.toInt())
+        }
+        val status = TextView(this).apply {
+            text = "AI F:0 A:0"
+            setTextColor(Color.WHITE)
+            textSize = 11f
+            gravity = Gravity.CENTER
+            setPadding(4, 0, 4, 0)
+        }
+        visualAiOverlayStatus = status
+        bar.addView(status, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 0.9f))
+
+        fun addButton(label: String, weight: Float = 1f, action: () -> Unit) {
+            val b = Button(this).apply {
+                text = label
+                textSize = 10f
+                minHeight = 0
+                minWidth = 0
+                setPadding(2, 0, 2, 0)
+                setOnClickListener { action() }
+            }
+            bar.addView(b, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, weight))
+        }
+        addButton("T0") { markVisualAiT0() }
+        addButton("PLAY") { markVisualAiPlayOk() }
+        addButton("RECS") { markVisualAiRecsOk() }
+        addButton("STOP", 0.8f) { stopVisualAiCollector() }
+
+        val barHeight = (52f * resources.displayMetrics.density).toInt()
+        val lp = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            barHeight,
+            if (Build.VERSION.SDK_INT >= 26) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP
+            x = 0
+            y = 0
+        }
+        runCatching {
+            wm.addView(bar, lp)
+            visualAiOverlay = bar
+        }
+    }
+
+    private fun updateVisualAiOverlay() {
+        val text = "AI F:${collectorFrameCount} A:${collectorAttempt} ${collectorPhase}"
+        android.os.Handler(mainLooper).post {
+            visualAiOverlayStatus?.text = text
+        }
+    }
+
+    private fun removeVisualAiOverlay() {
+        val v = visualAiOverlay ?: return
+        runCatching { (getSystemService(WINDOW_SERVICE) as WindowManager).removeView(v) }
+        visualAiOverlay = null
+        visualAiOverlayStatus = null
     }
 
     private fun markVisualAiT0() {
@@ -156,6 +257,7 @@ class ScreenCaptureService : Service() {
         collectorAttempt = visualAiAttempt
         collectorPhase = "LOADING"
         appendVisualAiLabel("T0")
+        updateVisualAiOverlay()
     }
 
     private fun markVisualAiPlayOk() {
@@ -163,6 +265,7 @@ class ScreenCaptureService : Service() {
         visualAiPlayOkElapsed = android.os.SystemClock.elapsedRealtime()
         collectorPhase = "PLAY_OK"
         appendVisualAiLabel("PLAY_OK")
+        updateVisualAiOverlay()
     }
 
     private fun markVisualAiRecsOk() {
@@ -170,6 +273,7 @@ class ScreenCaptureService : Service() {
         visualAiRecsOkElapsed = android.os.SystemClock.elapsedRealtime()
         collectorPhase = "RECS_OK"
         appendVisualAiLabel("RECS_OK")
+        updateVisualAiOverlay()
     }
 
     private fun appendVisualAiLabel(label: String) {
@@ -191,7 +295,10 @@ class ScreenCaptureService : Service() {
     private fun stopVisualAiCollector() {
         visualAiCollectorActive = false
         collectorActive = false
+        visualAiCaptureJob?.cancel()
+        visualAiCaptureJob = null
         reader?.setOnImageAvailableListener(null, null)
+        removeVisualAiOverlay()
     }
 
     private fun saveVisualAiRois(screen: Bitmap, sessionMs: Long, frame: Int, relativeMs: Long) {
@@ -379,6 +486,8 @@ class ScreenCaptureService : Service() {
         isReady = false
         visualAiCollectorActive = false
         collectorActive = false
+        visualAiCaptureJob?.cancel()
+        removeVisualAiOverlay()
         virtualDisplay?.release(); virtualDisplay = null
         reader?.close(); reader = null
         projection?.stop(); projection = null
