@@ -356,6 +356,7 @@ class MainActivity : ComponentActivity() {
 private fun LiquidGlassBottomBar(
     selected: String,
     onSelect: (String) -> Unit,
+    hazeState: HazeState,
     modifier: Modifier = Modifier
 ) {
     val items = listOf(
@@ -371,22 +372,23 @@ private fun LiquidGlassBottomBar(
     var barWidthPx by remember { mutableIntStateOf(1) }
 
     Box(
-        modifier
-            .fillMaxWidth()
-            .padding(horizontal = 14.dp, vertical = 8.dp),
+        modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center
     ) {
         Surface(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(38.dp),
             color = Color.Transparent,
-            shadowElevation = 22.dp
+            shadowElevation = 18.dp
         ) {
             BoxWithConstraints(
                 Modifier
                     .fillMaxWidth()
                     .height(80.dp)
                     .onSizeChanged { barWidthPx = it.width.coerceAtLeast(1) }
+                    .hazeChild(state = hazeState, shape = RoundedCornerShape(38.dp))
+                    .background(Color.White.copy(alpha = 0.18f), RoundedCornerShape(38.dp))
+                    .border(1.dp, Color.White.copy(alpha = 0.72f), RoundedCornerShape(38.dp))
                     .pointerInput(selected, barWidthPx) {
                         detectHorizontalDragGestures(
                             onDragStart = { dragX = 0f },
@@ -399,7 +401,7 @@ private fun LiquidGlassBottomBar(
                             },
                             onDragEnd = {
                                 val itemPx = barWidthPx.toFloat() / items.size
-                                val steps = kotlin.math.round(-dragX / itemPx).toInt()
+                                val steps = kotlin.math.round(dragX / itemPx).toInt()
                                 val target = (selectedIndex + steps).coerceIn(0, items.lastIndex)
                                 if (target != selectedIndex) onSelect(items[target].first)
                                 dragX = 0f
@@ -419,70 +421,28 @@ private fun LiquidGlassBottomBar(
                 val dragDp = with(density) { dragX.toDp() }
 
                 Box(
-                    Modifier.matchParentSize()
-                        .background(
-                            Brush.verticalGradient(
-                                0f to Color.White.copy(alpha = 0.46f),
-                                0.18f to Color.White.copy(alpha = 0.28f),
-                                0.55f to MaterialTheme.colorScheme.surface.copy(alpha = 0.30f),
-                                1f to MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.22f)
-                            ),
-                            RoundedCornerShape(38.dp)
-                        )
-                        .border(
-                            1.2.dp,
-                            Brush.verticalGradient(
-                                listOf(
-                                    Color.White.copy(alpha = 0.98f),
-                                    Color.White.copy(alpha = 0.38f),
-                                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.10f)
-                                )
-                            ),
-                            RoundedCornerShape(38.dp)
-                        )
+                    Modifier.matchParentSize().background(
+                        Brush.verticalGradient(
+                            listOf(
+                                Color.White.copy(alpha = 0.22f),
+                                MaterialTheme.colorScheme.surface.copy(alpha = 0.08f),
+                                Color.White.copy(alpha = 0.12f)
+                            )
+                        ),
+                        RoundedCornerShape(38.dp)
+                    )
                 )
 
                 Box(
-                    Modifier.size(210.dp)
-                        .offset(x = (-58).dp, y = (-100).dp)
-                        .background(
-                            Brush.radialGradient(
-                                listOf(
-                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.22f),
-                                    Color.White.copy(alpha = 0.16f),
-                                    Color.Transparent
-                                )
-                            ),
-                            CircleShape
-                        )
-                )
-                Box(
-                    Modifier.size(240.dp)
-                        .align(Alignment.BottomEnd)
-                        .offset(x = 80.dp, y = 110.dp)
-                        .background(
-                            Brush.radialGradient(
-                                listOf(
-                                    Color.White.copy(alpha = 0.34f),
-                                    MaterialTheme.colorScheme.tertiary.copy(alpha = 0.10f),
-                                    Color.Transparent
-                                )
-                            ),
-                            CircleShape
-                        )
-                )
-
-                Box(
-                    Modifier.width(itemWidth)
-                        .fillMaxHeight()
+                    Modifier.width(itemWidth).fillMaxHeight()
                         .offset(x = itemWidth * selectedIndex + dragDp)
                         .padding(horizontal = 3.dp, vertical = 4.dp)
                         .background(
-                            Brush.radialGradient(
+                            Brush.verticalGradient(
                                 listOf(
-                                    Color.White.copy(alpha = 0.76f),
-                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.18f),
-                                    Color.White.copy(alpha = 0.38f)
+                                    Color.White.copy(alpha = 0.44f),
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
+                                    Color.White.copy(alpha = 0.24f)
                                 )
                             ),
                             RoundedCornerShape(32.dp)
@@ -491,8 +451,8 @@ private fun LiquidGlassBottomBar(
                             1.dp,
                             Brush.verticalGradient(
                                 listOf(
-                                    Color.White.copy(alpha = 1f),
-                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.26f),
+                                    Color.White.copy(alpha = 0.92f),
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.18f),
                                     Color.White.copy(alpha = 0.38f)
                                 )
                             ),
@@ -501,10 +461,10 @@ private fun LiquidGlassBottomBar(
                 )
 
                 Box(
-                    Modifier.fillMaxWidth().height(1.5.dp).padding(horizontal = 26.dp)
+                    Modifier.fillMaxWidth().height(1.dp).padding(horizontal = 24.dp)
                         .background(
                             Brush.horizontalGradient(
-                                listOf(Color.Transparent, Color.White.copy(alpha = 0.94f), Color.Transparent)
+                                listOf(Color.Transparent, Color.White.copy(alpha = 0.84f), Color.Transparent)
                             )
                         )
                 )
@@ -740,6 +700,7 @@ private fun MainScreen(
 
     val selected = state.sims.firstOrNull { it.subscriptionId == state.selectedSubscriptionId } ?: state.sims.firstOrNull()
     val context = LocalContext.current
+    val hazeState = remember { HazeState() }
     val recordingMetaRepo = remember { TestMetadataRepository(context) }
     var lastExitBackAt by remember { mutableLongStateOf(0L) }
     BackHandler {
@@ -797,7 +758,9 @@ private fun MainScreen(
                         .togetherWith(slideOutOfContainer(direction, tween(220)) + fadeOut(tween(140)))
                 },
                 label = "mainTabs",
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier
+                    .fillMaxSize()
+                    .haze(state = hazeState, backgroundColor = MaterialTheme.colorScheme.background)
             ) { tab ->
                 if (tab == "MAP") {
                     LiveMapScreen(
@@ -993,6 +956,7 @@ private fun MainScreen(
             LiquidGlassBottomBar(
                 selected = mainTab,
                 onSelect = onMainTabChange,
+                hazeState = hazeState,
                 modifier = Modifier.align(Alignment.BottomCenter)
             )
         }

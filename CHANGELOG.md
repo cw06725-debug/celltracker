@@ -1,5 +1,12 @@
 # CellTracker Changelog
 
+## v0.9.3.0.43
+
+- Replaced simulated translucency with real-time backdrop blur via Haze.
+- Fixed v0.42 drag release sign bug that could jump from the last tab back to the first.
+- Bottom bar still supports continuous dragging across all five tabs.
+- Keeps inline Settings and grouped Reports.
+
 ## v0.9.3.0.42
 
 - Unified all five root tabs under one navigation state; Map no longer has a separate navigation boolean.
