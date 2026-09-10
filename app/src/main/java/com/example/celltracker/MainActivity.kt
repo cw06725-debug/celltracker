@@ -2610,8 +2610,6 @@ private fun WhatsAppSendScreen(onBack: () -> Unit) {
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
-
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun VisualAiCollectorScreen(onBack: () -> Unit) {
     val context = LocalContext.current
@@ -2667,10 +2665,17 @@ private fun VisualAiCollectorScreen(onBack: () -> Unit) {
                 }, modifier = Modifier.fillMaxWidth()) { Text("START COLLECTION") }
                 Text("Android will ask for screen-sharing permission once. After approval CellTracker opens YouTube automatically.", style = MaterialTheme.typography.bodySmall)
             } else {
+                Text("Ground Truth Labels", style = MaterialTheme.typography.titleSmall)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Button(onClick = { context.startService(Intent(context, ScreenCaptureService::class.java).apply { action = ScreenCaptureService.ACTION_VISUAL_AI_T0 }) }, modifier = Modifier.weight(1f)) { Text("T0") }
+                    Button(onClick = { context.startService(Intent(context, ScreenCaptureService::class.java).apply { action = ScreenCaptureService.ACTION_VISUAL_AI_PLAY_OK }) }, modifier = Modifier.weight(1f)) { Text("PLAY OK") }
+                    Button(onClick = { context.startService(Intent(context, ScreenCaptureService::class.java).apply { action = ScreenCaptureService.ACTION_VISUAL_AI_RECS_OK }) }, modifier = Modifier.weight(1f)) { Text("RECS OK") }
+                }
+                Text("Attempt ${ScreenCaptureService.collectorAttempt} · ${ScreenCaptureService.collectorPhase}", style = MaterialTheme.typography.bodySmall)
+                Text("For each sample: tap T0 immediately before tapping the YouTube video; tap PLAY OK when video is visibly playing; tap RECS OK when recommendations are fully loaded.", style = MaterialTheme.typography.bodySmall)
                 Button(onClick = {
                     context.startService(Intent(context, ScreenCaptureService::class.java).apply { action = ScreenCaptureService.ACTION_STOP_VISUAL_AI })
                 }, modifier = Modifier.fillMaxWidth()) { Text("STOP COLLECTION") }
-                Text("Use YouTube normally: open videos, wait for playback/recommendations, go Back, scroll and open the next video. No CellTracker START/LOADED is needed.", style = MaterialTheme.typography.bodySmall)
             }
             Text("Collector files are stored in CellTracker's app storage under VisualAI/<date>/session_<time>. The exact path appears above after the first saved frame.", style = MaterialTheme.typography.bodySmall)
         }

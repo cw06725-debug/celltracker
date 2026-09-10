@@ -38,6 +38,10 @@ class ScreenCaptureService : Service() {
     private var visualAiSessionStartedAt = 0L
     private var visualAiFrameCount = 0
     private var visualAiLastFrameElapsed = 0L
+    private var visualAiAttempt = 0
+    private var visualAiT0Elapsed = 0L
+    private var visualAiPlayOkElapsed = 0L
+    private var visualAiRecsOkElapsed = 0L
 
     override fun onCreate() {
         super.onCreate()
@@ -50,6 +54,9 @@ class ScreenCaptureService : Service() {
             ACTION_CAPTURE_MARK -> captureAndMark(intent)
             ACTION_START_VISUAL_AI -> startVisualAiCollector()
             ACTION_STOP_VISUAL_AI -> stopVisualAiCollector()
+            ACTION_VISUAL_AI_T0 -> markVisualAiT0()
+            ACTION_VISUAL_AI_PLAY_OK -> markVisualAiPlayOk()
+            ACTION_VISUAL_AI_RECS_OK -> markVisualAiRecsOk()
             ACTION_STOP -> stopSelf()
         }
         return START_NOT_STICKY
@@ -141,6 +148,46 @@ class ScreenCaptureService : Service() {
         }, android.os.Handler(mainLooper))
     }
 
+    private fun markVisualAiT0() {
+        visualAiAttempt++
+        visualAiT0Elapsed = android.os.SystemClock.elapsedRealtime()
+        visualAiPlayOkElapsed = 0L
+        visualAiRecsOkElapsed = 0L
+        collectorAttempt = visualAiAttempt
+        collectorPhase = "LOADING"
+        appendVisualAiLabel("T0")
+    }
+
+    private fun markVisualAiPlayOk() {
+        if (visualAiT0Elapsed <= 0L) return
+        visualAiPlayOkElapsed = android.os.SystemClock.elapsedRealtime()
+        collectorPhase = "PLAY_OK"
+        appendVisualAiLabel("PLAY_OK")
+    }
+
+    private fun markVisualAiRecsOk() {
+        if (visualAiT0Elapsed <= 0L) return
+        visualAiRecsOkElapsed = android.os.SystemClock.elapsedRealtime()
+        collectorPhase = "RECS_OK"
+        appendVisualAiLabel("RECS_OK")
+    }
+
+    private fun appendVisualAiLabel(label: String) {
+        val sessionMs = visualAiSessionStartedAt
+        if (sessionMs <= 0L) return
+        runCatching {
+            val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(sessionMs))
+            val session = SimpleDateFormat("HHmmss", Locale.US).format(Date(sessionMs))
+            val dir = File(getExternalFilesDir(null), "VisualAI/$date/session_$session").apply { mkdirs() }
+            val f = File(dir, "labels.csv")
+            if (!f.exists()) f.appendText("attempt,label,wall_ms,elapsed_ms,from_t0_ms\n")
+            val nowWall = System.currentTimeMillis()
+            val nowElapsed = android.os.SystemClock.elapsedRealtime()
+            val fromT0 = if (visualAiT0Elapsed > 0L) nowElapsed - visualAiT0Elapsed else -1L
+            f.appendText("$visualAiAttempt,$label,$nowWall,$nowElapsed,$fromT0\n")
+        }
+    }
+
     private fun stopVisualAiCollector() {
         visualAiCollectorActive = false
         collectorActive = false
@@ -161,7 +208,15 @@ class ScreenCaptureService : Service() {
             val y2 = (h*b).toInt().coerceIn(y1+1,h)
             return Bitmap.createBitmap(screen,x1,y1,x2-x1,y2-y1)
         }
-        val prefix = "F${frame.toString().padStart(4,'0')}_+${relativeMs.toString().padStart(6,'0')}ms"
+        val fromT0 = if (visualAiT0Elapsed > 0L) (android.os.SystemClock.elapsedRealtime() - visualAiT0Elapsed).coerceAtLeast(0L) else -1L
+        val attemptPart = if (visualAiAttempt > 0) "A${visualAiAttempt.toString().padStart(3,'0')}" else "A000"
+        val phase = when {
+            visualAiT0Elapsed <= 0L -> "UNLABELED"
+            visualAiRecsOkElapsed > 0L -> "READY"
+            visualAiPlayOkElapsed > 0L -> "PLAY_OK"
+            else -> "LOADING"
+        }
+        val prefix = "${attemptPart}_${phase}_F${frame.toString().padStart(4,'0')}_T0+${fromT0}ms"
         val player = crop(.02f,.07f,.98f,.55f)
         val recs = crop(.02f,.43f,.98f,.96f)
         FileOutputStream(File(dir, "${prefix}_PLAYER.jpg")).use { player.compress(Bitmap.CompressFormat.JPEG, 84, it) }
@@ -347,6 +402,9 @@ class ScreenCaptureService : Service() {
         const val ACTION_STOP = "com.example.celltracker.CAPTURE_STOP"
         const val ACTION_START_VISUAL_AI = "com.example.celltracker.VISUAL_AI_START"
         const val ACTION_STOP_VISUAL_AI = "com.example.celltracker.VISUAL_AI_STOP"
+        const val ACTION_VISUAL_AI_T0 = "com.example.celltracker.VISUAL_AI_T0"
+        const val ACTION_VISUAL_AI_PLAY_OK = "com.example.celltracker.VISUAL_AI_PLAY_OK"
+        const val ACTION_VISUAL_AI_RECS_OK = "com.example.celltracker.VISUAL_AI_RECS_OK"
         const val EXTRA_START_VISUAL_AI = "start_visual_ai"
         const val EXTRA_RESULT_CODE = "result_code"
         const val EXTRA_RESULT_DATA = "result_data"
@@ -357,6 +415,8 @@ class ScreenCaptureService : Service() {
         @Volatile var collectorFrameCount: Int = 0
         @Volatile var collectorSaveFailures: Int = 0
         @Volatile var collectorLastPath: String = ""
+        @Volatile var collectorAttempt: Int = 0
+        @Volatile var collectorPhase: String = "UNLABELED"
 
         private val EXCLUDED_FOREGROUND_PACKAGES = setOf(
             "com.android.systemui",
