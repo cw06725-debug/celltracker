@@ -57,6 +57,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -373,9 +374,12 @@ private fun LiquidGlassBottomBar(
     val density = LocalDensity.current
     var dragX by remember { mutableFloatStateOf(0f) }
     var barWidthPx by remember { mutableIntStateOf(1) }
+    var pressedIndex by remember { mutableIntStateOf(-1) }
 
     Box(
-        modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
+        modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center
     ) {
         Surface(
@@ -389,18 +393,35 @@ private fun LiquidGlassBottomBar(
                     .fillMaxWidth()
                     .height(80.dp)
                     .onSizeChanged { barWidthPx = it.width.coerceAtLeast(1) }
-                    .hazeChild(state = hazeState, shape = RoundedCornerShape(38.dp))
-                    .background(Color.White.copy(alpha = 0.18f), RoundedCornerShape(38.dp))
-                    .border(1.dp, Color.White.copy(alpha = 0.72f), RoundedCornerShape(38.dp))
+                    .hazeChild(
+                        state = hazeState,
+                        shape = RoundedCornerShape(38.dp)
+                    )
+                    .background(
+                        Color.White.copy(alpha = 0.18f),
+                        RoundedCornerShape(38.dp)
+                    )
+                    .border(
+                        1.dp,
+                        Color.White.copy(alpha = 0.64f),
+                        RoundedCornerShape(38.dp)
+                    )
                     .pointerInput(selected, barWidthPx) {
                         detectHorizontalDragGestures(
-                            onDragStart = { dragX = 0f },
+                            onDragStart = { offset ->
+                                dragX = 0f
+                                val itemPx = barWidthPx.toFloat() / items.size
+                                pressedIndex = (offset.x / itemPx).toInt().coerceIn(0, items.lastIndex)
+                            },
                             onHorizontalDrag = { change, amount ->
                                 change.consume()
                                 val itemPx = barWidthPx.toFloat() / items.size
                                 val minDx = -selectedIndex * itemPx
                                 val maxDx = (items.lastIndex - selectedIndex) * itemPx
                                 dragX = (dragX + amount).coerceIn(minDx, maxDx)
+                                pressedIndex = ((selectedIndex * itemPx + dragX) / itemPx)
+                                    .roundToInt()
+                                    .coerceIn(0, items.lastIndex)
                             },
                             onDragEnd = {
                                 val itemPx = barWidthPx.toFloat() / items.size
@@ -408,42 +429,59 @@ private fun LiquidGlassBottomBar(
                                 val target = (selectedIndex + steps).coerceIn(0, items.lastIndex)
                                 if (target != selectedIndex) onSelect(items[target].first)
                                 dragX = 0f
+                                pressedIndex = -1
                             },
-                            onDragCancel = { dragX = 0f }
+                            onDragCancel = {
+                                dragX = 0f
+                                pressedIndex = -1
+                            }
                         )
                     }
                     .pointerInput(barWidthPx) {
-                        detectTapGestures { offset ->
-                            val itemPx = barWidthPx.toFloat() / items.size
-                            val idx = (offset.x / itemPx).toInt().coerceIn(0, items.lastIndex)
-                            onSelect(items[idx].first)
-                        }
+                        detectTapGestures(
+                            onPress = { offset ->
+                                val itemPx = barWidthPx.toFloat() / items.size
+                                val idx = (offset.x / itemPx).toInt().coerceIn(0, items.lastIndex)
+                                pressedIndex = idx
+                                tryAwaitRelease()
+                                pressedIndex = -1
+                            },
+                            onTap = { offset ->
+                                val itemPx = barWidthPx.toFloat() / items.size
+                                val idx = (offset.x / itemPx).toInt().coerceIn(0, items.lastIndex)
+                                onSelect(items[idx].first)
+                            }
+                        )
                     }
             ) {
                 val itemWidth = maxWidth / items.size
                 val dragDp = with(density) { dragX.toDp() }
 
                 Box(
-                    Modifier.matchParentSize().background(
-                        Brush.verticalGradient(
-                            listOf(
-                                Color.White.copy(alpha = 0.22f),
-                                MaterialTheme.colorScheme.surface.copy(alpha = 0.08f),
-                                Color.White.copy(alpha = 0.12f)
-                            )
-                        ),
-                        RoundedCornerShape(38.dp)
-                    )
+                    Modifier
+                        .matchParentSize()
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(
+                                    Color.White.copy(alpha = 0.20f),
+                                    MaterialTheme.colorScheme.surface.copy(alpha = 0.08f),
+                                    Color.White.copy(alpha = 0.12f)
+                                )
+                            ),
+                            RoundedCornerShape(38.dp)
+                        )
                 )
 
                 Box(
-                    Modifier.width(itemWidth).fillMaxHeight()
+                    Modifier
+                        .width(itemWidth)
+                        .fillMaxHeight()
                         .offset(x = itemWidth * selectedIndex + dragDp)
                         .padding(horizontal = 3.dp, vertical = 4.dp)
                         .background(
                             Brush.verticalGradient(
                                 listOf(
-                                    Color.White.copy(alpha = 0.44f),
+                                    Color.White.copy(alpha = 0.46f),
                                     MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
                                     Color.White.copy(alpha = 0.24f)
                                 )
@@ -454,37 +492,59 @@ private fun LiquidGlassBottomBar(
                             1.dp,
                             Brush.verticalGradient(
                                 listOf(
-                                    Color.White.copy(alpha = 0.92f),
-                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.18f),
-                                    Color.White.copy(alpha = 0.38f)
+                                    Color.White.copy(alpha = 0.82f),
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
+                                    Color.White.copy(alpha = 0.30f)
                                 )
                             ),
                             RoundedCornerShape(32.dp)
                         )
                 )
 
-                Box(
-                    Modifier.fillMaxWidth().height(1.dp).padding(horizontal = 24.dp)
-                        .background(
-                            Brush.horizontalGradient(
-                                listOf(Color.Transparent, Color.White.copy(alpha = 0.84f), Color.Transparent)
-                            )
-                        )
-                )
+                // No extra horizontal highlight/divider lines here. The glass edge is defined
+                // only by the rounded capsule border, avoiding the double-white-line artifact.
 
-                Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    Modifier.fillMaxSize(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     items.forEachIndexed { index, (_, icon, label) ->
                         val isSelected = index == selectedIndex
+                        val isPressed = index == pressedIndex
+                        val scale by animateFloatAsState(
+                            targetValue = when {
+                                isPressed -> 1.16f
+                                isSelected -> 1.04f
+                                else -> 1.0f
+                            },
+                            animationSpec = tween(120),
+                            label = "navPressScale"
+                        )
                         Column(
-                            Modifier.width(itemWidth).fillMaxHeight(),
+                            Modifier
+                                .width(itemWidth)
+                                .fillMaxHeight()
+                                .scale(scale),
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.Center
                         ) {
-                            Text(icon, style = MaterialTheme.typography.titleMedium,
-                                color = if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(
+                                icon,
+                                style = MaterialTheme.typography.titleMedium,
+                                color = if (isSelected || isPressed)
+                                    MaterialTheme.colorScheme.onSurface
+                                else
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                             Spacer(Modifier.height(2.dp))
-                            Text(label, style = MaterialTheme.typography.labelSmall,
-                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(
+                                label,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (isSelected || isPressed)
+                                    MaterialTheme.colorScheme.primary
+                                else
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
                     }
                 }

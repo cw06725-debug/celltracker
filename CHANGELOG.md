@@ -1,5 +1,14 @@
 # CellTracker Changelog
 
+## v0.9.3.0.45
+
+- Removed the extra horizontal specular/highlight line from the frosted bottom navigation.
+- Bottom bar now relies only on the rounded glass border, eliminating the double-white-line artifact.
+- Added press feedback: the touched tab smoothly enlarges to 116% while pressed.
+- Selected tab keeps a subtle 104% scale at rest.
+- Press animation works for both tap and drag interactions.
+- Keeps real-time Haze backdrop blur and five-tab swipe behavior.
+
 ## v0.9.3.0.44
 
 - Fix build failure in v0.9.3.0.43 by adding the missing HazeState / haze / hazeChild imports.
