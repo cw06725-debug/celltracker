@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.Bundle
 import android.app.Activity
 import android.content.ActivityNotFoundException
+import android.content.ContentUris
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
@@ -24,7 +25,9 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.border
 import androidx.compose.foundation.background
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -48,10 +51,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.input.pointer.pointerInput
@@ -136,8 +141,9 @@ class MainActivity : ComponentActivity() {
                     lifecycleOwner.lifecycle.addObserver(observer)
                     onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
                 }
-                var showSettings by remember { mutableStateOf(false) }
+                var showSettings by remember { mutableStateOf(false) } // legacy root destination
                 var settingsVisitId by remember { mutableIntStateOf(0) }
+                var mainTab by rememberSaveable { mutableStateOf("CELL") }
                 var detailPath by remember { mutableStateOf<String?>(null) }
                 var showPingTest by remember { mutableStateOf(false) }
                 var showCallSetup by remember { mutableStateOf(false) }
@@ -317,10 +323,13 @@ class MainActivity : ComponentActivity() {
                         onDeleteRecording = vm::deleteRecording,
                         onDeleteAll = vm::deleteAllRecordings,
                         onOpenRecording = { detailPath = it },
-                        onSettings = {
-                            settingsVisitId += 1
-                            showSettings = true
+                        mainTab = mainTab,
+                        onMainTabChange = { tab ->
+                            if (tab == "SETTINGS") settingsVisitId += 1
+                            mainTab = tab
                         },
+                        settingsVisitId = settingsVisitId,
+                        onSettingsUpdate = vm::updateSettings,
                         onPingTest = { showPingTest = true },
                         onVideoLoading = { showVideoLoading = true },
                         onBasementTest = { showBasementTest = true },
@@ -343,46 +352,81 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun LiquidGlassBottomBar(selected: String, onSelect: (String) -> Unit) {
+    val items = listOf(
+        Triple("TEST", "◉", "测试"),
+        Triple("CELL", "▥", "Cell Info"),
+        Triple("MAP", "⌖", "Map"),
+        Triple("SETTINGS", "⚙", "Setting"),
+        Triple("REPORTS", "▤", "Reports")
+    )
+    var dragX by remember { mutableFloatStateOf(0f) }
+
     Box(
         Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 10.dp),
         contentAlignment = Alignment.Center
     ) {
-        Surface(
-            shape = RoundedCornerShape(30.dp),
-            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.82f),
-            tonalElevation = 10.dp,
-            shadowElevation = 10.dp,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f))
-        ) {
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 7.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                val items = listOf(
-                    Triple("TEST", "◉", "测试"),
-                    Triple("CELL", "▥", "Cell Info"),
-                    Triple("MAP", "⌖", "Map"),
-                    Triple("SETTINGS", "⚙", "Setting"),
-                    Triple("REPORTS", "▤", "Reports")
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .pointerInput(selected) {
+                    detectHorizontalDragGestures(
+                        onDragStart = { dragX = 0f },
+                        onHorizontalDrag = { _, amount -> dragX += amount },
+                        onDragEnd = {
+                            val current = items.indexOfFirst { it.first == selected }.coerceAtLeast(0)
+                            val next = when {
+                                dragX < -70f -> (current + 1).coerceAtMost(items.lastIndex)
+                                dragX > 70f -> (current - 1).coerceAtLeast(0)
+                                else -> current
+                            }
+                            if (next != current) onSelect(items[next].first)
+                            dragX = 0f
+                        },
+                        onDragCancel = { dragX = 0f }
+                    )
+                }
+                .background(
+                    Brush.verticalGradient(
+                        listOf(
+                            MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.74f),
+                            MaterialTheme.colorScheme.surface.copy(alpha = 0.88f)
+                        )
+                    ),
+                    RoundedCornerShape(34.dp)
                 )
+                .border(
+                    1.dp,
+                    Brush.verticalGradient(
+                        listOf(
+                            Color.White.copy(alpha = 0.78f),
+                            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+                        )
+                    ),
+                    RoundedCornerShape(34.dp)
+                )
+                .padding(horizontal = 7.dp, vertical = 7.dp)
+        ) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
                 items.forEach { (key, icon, label) ->
                     val isSelected = selected == key
-                    Surface(
-                        onClick = { onSelect(key) },
-                        shape = RoundedCornerShape(24.dp),
-                        color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else Color.Transparent
-                    ) {
-                        Column(
-                            Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Text(icon, style = MaterialTheme.typography.titleMedium)
-                            Text(
-                                label,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                    val lensAlpha by animateFloatAsState(if (isSelected) 1f else 0f, tween(220), label = "glassLens")
+                    Box(
+                        Modifier
+                            .weight(1f)
+                            .padding(horizontal = 2.dp)
+                            .clip(RoundedCornerShape(25.dp))
+                            .background(
+                                if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f + 0.10f * lensAlpha)
+                                else Color.Transparent
                             )
+                            .clickable { onSelect(key) }
+                            .padding(vertical = 7.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(icon, style = MaterialTheme.typography.titleMedium, color = if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(label, style = MaterialTheme.typography.labelSmall, color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
@@ -405,6 +449,152 @@ private fun GlassSection(title: String, content: @Composable ColumnScope.() -> U
             content()
         }
     }
+}
+
+private data class BasementReportRow(val uri: Uri, val name: String, val relativePath: String, val addedMs: Long)
+
+@Composable
+private fun ReportsHome(state: AppState, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    var videoReports by remember { mutableStateOf(emptyList<VideoLoadingDetail>()) }
+    var whatsappReports by remember { mutableStateOf(emptyList<WhatsAppSendDetail>()) }
+    var basementReports by remember { mutableStateOf(emptyList<BasementReportRow>()) }
+
+    LaunchedEffect(Unit) {
+        val loaded = withContext(Dispatchers.IO) {
+            Triple(
+                runCatching { VideoLoadingRepository(context).history() }.getOrDefault(emptyList()),
+                runCatching { WhatsAppSendRepository(context).history() }.getOrDefault(emptyList()),
+                loadBasementReports(context)
+            )
+        }
+        videoReports = loaded.first
+        whatsappReports = loaded.second
+        basementReports = loaded.third
+    }
+
+    LazyColumn(modifier = modifier, contentPadding = PaddingValues(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item {
+            Text("Reports by Type", style = MaterialTheme.typography.titleLarge)
+            Text("Saved reports are grouped here and no longer open a test configuration page.", style = MaterialTheme.typography.bodySmall)
+        }
+        item {
+            ReportTypeCard("Basement Weak Coverage", basementReports.size) {
+                if (basementReports.isEmpty()) Text("No Basement reports", style = MaterialTheme.typography.bodySmall)
+                basementReports.take(8).forEach { r ->
+                    ReportRow(
+                        title = r.relativePath.substringAfter("Basement/").substringBefore('/').ifBlank { r.name },
+                        subtitle = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(r.addedMs)),
+                        onClick = {
+                            val view = Intent(Intent.ACTION_VIEW).apply {
+                                setDataAndType(r.uri, "text/html")
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                            runCatching { context.startActivity(view) }
+                        }
+                    )
+                }
+            }
+        }
+        item {
+            ReportTypeCard("Ping", state.pingHistory.size) {
+                if (state.pingHistory.isEmpty()) Text("No Ping reports", style = MaterialTheme.typography.bodySmall)
+                state.pingHistory.take(8).forEach { r ->
+                    ReportRow(
+                        title = r.taskName.ifBlank { "Ping ${r.host}" },
+                        subtitle = "${SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(r.startedAt))} · Success ${String.format(Locale.US, "%.1f%%", r.successRate)} · Avg ${r.averageLatencyMs?.let { String.format(Locale.US, "%.0fms", it) } ?: "--"}"
+                    )
+                }
+            }
+        }
+        item {
+            ReportTypeCard("YouTube Video Loading", videoReports.size) {
+                if (videoReports.isEmpty()) Text("No YouTube reports", style = MaterialTheme.typography.bodySmall)
+                videoReports.take(8).forEach { r ->
+                    val values = r.samples.mapNotNull { it.delayMs }
+                    ReportRow(
+                        title = File(r.path).nameWithoutExtension,
+                        subtitle = "${SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(r.startedAt))} · ${r.status} · ${r.samples.size} attempts · Avg ${values.takeIf { it.isNotEmpty() }?.average()?.let { String.format(Locale.US, "%.0fms", it) } ?: "--"}"
+                    )
+                }
+            }
+        }
+        item {
+            ReportTypeCard("WhatsApp Image Send", whatsappReports.size) {
+                if (whatsappReports.isEmpty()) Text("No WhatsApp reports", style = MaterialTheme.typography.bodySmall)
+                whatsappReports.take(8).forEach { r ->
+                    val values = r.samples.map { it.delayMs }
+                    ReportRow(
+                        title = File(r.path).nameWithoutExtension,
+                        subtitle = "${SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(r.startedAt))} · ${r.status} · ${r.samples.size} attempts · Avg ${values.takeIf { it.isNotEmpty() }?.average()?.let { String.format(Locale.US, "%.0fms", it) } ?: "--"}"
+                    )
+                }
+            }
+        }
+        item {
+            ReportTypeCard("Dual-DUT Call Setup", state.callHistory.size) {
+                if (state.callHistory.isEmpty()) Text("No Call Setup reports", style = MaterialTheme.typography.bodySmall)
+                state.callHistory.take(8).forEach { r ->
+                    ReportRow(
+                        title = r.taskName.ifBlank { "Call Setup" },
+                        subtitle = "${SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(r.startedAt))} · ${r.status} · ${r.attempts} attempts · Success ${String.format(Locale.US, "%.1f%%", r.successRate)}"
+                    )
+                }
+            }
+        }
+        item {
+            ReportTypeCard("Network Recording", state.recordings.size) {
+                if (state.recordings.isEmpty()) Text("No recording reports", style = MaterialTheme.typography.bodySmall)
+                state.recordings.take(8).forEach { r ->
+                    ReportRow(
+                        title = recordingDisplayName(r.name),
+                        subtitle = "${SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(r.startedAt))} · ${r.simSummary} · ${formatElapsed(r.durationMs)}"
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReportTypeCard(title: String, count: Int, content: @Composable ColumnScope.() -> Unit) {
+    GlassSection("$title  ·  $count") { content() }
+}
+
+@Composable
+private fun ReportRow(title: String, subtitle: String, onClick: (() -> Unit)? = null) {
+    val modifier = if (onClick != null) Modifier.fillMaxWidth().clickable { onClick() } else Modifier.fillMaxWidth()
+    Column(modifier.padding(vertical = 5.dp)) {
+        Text(title, style = MaterialTheme.typography.titleSmall)
+        Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.07f))
+}
+
+private fun loadBasementReports(context: android.content.Context): List<BasementReportRow> {
+    if (Build.VERSION.SDK_INT < 29) return emptyList()
+    val out = mutableListOf<BasementReportRow>()
+    val projection = arrayOf(
+        android.provider.MediaStore.Downloads._ID,
+        android.provider.MediaStore.Downloads.DISPLAY_NAME,
+        android.provider.MediaStore.Downloads.RELATIVE_PATH,
+        android.provider.MediaStore.Downloads.DATE_ADDED
+    )
+    val selection = "${android.provider.MediaStore.Downloads.DISPLAY_NAME}=? AND ${android.provider.MediaStore.Downloads.RELATIVE_PATH} LIKE ?"
+    context.contentResolver.query(
+        android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+        projection,
+        selection,
+        arrayOf("summary.html", "%/Basement/%"),
+        "${android.provider.MediaStore.Downloads.DATE_ADDED} DESC"
+    )?.use { c ->
+        while (c.moveToNext()) {
+            val id = c.getLong(0)
+            val uri = ContentUris.withAppendedId(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, id)
+            out += BasementReportRow(uri, c.getString(1), c.getString(2).orEmpty(), c.getLong(3) * 1000L)
+        }
+    }
+    return out
 }
 
 private sealed interface RootDestination {
@@ -434,7 +624,10 @@ private fun MainScreen(
     onDeleteRecording: (String) -> Unit,
     onDeleteAll: () -> Unit,
     onOpenRecording: (String) -> Unit,
-    onSettings: () -> Unit,
+    mainTab: String,
+    onMainTabChange: (String) -> Unit,
+    settingsVisitId: Int,
+    onSettingsUpdate: (AppSettings) -> Unit,
     onPingTest: () -> Unit,
     onVideoLoading: () -> Unit,
     onBasementTest: () -> Unit,
@@ -450,13 +643,12 @@ private fun MainScreen(
     var showLiveMap by remember { mutableStateOf(false) }
     var showMarkDialog by remember { mutableStateOf(false) }
     var showTaskNameDialog by remember { mutableStateOf(false) }
-    var mainTab by rememberSaveable { mutableStateOf("CELL") }
 
     val selected = state.sims.firstOrNull { it.subscriptionId == state.selectedSubscriptionId } ?: state.sims.firstOrNull()
     val context = LocalContext.current
     val recordingMetaRepo = remember { TestMetadataRepository(context) }
     var lastExitBackAt by remember { mutableLongStateOf(0L) }
-    BackHandler(enabled = showLiveMap) { showLiveMap = false; mainTab = "CELL" }
+    BackHandler(enabled = showLiveMap) { showLiveMap = false; onMainTabChange("CELL") }
     BackHandler(enabled = !showLiveMap) {
         val now = System.currentTimeMillis()
         if (now - lastExitBackAt <= 2000L) {
@@ -490,6 +682,7 @@ private fun MainScreen(
                             showLiveMap -> "Map"
                             mainTab == "TEST" -> "Tests"
                             mainTab == "REPORTS" -> "Reports"
+                            mainTab == "SETTINGS" -> "Setting"
                             else -> "Cell Info"
                         }
                     )
@@ -504,9 +697,8 @@ private fun MainScreen(
                 selected = if (showLiveMap) "MAP" else mainTab,
                 onSelect = { tab ->
                     when (tab) {
-                        "MAP" -> { mainTab = "MAP"; showLiveMap = true }
-                        "SETTINGS" -> onSettings()
-                        else -> { mainTab = tab; showLiveMap = false }
+                        "MAP" -> { onMainTabChange("MAP"); showLiveMap = true }
+                        else -> { onMainTabChange(tab); showLiveMap = false }
                     }
                 }
             )
@@ -569,35 +761,19 @@ private fun MainScreen(
                 return@mainContent
             }
 
+            if (mainTab == "SETTINGS") {
+                SettingsScreen(
+                    settings = state.settings,
+                    visitId = settingsVisitId,
+                    onUpdate = onSettingsUpdate,
+                    onBack = { onMainTabChange("CELL") },
+                    embedded = true
+                )
+                return@mainContent
+            }
+
             if (mainTab == "REPORTS") {
-                Column(
-                    Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberRetainedScrollState("main.reports")),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    GlassSection("Test Reports") {
-                        Text("Open each test module to browse its saved history and export/share results.", style = MaterialTheme.typography.bodySmall)
-                        Button(onClick = onPingTest, modifier = Modifier.fillMaxWidth()) { Text("Ping Reports") }
-                        Button(onClick = onBasementTest, modifier = Modifier.fillMaxWidth()) { Text("Basement Reports") }
-                        Button(onClick = onVideoLoading, modifier = Modifier.fillMaxWidth()) { Text("YouTube Reports") }
-                        Button(onClick = onWhatsAppSend, modifier = Modifier.fillMaxWidth()) { Text("WhatsApp Reports") }
-                        Button(onClick = onCallSetup, modifier = Modifier.fillMaxWidth()) { Text("Call Setup Reports") }
-                    }
-                    GlassSection("Recording Reports") {
-                        if (state.recordings.isEmpty()) {
-                            Text("No recordings yet", style = MaterialTheme.typography.bodySmall)
-                        } else {
-                            state.recordings.forEach { item ->
-                                Card(Modifier.fillMaxWidth().clickable { onOpenRecording(item.path) }) {
-                                    Column(Modifier.padding(12.dp)) {
-                                        Text(SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(item.startedAt)), style = MaterialTheme.typography.labelLarge)
-                                        Text(recordingDisplayName(item.name), color = MaterialTheme.colorScheme.primary)
-                                        Text("${item.simSummary} · ${formatElapsed(item.durationMs)} · ${item.totalSamples} samples", style = MaterialTheme.typography.bodySmall)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                ReportsHome(state = state, modifier = Modifier.fillMaxSize().padding(16.dp))
                 return@mainContent
             }
 
@@ -2169,7 +2345,13 @@ private fun NeighborCellItem(index: Int, n: CellData) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SettingsScreen(settings: AppSettings, visitId: Int, onUpdate: (AppSettings) -> Unit, onBack: () -> Unit) {
+private fun SettingsScreen(
+    settings: AppSettings,
+    visitId: Int,
+    onUpdate: (AppSettings) -> Unit,
+    onBack: () -> Unit,
+    embedded: Boolean = false
+) {
     var draft by remember(settings) { mutableStateOf(settings) }
     var page by remember { mutableStateOf("root") }
     var newIssue by remember { mutableStateOf("") }
@@ -2195,12 +2377,19 @@ private fun SettingsScreen(settings: AppSettings, visitId: Int, onUpdate: (AppSe
     BackHandler(enabled = page != "root") {
         page = "root"
     }
-    Scaffold(topBar = {
-        TopAppBar(
-            title = { Text(when (page) { "sampling" -> "Sampling"; "marker" -> "Marker Button"; "floating" -> "Floating Window"; "map" -> "Map Point Details"; "issues" -> "Issue Types"; "metadata" -> "Test Metadata Options"; else -> "Settings" }) },
-            navigationIcon = { TextButton(onClick = { if (page == "root") onBack() else { page = "root" } }) { Text("Back") } }
-        )
-    }) { padding ->
+    Scaffold(
+        topBar = {
+            if (!embedded || page != "root") {
+                TopAppBar(
+                    title = { Text(when (page) { "sampling" -> "Sampling"; "marker" -> "Marker Button"; "floating" -> "Floating Window"; "map" -> "Map Point Details"; "issues" -> "Issue Types"; "metadata" -> "Test Metadata Options"; else -> "Settings" }) },
+                    navigationIcon = {
+                        if (page != "root") TextButton(onClick = { page = "root" }) { Text("Back") }
+                        else if (!embedded) TextButton(onClick = onBack) { Text("Back") }
+                    }
+                )
+            }
+        }
+    ) { padding ->
         AnimatedContent(
             targetState = page,
             transitionSpec = {
