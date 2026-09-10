@@ -1,5 +1,11 @@
 # CellTracker Changelog
 
+## v0.9.3.0.44
+
+- Fix build failure in v0.9.3.0.43 by adding the missing HazeState / haze / hazeChild imports.
+- Keeps the real-time frosted-glass bottom navigation implementation.
+- Keeps the corrected five-tab swipe release direction.
+
 ## v0.9.3.0.43
 
 - Replaced simulated translucency with real-time backdrop blur via Haze.
