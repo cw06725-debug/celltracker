@@ -2631,7 +2631,7 @@ private fun VideoLoadingScreen(onBack: () -> Unit) {
             OutlinedTextField(returnWait, { returnWait = it.filter { c -> c.isDigit() || c == '.' } }, label = { Text("Return wait (s)") }, singleLine = true)
             Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(autoRecord, { autoRecord = it }); Text("Auto Network Recording") }
             Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(semiAuto, { semiAuto = it }); Text("Semi-auto mode (START → click video → LOADED)") }
-            if (semiAuto) Text("Semi-auto has no fixed test count. For EACH sample: first press START while on the YouTube video list, then tap one video; that tap is T0. Tap LOADED when the video is loaded; LOADED is T1. Between samples you can scroll freely because touch capture is disabled until START. Use AD / SKIP for advertisements; AD rows are excluded from delay statistics.", style = MaterialTheme.typography.bodySmall)
+            if (semiAuto) Text("Semi-auto has no fixed test count. For EACH sample: press START on the YouTube list, then tap one video; that tap is T0. CellTracker automatically detects playback start as T1. LOADED is only the manual T1 fallback if AUTO is not confirmed. Between samples you can scroll freely. Use AD / SKIP for advertisements; AD rows are excluded from delay statistics.", style = MaterialTheme.typography.bodySmall)
             Button(onClick = { context.startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }) { Text("1. Enable CellTracker Accessibility") }
             Button(onClick = {
                 pendingConfig = VideoLoadingConfig(
@@ -2642,7 +2642,7 @@ private fun VideoLoadingScreen(onBack: () -> Unit) {
                 )
                 showMetadata = true
             }) { Text("2. PREPARE TEST / Open YouTube") }
-            Text(if (semiAuto) "Semi-auto: for every sample, START → tap one video (T0) → LOADED (T1) → return → freely scroll → START again. Android Back before LOADED cancels the unfinished sample." else "AUTO: START → different video → first-play detection → Back → next video → auto-scroll. LOADED is a manual fallback.", style = MaterialTheme.typography.bodySmall)
+            Text(if (semiAuto) "Semi-auto: for every sample, START → tap one video (T0) → AUTO T1 when playback starts (LOADED is fallback) → return → freely scroll → START again. Android Back before T1 cancels the unfinished sample." else "AUTO: START → different video → first-play detection → Back → next video → auto-scroll. LOADED is a manual fallback.", style = MaterialTheme.typography.bodySmall)
             TextButton(onClick = { history = repo.history() }) { Text("Refresh History") }
             Text("History", style = MaterialTheme.typography.titleMedium)
             if (history.isEmpty()) Text("No video loading sessions yet", style = MaterialTheme.typography.bodySmall)

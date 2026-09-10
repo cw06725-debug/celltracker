@@ -3,12 +3,15 @@ package com.example.celltracker
 import android.accessibilityservice.AccessibilityService
 import android.content.Intent
 import android.graphics.PixelFormat
+import android.graphics.Bitmap
 import android.graphics.Rect
 import android.graphics.Path
 import android.os.SystemClock
+import android.os.Build
 import android.accessibilityservice.GestureDescription
 import android.telephony.SubscriptionManager
 import android.view.Gravity
+import android.view.Display
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
@@ -19,6 +22,9 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.*
+import java.util.concurrent.Executors
+import java.util.concurrent.ExecutorService
+import kotlin.coroutines.resume
 
 class YouTubeLoadingAccessibilityService : AccessibilityService() {
     companion object {
@@ -66,6 +72,10 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
     private var semiIgnorePlaybackUntilList = false
     private var semiLastPlaybackPage = false
     private var clockJob: Job? = null
+    // YouTube Auto Detection PoC: short-lived screenshot sampling only while one attempt is active.
+    private var visualWatchJob: Job? = null
+    private var visualWatchGeneration = 0
+    private val visualExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private var semiCaptureOverlay: View? = null
     private var overlayLp: WindowManager.LayoutParams? = null
     // Keep the original touch instant for a short time. If a gesture we classified as a scroll
@@ -170,7 +180,134 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         semiAttemptArmed = false
         semiArmedAtUptime = 0L
         overlayStartButton?.apply { text = "ACTIVE"; isEnabled = true }
-        overlayStatus?.text = "SEMI · #$seq T0 · tap LOADED for T1"
+        overlayStatus?.text = "SEMI · #$seq T0 · AUTO watching · LOADED = manual fallback"
+        startAutoVisualWatch()
+    }
+
+    private fun startAutoVisualWatch() {
+        visualWatchJob?.cancel()
+        visualWatchGeneration++
+        val generation = visualWatchGeneration
+        if (Build.VERSION.SDK_INT < 30) {
+            overlayStatus?.text = "SEMI · #$seq T0 · AUTO needs Android 11+ · use LOADED"
+            return
+        }
+
+        val attemptT0Elapsed = semiT0ElapsedMs
+        if (attemptT0Elapsed <= 0L || t0 <= 0L) return
+
+        visualWatchJob = scope.launch {
+            // Ignore the initial page transition. One large transition must never equal "loaded".
+            delay(320)
+            var previous: IntArray? = null
+            var dynamicStreak = 0
+            var validFrames = 0
+            val started = SystemClock.elapsedRealtime()
+
+            while (isActive && running && t0 > 0L && generation == visualWatchGeneration) {
+                val signature = capturePlayerSignature()
+                if (signature != null) {
+                    validFrames++
+                    val prior = previous
+                    if (prior != null && prior.size == signature.size) {
+                        val motion = visualMotion(prior, signature)
+                        // Spinner/UI chrome affects only a small part of the ROI. Real playback
+                        // normally changes a much larger fraction of sampled pixels repeatedly.
+                        if (motion.first >= 10.0 && motion.second >= 0.18) {
+                            dynamicStreak++
+                        } else {
+                            dynamicStreak = 0
+                        }
+
+                        if (dynamicStreak >= 3 &&
+                            SystemClock.elapsedRealtime() - attemptT0Elapsed >= 500L) {
+                            overlayStatus?.text = "SEMI · #$seq AUTO loaded detected"
+                            completeSemiAttempt("PASS", "AUTO_VISUAL", overlayStatus, performBack = true)
+                            return@launch
+                        }
+                    }
+                    previous = signature
+                }
+
+                if (SystemClock.elapsedRealtime() - started > 12_000L) {
+                    overlayStatus?.text = "SEMI · #$seq AUTO not confirmed · use LOADED"
+                    return@launch
+                }
+                delay(150)
+            }
+        }
+    }
+
+    private suspend fun capturePlayerSignature(): IntArray? =
+        suspendCancellableCoroutine { cont ->
+            if (Build.VERSION.SDK_INT < 30) {
+                cont.resume(null)
+                return@suspendCancellableCoroutine
+            }
+            runCatching {
+                takeScreenshot(
+                    Display.DEFAULT_DISPLAY,
+                    visualExecutor,
+                    object : AccessibilityService.TakeScreenshotCallback {
+                        override fun onSuccess(screenshot: AccessibilityService.ScreenshotResult) {
+                            val buffer = screenshot.hardwareBuffer
+                            try {
+                                val hardware = Bitmap.wrapHardwareBuffer(buffer, screenshot.colorSpace)
+                                val bitmap = hardware?.copy(Bitmap.Config.ARGB_8888, false)
+                                val signature = bitmap?.let { playerSignature(it) }
+                                bitmap?.recycle()
+                                if (cont.isActive) cont.resume(signature)
+                            } catch (_: Throwable) {
+                                if (cont.isActive) cont.resume(null)
+                            } finally {
+                                runCatching { buffer.close() }
+                            }
+                        }
+
+                        override fun onFailure(errorCode: Int) {
+                            if (cont.isActive) cont.resume(null)
+                        }
+                    }
+                )
+            }.onFailure {
+                if (cont.isActive) cont.resume(null)
+            }
+        }
+
+    private fun playerSignature(bitmap: Bitmap): IntArray {
+        // Broad player ROI. Avoid status/navigation bars and sample sparsely to keep CPU cost tiny.
+        val left = (bitmap.width * 0.04f).toInt()
+        val right = (bitmap.width * 0.96f).toInt().coerceAtLeast(left + 1)
+        val top = (bitmap.height * 0.08f).toInt()
+        val bottom = (bitmap.height * 0.55f).toInt().coerceAtLeast(top + 1)
+        val cols = 24
+        val rows = 14
+        val out = IntArray(cols * rows)
+        var n = 0
+        for (r in 0 until rows) {
+            val yy = top + ((bottom - top - 1) * (r + 1)) / (rows + 1)
+            for (c in 0 until cols) {
+                val xx = left + ((right - left - 1) * (c + 1)) / (cols + 1)
+                val color = bitmap.getPixel(xx.coerceIn(0, bitmap.width - 1), yy.coerceIn(0, bitmap.height - 1))
+                val red = (color shr 16) and 0xff
+                val green = (color shr 8) and 0xff
+                val blue = color and 0xff
+                out[n++] = (red * 30 + green * 59 + blue * 11) / 100
+            }
+        }
+        return out
+    }
+
+    private fun visualMotion(a: IntArray, b: IntArray): Pair<Double, Double> {
+        if (a.size != b.size || a.isEmpty()) return 0.0 to 0.0
+        var total = 0L
+        var changed = 0
+        for (i in a.indices) {
+            val diff = kotlin.math.abs(a[i] - b[i])
+            total += diff
+            if (diff >= 18) changed++
+        }
+        return (total.toDouble() / a.size) to (changed.toDouble() / a.size)
     }
 
     /**
@@ -615,6 +752,9 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
     }
 
     private fun completeSemiAttempt(result: String, detection: String, status: TextView?, performBack: Boolean) {
+        visualWatchJob?.cancel()
+        visualWatchJob = null
+        visualWatchGeneration++
         val startWall = t0
         val startElapsed = semiT0ElapsedMs
         val source = semiT0Source
@@ -689,6 +829,9 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
 
     private fun retrySemi(status: TextView) {
         if (!running || !config.semiAuto) return
+        visualWatchJob?.cancel()
+        visualWatchJob = null
+        visualWatchGeneration++
 
         semiRecoveryJob?.cancel()
         semiRecoveryJob = null
@@ -774,6 +917,9 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             return
         }
         running = false
+        visualWatchJob?.cancel()
+        visualWatchJob = null
+        visualWatchGeneration++
         t0 = 0L
         semiSawPlayback = false
         semiPendingClickMs = 0L
@@ -1580,6 +1726,8 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         if (activeInstance === this) activeInstance = null
+        visualWatchJob?.cancel()
+        visualExecutor.shutdownNow()
         clockJob?.cancel()
         clockJob = null
         scope.cancel()
