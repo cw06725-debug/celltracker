@@ -455,8 +455,10 @@ private fun LiquidGlassBottomBar(
                     }
             ) {
                 val itemWidth = maxWidth / items.size
+                val itemPx = barWidthPx.toFloat() / items.size
                 val dragDp = with(density) { dragX.toDp() }
 
+                // Real-time frosted background.
                 Box(
                     Modifier
                         .matchParentSize()
@@ -472,37 +474,85 @@ private fun LiquidGlassBottomBar(
                         )
                 )
 
+                // The outer selection lens is the interactive "water button".
+                // Pressing enlarges the glass itself instead of scaling icon/text.
+                val lensTargetIndex = if (pressedIndex >= 0) pressedIndex else selectedIndex
+                val lensScale by animateFloatAsState(
+                    targetValue = if (pressedIndex >= 0) 1.18f else 1.0f,
+                    animationSpec = tween(135),
+                    label = "lensPressScale"
+                )
+                val lensWidthScale by animateFloatAsState(
+                    targetValue = if (pressedIndex >= 0) 1.10f else 1.0f,
+                    animationSpec = tween(135),
+                    label = "lensPressWidth"
+                )
+                val lensAlpha by animateFloatAsState(
+                    targetValue = if (pressedIndex >= 0) 1.0f else 0.82f,
+                    animationSpec = tween(120),
+                    label = "lensPressAlpha"
+                )
+
+                val lensBaseX = if (dragX != 0f) {
+                    itemWidth * selectedIndex + dragDp
+                } else {
+                    itemWidth * lensTargetIndex
+                }
+
                 Box(
                     Modifier
-                        .width(itemWidth)
+                        .width(itemWidth * lensWidthScale)
                         .fillMaxHeight()
-                        .offset(x = itemWidth * selectedIndex + dragDp)
+                        .offset(
+                            x = lensBaseX - (itemWidth * (lensWidthScale - 1f) / 2f)
+                        )
                         .padding(horizontal = 3.dp, vertical = 4.dp)
+                        .scale(lensScale)
                         .background(
-                            Brush.verticalGradient(
+                            Brush.radialGradient(
                                 listOf(
-                                    Color.White.copy(alpha = 0.46f),
-                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
-                                    Color.White.copy(alpha = 0.24f)
+                                    Color.White.copy(alpha = 0.62f * lensAlpha),
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.12f * lensAlpha),
+                                    Color.White.copy(alpha = 0.22f * lensAlpha)
                                 )
                             ),
-                            RoundedCornerShape(32.dp)
+                            RoundedCornerShape(34.dp)
                         )
                         .border(
                             1.dp,
                             Brush.verticalGradient(
                                 listOf(
-                                    Color.White.copy(alpha = 0.82f),
-                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
+                                    Color.White.copy(alpha = 0.92f),
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.18f),
                                     Color.White.copy(alpha = 0.30f)
                                 )
                             ),
-                            RoundedCornerShape(32.dp)
+                            RoundedCornerShape(34.dp)
                         )
                 )
 
-                // No extra horizontal highlight/divider lines here. The glass edge is defined
-                // only by the rounded capsule border, avoiding the double-white-line artifact.
+                // Subtle inner highlight that moves with the glass lens, creating a soft
+                // "water droplet" deformation without enlarging the icon.
+                if (pressedIndex >= 0) {
+                    Box(
+                        Modifier
+                            .width(itemWidth * 0.72f)
+                            .height(18.dp)
+                            .offset(
+                                x = itemWidth * pressedIndex + itemWidth * 0.14f,
+                                y = 7.dp
+                            )
+                            .background(
+                                Brush.radialGradient(
+                                    listOf(
+                                        Color.White.copy(alpha = 0.46f),
+                                        Color.Transparent
+                                    )
+                                ),
+                                RoundedCornerShape(50)
+                            )
+                    )
+                }
 
                 Row(
                     Modifier.fillMaxSize(),
@@ -511,20 +561,10 @@ private fun LiquidGlassBottomBar(
                     items.forEachIndexed { index, (_, icon, label) ->
                         val isSelected = index == selectedIndex
                         val isPressed = index == pressedIndex
-                        val scale by animateFloatAsState(
-                            targetValue = when {
-                                isPressed -> 1.16f
-                                isSelected -> 1.04f
-                                else -> 1.0f
-                            },
-                            animationSpec = tween(120),
-                            label = "navPressScale"
-                        )
                         Column(
                             Modifier
                                 .width(itemWidth)
-                                .fillMaxHeight()
-                                .scale(scale),
+                                .fillMaxHeight(),
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.Center
                         ) {

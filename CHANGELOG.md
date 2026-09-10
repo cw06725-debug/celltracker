@@ -1,5 +1,13 @@
 # CellTracker Changelog
 
+## v0.9.3.0.47
+
+- Corrects navigation press feedback: the outer frosted-glass selection lens now enlarges, not the icon/text.
+- Pressed glass lens scales to ~118% and widens slightly for a water-droplet / soft deformation feel.
+- Adds a moving inner highlight while pressed to make the lens feel more fluid.
+- Icons and labels keep their normal size.
+- Keeps real-time Haze blur, five-tab swipe and snap behavior.
+
 ## v0.9.3.0.46
 
 - Fixes Kotlin compile error in the frosted navigation press/drag animation.
