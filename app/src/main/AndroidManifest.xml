@@ -66,6 +66,10 @@
             android:exported="false"
             android:foregroundServiceType="dataSync|location" />
         <service
+            android:name=".BasementTestService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync|location" />
+        <service
             android:name=".YouTubeLoadingAccessibilityService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
             android:exported="true">

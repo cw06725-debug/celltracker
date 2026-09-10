@@ -5,6 +5,8 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.telephony.CellInfo
+import android.telephony.CellInfoGsm
+import android.telephony.CellInfoWcdma
 import android.telephony.CellInfoLte
 import android.telephony.CellInfoNr
 import android.telephony.CellIdentityNr
@@ -232,6 +234,50 @@ class CellularRepository(private val context: Context) {
                 csiSinr = intDbValue(s.csiSinr),
                 level = intValue(s.level),
                 asuLevel = intValue(s.asuLevel),
+                registered = cell.isRegistered
+            )
+        }
+        is CellInfoWcdma -> {
+            val id = cell.cellIdentity
+            val ss = cell.cellSignalStrength
+            CellData(
+                subscriptionId = subscriptionId,
+                simSlotIndex = simSlotIndex,
+                simLabel = simLabel,
+                rat = "WCDMA",
+                displayRat = "WCDMA",
+                operator = resolveOperatorName(tm, id.mccString, id.mncString, simLabel),
+                mcc = id.mccString ?: "--",
+                mnc = id.mncString ?: "--",
+                tac = intValue(id.lac),
+                cellId = intValue(id.cid),
+                pci = intValue(id.psc),
+                arfcn = intValue(id.uarfcn),
+                rssi = intDbValue(ss.dbm),
+                level = intValue(ss.level),
+                asuLevel = intValue(ss.asuLevel),
+                registered = cell.isRegistered
+            )
+        }
+        is CellInfoGsm -> {
+            val id = cell.cellIdentity
+            val ss = cell.cellSignalStrength
+            CellData(
+                subscriptionId = subscriptionId,
+                simSlotIndex = simSlotIndex,
+                simLabel = simLabel,
+                rat = "GSM",
+                displayRat = "GSM",
+                operator = resolveOperatorName(tm, id.mccString, id.mncString, simLabel),
+                mcc = id.mccString ?: "--",
+                mnc = id.mncString ?: "--",
+                tac = intValue(id.lac),
+                cellId = intValue(id.cid),
+                pci = intValue(id.bsic),
+                arfcn = intValue(id.arfcn),
+                rssi = intDbValue(ss.dbm),
+                level = intValue(ss.level),
+                asuLevel = intValue(ss.asuLevel),
                 registered = cell.isRegistered
             )
         }

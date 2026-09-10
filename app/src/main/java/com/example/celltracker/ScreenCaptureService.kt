@@ -15,8 +15,10 @@ import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.IBinder
+import android.os.Environment
 import android.os.Process
 import android.provider.Settings
+import android.provider.MediaStore
 import android.util.DisplayMetrics
 import android.view.WindowManager
 import android.view.Gravity
@@ -31,6 +33,8 @@ import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.*
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 
 class ScreenCaptureService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -51,6 +55,7 @@ class ScreenCaptureService : Service() {
     private var visualAiCaptureJob: Job? = null
     private var visualAiOverlay: android.view.View? = null
     private var visualAiOverlayStatus: TextView? = null
+    private var visualAiSessionDir: File? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -128,6 +133,11 @@ class ScreenCaptureService : Service() {
         collectorPhase = "UNLABELED"
         collectorSaveFailures = 0
         collectorLastPath = ""
+        collectorExportPath = ""
+        collectorExportStatus = ""
+        val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(visualAiSessionStartedAt))
+        val session = SimpleDateFormat("HHmmss", Locale.US).format(Date(visualAiSessionStartedAt))
+        visualAiSessionDir = File(getExternalFilesDir(null), "VisualAI/$date/session_$session").apply { mkdirs() }
         collectorActive = true
 
         // Do not depend on ImageReader callbacks. Some Samsung/Android builds keep the
@@ -280,9 +290,11 @@ class ScreenCaptureService : Service() {
         val sessionMs = visualAiSessionStartedAt
         if (sessionMs <= 0L) return
         runCatching {
-            val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(sessionMs))
-            val session = SimpleDateFormat("HHmmss", Locale.US).format(Date(sessionMs))
-            val dir = File(getExternalFilesDir(null), "VisualAI/$date/session_$session").apply { mkdirs() }
+            val dir = visualAiSessionDir ?: run {
+                val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(sessionMs))
+                val session = SimpleDateFormat("HHmmss", Locale.US).format(Date(sessionMs))
+                File(getExternalFilesDir(null), "VisualAI/$date/session_$session").apply { mkdirs() }
+            }
             val f = File(dir, "labels.csv")
             if (!f.exists()) f.appendText("attempt,label,wall_ms,elapsed_ms,from_t0_ms\n")
             val nowWall = System.currentTimeMillis()
@@ -299,12 +311,73 @@ class ScreenCaptureService : Service() {
         visualAiCaptureJob = null
         reader?.setOnImageAvailableListener(null, null)
         removeVisualAiOverlay()
+        val dir = visualAiSessionDir
+        if (dir != null && dir.exists()) {
+            collectorExportStatus = "EXPORTING"
+            scope.launch {
+                val result = exportVisualAiSessionZip(dir, visualAiSessionStartedAt)
+                if (result.isNotBlank()) {
+                    collectorExportPath = result
+                    collectorExportStatus = "EXPORTED"
+                } else {
+                    collectorExportStatus = "EXPORT_FAILED"
+                }
+            }
+        }
+    }
+
+    private fun exportVisualAiSessionZip(dir: File, sessionMs: Long): String {
+        if (Build.VERSION.SDK_INT < 29) return ""
+        return runCatching {
+            val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(sessionMs))
+            val session = SimpleDateFormat("HHmmss", Locale.US).format(Date(sessionMs))
+            val displayName = "CellTracker_VisualAI_${date}_$session.zip"
+            val relativePath = "${Environment.DIRECTORY_DOWNLOADS}/CellTracker/VisualAI/$date"
+
+            val values = ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, displayName)
+                put(MediaStore.Downloads.MIME_TYPE, "application/zip")
+                put(MediaStore.Downloads.RELATIVE_PATH, relativePath)
+                put(MediaStore.Downloads.IS_PENDING, 1)
+            }
+            val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                ?: return@runCatching ""
+            var success = false
+            try {
+                contentResolver.openOutputStream(uri)?.use { raw ->
+                    ZipOutputStream(raw).use { zip ->
+                        val base = dir.absolutePath.trimEnd(File.separatorChar) + File.separator
+                        dir.walkTopDown().filter { it.isFile }.forEach { file ->
+                            val name = file.absolutePath.removePrefix(base).replace(File.separatorChar, '/')
+                            zip.putNextEntry(ZipEntry(name))
+                            file.inputStream().use { input -> input.copyTo(zip) }
+                            zip.closeEntry()
+                        }
+                    }
+                    success = true
+                }
+                if (success) {
+                    values.clear()
+                    values.put(MediaStore.Downloads.IS_PENDING, 0)
+                    contentResolver.update(uri, values, null, null)
+                    "$relativePath/$displayName"
+                } else {
+                    contentResolver.delete(uri, null, null)
+                    ""
+                }
+            } catch (_: Throwable) {
+                contentResolver.delete(uri, null, null)
+                ""
+            }
+        }.getOrDefault("")
     }
 
     private fun saveVisualAiRois(screen: Bitmap, sessionMs: Long, frame: Int, relativeMs: Long) {
-        val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(sessionMs))
-        val session = SimpleDateFormat("HHmmss", Locale.US).format(Date(sessionMs))
-        val dir = File(getExternalFilesDir(null), "VisualAI/$date/session_$session").apply { mkdirs() }
+        val dir = visualAiSessionDir ?: run {
+            val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(sessionMs))
+            val session = SimpleDateFormat("HHmmss", Locale.US).format(Date(sessionMs))
+            File(getExternalFilesDir(null), "VisualAI/$date/session_$session").apply { mkdirs() }
+        }
 
         val w = screen.width
         val h = screen.height
@@ -526,6 +599,8 @@ class ScreenCaptureService : Service() {
         @Volatile var collectorLastPath: String = ""
         @Volatile var collectorAttempt: Int = 0
         @Volatile var collectorPhase: String = "UNLABELED"
+        @Volatile var collectorExportPath: String = ""
+        @Volatile var collectorExportStatus: String = ""
 
         private val EXCLUDED_FOREGROUND_PACKAGES = setOf(
             "com.android.systemui",

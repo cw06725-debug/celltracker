@@ -142,6 +142,7 @@ class MainActivity : ComponentActivity() {
                 var showCallSetup by remember { mutableStateOf(false) }
                 var showVideoLoading by remember { mutableStateOf(false) }
                 var showVisualAiCollector by remember { mutableStateOf(false) }
+                var showBasementTest by remember { mutableStateOf(false) }
                 var showWhatsAppSend by remember { mutableStateOf(false) }
                 val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { vm.start() }
                 var overlayPermissionRequestedForRecording by remember { mutableStateOf(false) }
@@ -209,12 +210,13 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                BackHandler(enabled = showSettings || detailPath != null || showPingTest || showCallSetup || showVideoLoading || showVisualAiCollector || showWhatsAppSend) {
+                BackHandler(enabled = showSettings || detailPath != null || showPingTest || showCallSetup || showVideoLoading || showVisualAiCollector || showBasementTest || showWhatsAppSend) {
                     when {
                         detailPath != null -> detailPath = null
                         showCallSetup -> showCallSetup = false
                         showVideoLoading -> showVideoLoading = false
                         showVisualAiCollector -> showVisualAiCollector = false
+                        showBasementTest -> showBasementTest = false
                         showWhatsAppSend -> showWhatsAppSend = false
                         showPingTest -> showPingTest = false
                         showSettings -> showSettings = false
@@ -230,6 +232,7 @@ class MainActivity : ComponentActivity() {
                     showCallSetup -> RootDestination.CallSetup
                     showVideoLoading -> RootDestination.VideoLoading
                     showVisualAiCollector -> RootDestination.VisualAiCollector
+                    showBasementTest -> RootDestination.BasementTest
                     showWhatsAppSend -> RootDestination.WhatsAppSend
                     showPingTest -> RootDestination.PingTest
                     showSettings -> RootDestination.Settings
@@ -260,6 +263,10 @@ class MainActivity : ComponentActivity() {
                     )
                     RootDestination.VideoLoading -> VideoLoadingScreen(onBack = { showVideoLoading = false }, onVisualAiCollector = { showVisualAiCollector = true; showVideoLoading = false })
                     RootDestination.VisualAiCollector -> VisualAiCollectorScreen(onBack = { showVisualAiCollector = false; showVideoLoading = true })
+                    RootDestination.BasementTest -> BasementTestScreen(
+                        selectedSim = state.sims.firstOrNull { it.subscriptionId == state.selectedSubscriptionId } ?: state.sims.firstOrNull(),
+                        onBack = { showBasementTest = false }
+                    )
                     RootDestination.WhatsAppSend -> WhatsAppSendScreen(onBack = { showWhatsAppSend = false })
                     RootDestination.PingTest -> PingTestScreen(
                         state = state.pingTest,
@@ -315,6 +322,7 @@ class MainActivity : ComponentActivity() {
                         },
                         onPingTest = { showPingTest = true },
                         onVideoLoading = { showVideoLoading = true },
+                        onBasementTest = { showBasementTest = true },
                         onWhatsAppSend = { showWhatsAppSend = true },
                         onCallSetup = { showCallSetup = true },
                         onDismissMessage = vm::clearMessage
@@ -337,6 +345,7 @@ private sealed interface RootDestination {
     data object Settings : RootDestination
     data object VideoLoading : RootDestination
     data object VisualAiCollector : RootDestination
+    data object BasementTest : RootDestination
     data object WhatsAppSend : RootDestination
     data object PingTest : RootDestination
     data object CallSetup : RootDestination
@@ -361,6 +370,7 @@ private fun MainScreen(
     onSettings: () -> Unit,
     onPingTest: () -> Unit,
     onVideoLoading: () -> Unit,
+    onBasementTest: () -> Unit,
     onWhatsAppSend: () -> Unit,
     onCallSetup: () -> Unit,
     onDismissMessage: () -> Unit
@@ -559,6 +569,10 @@ private fun MainScreen(
                     Field("Avg latency", state.pingTest.averageLatencyMs?.let { String.format(Locale.US, "%.1f ms", it) } ?: "--")
                 }
                 Button(onClick = onPingTest) { Text(if (state.pingTest.isRunning) "Open Ping Test" else "Configure Ping Test") }
+                HorizontalDivider(Modifier.padding(vertical = 10.dp))
+                Text("Basement Weak Coverage", style = MaterialTheme.typography.titleSmall)
+                Text("START → B1 → B2 → B1 → START continuity test with 1 Hz network logging, fixed-point Ping and recovery timing.", style = MaterialTheme.typography.bodySmall)
+                Button(onClick = onBasementTest) { Text(if (BasementTestStore.state.value.isRunning) "Open Basement Test" else "Configure Basement Test") }
                 HorizontalDivider(Modifier.padding(vertical = 10.dp))
                 Text("YouTube Video Loading", style = MaterialTheme.typography.titleSmall)
                 Text("Automated channel-video page loading delay via Accessibility, with network snapshots and reports.", style = MaterialTheme.typography.bodySmall)
@@ -2609,6 +2623,123 @@ private fun WhatsAppSendScreen(onBack: () -> Unit) {
     exportResult?.let { result -> ExportSuccessDialog(result = result, onDismiss = { exportResult = null }) }
 }
 
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun BasementTestScreen(selectedSim: SimCellState?, onBack: () -> Unit) {
+    val context = LocalContext.current
+    val live by BasementTestStore.state.collectAsStateWithLifecycle()
+    var deviceLabel by rememberSaveable { mutableStateOf("DUT") }
+    var host by rememberSaveable { mutableStateOf("8.8.8.8") }
+    var stabilize by rememberSaveable { mutableStateOf("30") }
+    var pingSeconds by rememberSaveable { mutableStateOf("60") }
+    var recovery by rememberSaveable { mutableStateOf("60") }
+
+    fun startBasement() {
+        if (!android.provider.Settings.canDrawOverlays(context)) {
+            Toast.makeText(context, "Please enable 'Display over other apps', then start again.", Toast.LENGTH_LONG).show()
+            context.startActivity(
+                Intent(
+                    android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:${context.packageName}")
+                )
+            )
+            return
+        }
+        val intent = Intent(context, BasementTestService::class.java).apply {
+            action = BasementTestService.ACTION_START
+            putExtra(BasementTestService.EXTRA_DEVICE_LABEL, deviceLabel.trim().ifBlank { "DUT" })
+            putExtra(BasementTestService.EXTRA_HOST, host.trim().ifBlank { "8.8.8.8" })
+            putExtra(BasementTestService.EXTRA_STABILIZE_SECONDS, stabilize.toIntOrNull() ?: 30)
+            putExtra(BasementTestService.EXTRA_PING_SECONDS, pingSeconds.toIntOrNull() ?: 60)
+            putExtra(BasementTestService.EXTRA_RECOVERY_SECONDS, recovery.toIntOrNull() ?: 60)
+            putExtra(BasementTestService.EXTRA_SUBSCRIPTION_ID, selectedSim?.subscriptionId ?: -1)
+        }
+        ContextCompat.startForegroundService(context, intent)
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Basement Weak Coverage") },
+                navigationIcon = { TextButton(onClick = onBack) { Text("Back") } }
+            )
+        }
+    ) { pad ->
+        Column(
+            Modifier.padding(pad).padding(16.dp).verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            if (!live.isRunning && live.stage != BasementStage.FINISHED && live.stage != BasementStage.ABORTED) {
+                Text("Test Setup", style = MaterialTheme.typography.titleMedium)
+                Text("Route: START → B1 → B2 → B1 Return → START. Network data is sampled continuously at 1 Hz; B1/B2/B1 Return automatically wait then Ping.", style = MaterialTheme.typography.bodySmall)
+                Field("Selected SIM", selectedSim?.let { "${it.simLabel} · ${it.servingCell.operator} · ${it.servingCell.displayRat}" } ?: "--")
+                Text("Before testing: turn Wi-Fi OFF and make this selected SIM the Android default mobile-data SIM, so Ping and network logging refer to the same SIM.", style = MaterialTheme.typography.bodySmall)
+                OutlinedTextField(deviceLabel, { deviceLabel = it }, label = { Text("Device label") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(host, { host = it }, label = { Text("Ping host") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(stabilize, { stabilize = it.filter(Char::isDigit) }, label = { Text("Stabilize s") }, singleLine = true, modifier = Modifier.weight(1f))
+                    OutlinedTextField(pingSeconds, { pingSeconds = it.filter(Char::isDigit) }, label = { Text("Ping s") }, singleLine = true, modifier = Modifier.weight(1f))
+                    OutlinedTextField(recovery, { recovery = it.filter(Char::isDigit) }, label = { Text("Recovery s") }, singleLine = true, modifier = Modifier.weight(1f))
+                }
+                Button(onClick = { startBasement() }, modifier = Modifier.fillMaxWidth()) { Text("START TEST") }
+                Text("The floating window is the primary controller while walking. First version uses fixed stabilization time; no GPS/map/stability algorithm.", style = MaterialTheme.typography.bodySmall)
+            } else {
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(live.stage.label, style = MaterialTheme.typography.titleMedium)
+                        Field("Network", "${live.currentRat} · ${live.currentRsrp} dBm")
+                        Field("Operator", live.operator)
+                        live.countdownSeconds?.let { Field("Countdown", "${it}s") }
+                        if (live.pingTotal > 0) Field("Ping", "${live.pingProgress} / ${live.pingTotal}")
+                        live.lastPointResult?.let {
+                            Field("Last Ping", "${it.result} · Loss ${String.format(Locale.US, "%.1f%%", it.lossPct)} · Avg ${it.avgRttMs?.let { v -> String.format(Locale.US, "%.0f ms", v) } ?: "--"}")
+                        }
+                        if (live.stage == BasementStage.RECOVERY || live.stage == BasementStage.RECOVERY_COMPLETE || live.stage == BasementStage.FINISHED) {
+                            fun rec(v: Long?, required: Boolean): String = when {
+                                !required || v == -2L -> "N/A"
+                                v != null -> String.format(Locale.US, "%.1fs", v / 1000.0)
+                                live.stage == BasementStage.RECOVERY_COMPLETE && live.recoveryTimedOut -> "FAIL"
+                                else -> "Waiting"
+                            }
+                            Field("LTE Recovery", rec(live.lteRecoveryMs, live.lteRecoveryRequired))
+                            Field("Data Recovery", rec(live.dataRecoveryMs, true))
+                            Field("5G Recovery", rec(live.nrRecoveryMs, live.nrRecoveryRequired))
+                        }
+                        Text(live.statusMessage, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+
+                if (live.isRunning) {
+                    val actionable = live.stage in setOf(
+                        BasementStage.START_TO_B1, BasementStage.B1_COMPLETE, BasementStage.B1_TO_B2,
+                        BasementStage.B2_COMPLETE, BasementStage.B2_TO_B1, BasementStage.B1_RETURN_COMPLETE,
+                        BasementStage.B1_TO_START, BasementStage.RECOVERY_COMPLETE
+                    )
+                    if (actionable) {
+                        Button(
+                            onClick = { context.startService(Intent(context, BasementTestService::class.java).apply { action = BasementTestService.ACTION_PRIMARY }) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("Trigger Current Stage Action") }
+                    }
+                    OutlinedButton(
+                        onClick = { context.startService(Intent(context, BasementTestService::class.java).apply { action = BasementTestService.ACTION_ABORT }) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Abort Test") }
+                } else {
+                    if (live.reportPath.isNotBlank()) {
+                        Text("Report saved:", style = MaterialTheme.typography.labelLarge)
+                        Text(live.reportPath, style = MaterialTheme.typography.bodySmall)
+                    }
+                    Button(onClick = {
+                        BasementTestStore.state.value = BasementLiveState()
+                    }, modifier = Modifier.fillMaxWidth()) { Text("NEW TEST") }
+                }
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun VisualAiCollectorScreen(onBack: () -> Unit) {
@@ -2617,6 +2748,8 @@ private fun VisualAiCollectorScreen(onBack: () -> Unit) {
     var frames by remember { mutableIntStateOf(ScreenCaptureService.collectorFrameCount) }
     var failures by remember { mutableIntStateOf(ScreenCaptureService.collectorSaveFailures) }
     var lastPath by remember { mutableStateOf(ScreenCaptureService.collectorLastPath) }
+    var exportPath by remember { mutableStateOf(ScreenCaptureService.collectorExportPath) }
+    var exportStatus by remember { mutableStateOf(ScreenCaptureService.collectorExportStatus) }
 
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val data = result.data
@@ -2639,6 +2772,8 @@ private fun VisualAiCollectorScreen(onBack: () -> Unit) {
             frames = ScreenCaptureService.collectorFrameCount
             failures = ScreenCaptureService.collectorSaveFailures
             lastPath = ScreenCaptureService.collectorLastPath
+            exportPath = ScreenCaptureService.collectorExportPath
+            exportStatus = ScreenCaptureService.collectorExportStatus
             delay(300)
         }
     }
@@ -2655,7 +2790,9 @@ private fun VisualAiCollectorScreen(onBack: () -> Unit) {
                     Text("RECS images: $frames")
                     if (failures > 0) Text("Save failures: $failures")
                     if (active && frames == 0) Text("Waiting for first MediaProjection frame…", style = MaterialTheme.typography.bodySmall)
-                    if (lastPath.isNotBlank()) Text("Saved: $lastPath", style = MaterialTheme.typography.bodySmall)
+                    if (lastPath.isNotBlank()) Text("Working folder: $lastPath", style = MaterialTheme.typography.bodySmall)
+                    if (exportStatus.isNotBlank()) Text("Export: $exportStatus", style = MaterialTheme.typography.bodySmall)
+                    if (exportPath.isNotBlank()) Text("Public ZIP: $exportPath", style = MaterialTheme.typography.bodySmall)
                 }
             }
             if (!active) {
@@ -2686,7 +2823,7 @@ private fun VisualAiCollectorScreen(onBack: () -> Unit) {
                     context.startService(Intent(context, ScreenCaptureService::class.java).apply { action = ScreenCaptureService.ACTION_STOP_VISUAL_AI })
                 }, modifier = Modifier.fillMaxWidth()) { Text("STOP COLLECTION") }
             }
-            Text("Collector files are stored in CellTracker's app storage under VisualAI/<date>/session_<time>. The exact path appears above after the first saved frame.", style = MaterialTheme.typography.bodySmall)
+            Text("During capture, frames are kept in CellTracker's private app storage for speed. When you tap STOP COLLECTION, CellTracker automatically exports the whole session as a ZIP to Downloads/CellTracker/VisualAI/<date>/ so normal file managers can see and share it.", style = MaterialTheme.typography.bodySmall)
         }
     }
 }
