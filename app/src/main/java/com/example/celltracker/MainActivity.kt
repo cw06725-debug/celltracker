@@ -419,9 +419,9 @@ private fun LiquidGlassBottomBar(
                                 val minDx = -selectedIndex * itemPx
                                 val maxDx = (items.lastIndex - selectedIndex) * itemPx
                                 dragX = (dragX + amount).coerceIn(minDx, maxDx)
-                                pressedIndex = ((selectedIndex * itemPx + dragX) / itemPx)
-                                    .roundToInt()
-                                    .coerceIn(0, items.lastIndex)
+                                pressedIndex = kotlin.math.round(
+                                    (selectedIndex * itemPx + dragX) / itemPx
+                                ).toInt().coerceIn(0, items.lastIndex)
                             },
                             onDragEnd = {
                                 val itemPx = barWidthPx.toFloat() / items.size

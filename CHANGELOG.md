@@ -1,5 +1,11 @@
 # CellTracker Changelog
 
+## v0.9.3.0.46
+
+- Fixes Kotlin compile error in the frosted navigation press/drag animation.
+- Replaces unresolved `roundToInt()` with explicit `kotlin.math.round(...).toInt()`.
+- Keeps v0.9.3.0.45 real-time Haze blur, white-line cleanup, five-tab swipe and press-scale animation unchanged.
+
 ## v0.9.3.0.45
 
 - Removed the extra horizontal specular/highlight line from the frosted bottom navigation.
