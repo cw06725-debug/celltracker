@@ -34,6 +34,10 @@ class ScreenCaptureService : Service() {
     private var width = 0
     private var height = 0
     private var density = 0
+    private var visualAiCollectorActive = false
+    private var visualAiSessionStartedAt = 0L
+    private var visualAiFrameCount = 0
+    private var visualAiLastFrameElapsed = 0L
 
     override fun onCreate() {
         super.onCreate()
@@ -44,6 +48,8 @@ class ScreenCaptureService : Service() {
         when (intent?.action) {
             ACTION_INIT -> initProjection(intent)
             ACTION_CAPTURE_MARK -> captureAndMark(intent)
+            ACTION_START_VISUAL_AI -> startVisualAiCollector()
+            ACTION_STOP_VISUAL_AI -> stopVisualAiCollector()
             ACTION_STOP -> stopSelf()
         }
         return START_NOT_STICKY
@@ -55,10 +61,11 @@ class ScreenCaptureService : Service() {
         val data: Intent? = if (Build.VERSION.SDK_INT >= 33) intent.getParcelableExtra(EXTRA_RESULT_DATA, Intent::class.java) else intent.getParcelableExtra(EXTRA_RESULT_DATA)
         if (resultCode != Activity.RESULT_OK || data == null) return
 
+        val collectorRequested = intent.getBooleanExtra(EXTRA_START_VISUAL_AI, false)
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_menu_camera)
-            .setContentTitle("CellTracker screenshot ready")
-            .setContentText("Screenshots are captured only when you mark an issue")
+            .setContentTitle(if (collectorRequested) "CellTracker Visual AI Collector" else "CellTracker screenshot ready")
+            .setContentText(if (collectorRequested) "Collecting YouTube PLAYER + RECS training frames" else "Screenshots are captured only when you mark an issue")
             .setOngoing(true)
             .build()
         if (Build.VERSION.SDK_INT >= 29) startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
@@ -86,6 +93,81 @@ class ScreenCaptureService : Service() {
             reader?.surface, null, null
         )
         isReady = projection != null
+        if (collectorRequested && isReady) startVisualAiCollector()
+    }
+
+    private fun startVisualAiCollector() {
+        val r = reader ?: return
+        visualAiCollectorActive = true
+        visualAiSessionStartedAt = System.currentTimeMillis()
+        visualAiFrameCount = 0
+        visualAiLastFrameElapsed = 0L
+        collectorFrameCount = 0
+        collectorActive = true
+
+        r.setOnImageAvailableListener({ imageReader ->
+            if (!visualAiCollectorActive) {
+                imageReader.acquireLatestImage()?.close()
+                return@setOnImageAvailableListener
+            }
+            val now = android.os.SystemClock.elapsedRealtime()
+            if (visualAiLastFrameElapsed > 0L && now - visualAiLastFrameElapsed < 500L) {
+                imageReader.acquireLatestImage()?.close()
+                return@setOnImageAvailableListener
+            }
+            val image = imageReader.acquireLatestImage() ?: return@setOnImageAvailableListener
+            visualAiLastFrameElapsed = now
+            try {
+                val plane = image.planes[0]
+                val buffer = plane.buffer
+                val pixelStride = plane.pixelStride
+                val rowStride = plane.rowStride
+                val rowPadding = rowStride - pixelStride * width
+                val full = Bitmap.createBitmap(width + rowPadding / pixelStride, height, Bitmap.Config.ARGB_8888)
+                full.copyPixelsFromBuffer(buffer)
+                val screen = Bitmap.createBitmap(full, 0, 0, width, height)
+                full.recycle()
+
+                visualAiFrameCount++
+                collectorFrameCount = visualAiFrameCount
+                val relative = System.currentTimeMillis() - visualAiSessionStartedAt
+                saveVisualAiRois(screen, visualAiSessionStartedAt, visualAiFrameCount, relative)
+                screen.recycle()
+            } catch (_: Throwable) {
+                collectorSaveFailures++
+            } finally {
+                image.close()
+            }
+        }, android.os.Handler(mainLooper))
+    }
+
+    private fun stopVisualAiCollector() {
+        visualAiCollectorActive = false
+        collectorActive = false
+        reader?.setOnImageAvailableListener(null, null)
+    }
+
+    private fun saveVisualAiRois(screen: Bitmap, sessionMs: Long, frame: Int, relativeMs: Long) {
+        val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(sessionMs))
+        val session = SimpleDateFormat("HHmmss", Locale.US).format(Date(sessionMs))
+        val dir = File(getExternalFilesDir(null), "VisualAI/$date/session_$session").apply { mkdirs() }
+
+        val w = screen.width
+        val h = screen.height
+        fun crop(l: Float, t: Float, r: Float, b: Float): Bitmap {
+            val x1 = (w*l).toInt().coerceIn(0,w-1)
+            val y1 = (h*t).toInt().coerceIn(0,h-1)
+            val x2 = (w*r).toInt().coerceIn(x1+1,w)
+            val y2 = (h*b).toInt().coerceIn(y1+1,h)
+            return Bitmap.createBitmap(screen,x1,y1,x2-x1,y2-y1)
+        }
+        val prefix = "F${frame.toString().padStart(4,'0')}_+${relativeMs.toString().padStart(6,'0')}ms"
+        val player = crop(.02f,.07f,.98f,.55f)
+        val recs = crop(.02f,.43f,.98f,.96f)
+        FileOutputStream(File(dir, "${prefix}_PLAYER.jpg")).use { player.compress(Bitmap.CompressFormat.JPEG, 84, it) }
+        FileOutputStream(File(dir, "${prefix}_RECS.jpg")).use { recs.compress(Bitmap.CompressFormat.JPEG, 84, it) }
+        player.recycle(); recs.recycle()
+        collectorLastPath = dir.absolutePath
     }
 
     private fun captureAndMark(intent: Intent) {
@@ -240,6 +322,8 @@ class ScreenCaptureService : Service() {
 
     override fun onDestroy() {
         isReady = false
+        visualAiCollectorActive = false
+        collectorActive = false
         virtualDisplay?.release(); virtualDisplay = null
         reader?.close(); reader = null
         projection?.stop(); projection = null
@@ -261,11 +345,18 @@ class ScreenCaptureService : Service() {
         const val ACTION_INIT = "com.example.celltracker.CAPTURE_INIT"
         const val ACTION_CAPTURE_MARK = "com.example.celltracker.CAPTURE_MARK"
         const val ACTION_STOP = "com.example.celltracker.CAPTURE_STOP"
+        const val ACTION_START_VISUAL_AI = "com.example.celltracker.VISUAL_AI_START"
+        const val ACTION_STOP_VISUAL_AI = "com.example.celltracker.VISUAL_AI_STOP"
+        const val EXTRA_START_VISUAL_AI = "start_visual_ai"
         const val EXTRA_RESULT_CODE = "result_code"
         const val EXTRA_RESULT_DATA = "result_data"
         const val CHANNEL_ID = "celltracker_capture"
         const val NOTIFICATION_ID = 1002
         @Volatile var isReady: Boolean = false
+        @Volatile var collectorActive: Boolean = false
+        @Volatile var collectorFrameCount: Int = 0
+        @Volatile var collectorSaveFailures: Int = 0
+        @Volatile var collectorLastPath: String = ""
 
         private val EXCLUDED_FOREGROUND_PACKAGES = setOf(
             "com.android.systemui",

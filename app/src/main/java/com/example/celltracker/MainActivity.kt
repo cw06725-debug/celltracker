@@ -141,6 +141,7 @@ class MainActivity : ComponentActivity() {
                 var showPingTest by remember { mutableStateOf(false) }
                 var showCallSetup by remember { mutableStateOf(false) }
                 var showVideoLoading by remember { mutableStateOf(false) }
+                var showVisualAiCollector by remember { mutableStateOf(false) }
                 var showWhatsAppSend by remember { mutableStateOf(false) }
                 val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { vm.start() }
                 var overlayPermissionRequestedForRecording by remember { mutableStateOf(false) }
@@ -208,11 +209,12 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                BackHandler(enabled = showSettings || detailPath != null || showPingTest || showCallSetup || showVideoLoading || showWhatsAppSend) {
+                BackHandler(enabled = showSettings || detailPath != null || showPingTest || showCallSetup || showVideoLoading || showVisualAiCollector || showWhatsAppSend) {
                     when {
                         detailPath != null -> detailPath = null
                         showCallSetup -> showCallSetup = false
                         showVideoLoading -> showVideoLoading = false
+                        showVisualAiCollector -> showVisualAiCollector = false
                         showWhatsAppSend -> showWhatsAppSend = false
                         showPingTest -> showPingTest = false
                         showSettings -> showSettings = false
@@ -227,6 +229,7 @@ class MainActivity : ComponentActivity() {
                     detailPath != null -> RootDestination.Detail(detailPath!!)
                     showCallSetup -> RootDestination.CallSetup
                     showVideoLoading -> RootDestination.VideoLoading
+                    showVisualAiCollector -> RootDestination.VisualAiCollector
                     showWhatsAppSend -> RootDestination.WhatsAppSend
                     showPingTest -> RootDestination.PingTest
                     showSettings -> RootDestination.Settings
@@ -255,7 +258,8 @@ class MainActivity : ComponentActivity() {
                         onExport = vm::exportRecording,
                         onDelete = { path -> vm.deleteRecording(path); detailPath = null }
                     )
-                    RootDestination.VideoLoading -> VideoLoadingScreen(onBack = { showVideoLoading = false })
+                    RootDestination.VideoLoading -> VideoLoadingScreen(onBack = { showVideoLoading = false }, onVisualAiCollector = { showVisualAiCollector = true; showVideoLoading = false })
+                    RootDestination.VisualAiCollector -> VisualAiCollectorScreen(onBack = { showVisualAiCollector = false; showVideoLoading = true })
                     RootDestination.WhatsAppSend -> WhatsAppSendScreen(onBack = { showWhatsAppSend = false })
                     RootDestination.PingTest -> PingTestScreen(
                         state = state.pingTest,
@@ -332,6 +336,7 @@ private sealed interface RootDestination {
     data object Main : RootDestination
     data object Settings : RootDestination
     data object VideoLoading : RootDestination
+    data object VisualAiCollector : RootDestination
     data object WhatsAppSend : RootDestination
     data object PingTest : RootDestination
     data object CallSetup : RootDestination
@@ -2605,8 +2610,75 @@ private fun WhatsAppSendScreen(onBack: () -> Unit) {
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun VideoLoadingScreen(onBack: () -> Unit) {
+private fun VisualAiCollectorScreen(onBack: () -> Unit) {
+    val context = LocalContext.current
+    var active by remember { mutableStateOf(ScreenCaptureService.collectorActive) }
+    var frames by remember { mutableIntStateOf(ScreenCaptureService.collectorFrameCount) }
+    var failures by remember { mutableIntStateOf(ScreenCaptureService.collectorSaveFailures) }
+    var lastPath by remember { mutableStateOf(ScreenCaptureService.collectorLastPath) }
+
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val data = result.data
+        if (result.resultCode == Activity.RESULT_OK && data != null) {
+            val intent = Intent(context, ScreenCaptureService::class.java).apply {
+                action = ScreenCaptureService.ACTION_INIT
+                putExtra(ScreenCaptureService.EXTRA_RESULT_CODE, result.resultCode)
+                putExtra(ScreenCaptureService.EXTRA_RESULT_DATA, data)
+                putExtra(ScreenCaptureService.EXTRA_START_VISUAL_AI, true)
+            }
+            ContextCompat.startForegroundService(context, intent)
+            val launch = context.packageManager.getLaunchIntentForPackage("com.google.android.youtube")
+            if (launch != null) context.startActivity(launch)
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            active = ScreenCaptureService.collectorActive
+            frames = ScreenCaptureService.collectorFrameCount
+            failures = ScreenCaptureService.collectorSaveFailures
+            lastPath = ScreenCaptureService.collectorLastPath
+            delay(300)
+        }
+    }
+
+    Scaffold(topBar = { TopAppBar(title = { Text("Visual AI Collector") }, navigationIcon = { TextButton(onClick = onBack) { Text("Back") } }) }) { pad ->
+        Column(Modifier.padding(pad).padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Independent Collector", style = MaterialTheme.typography.titleMedium)
+            Text("This mode only records YouTube screen data for visual-AI development. It does not use the old PLAY/RECS result to stop an attempt.", style = MaterialTheme.typography.bodySmall)
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(if (active) "CAPTURING ●" else "COLLECTOR READY", style = MaterialTheme.typography.titleMedium)
+                    Text("Frames: $frames")
+                    Text("PLAYER images: $frames")
+                    Text("RECS images: $frames")
+                    if (failures > 0) Text("Save failures: $failures")
+                    if (lastPath.isNotBlank()) Text("Saved: $lastPath", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            if (!active) {
+                Button(onClick = {
+                    ScreenCaptureService.collectorSaveFailures = 0
+                    val mgr = context.getSystemService(android.media.projection.MediaProjectionManager::class.java)
+                    permissionLauncher.launch(mgr.createScreenCaptureIntent())
+                }, modifier = Modifier.fillMaxWidth()) { Text("START COLLECTION") }
+                Text("Android will ask for screen-sharing permission once. After approval CellTracker opens YouTube automatically.", style = MaterialTheme.typography.bodySmall)
+            } else {
+                Button(onClick = {
+                    context.startService(Intent(context, ScreenCaptureService::class.java).apply { action = ScreenCaptureService.ACTION_STOP_VISUAL_AI })
+                }, modifier = Modifier.fillMaxWidth()) { Text("STOP COLLECTION") }
+                Text("Use YouTube normally: open videos, wait for playback/recommendations, go Back, scroll and open the next video. No CellTracker START/LOADED is needed.", style = MaterialTheme.typography.bodySmall)
+            }
+            Text("Collector files are stored in CellTracker's app storage under VisualAI/<date>/session_<time>. The exact path appears above after the first saved frame.", style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+@Composable
+private fun VideoLoadingScreen(onBack: () -> Unit, onVisualAiCollector: () -> Unit) {
     val context = LocalContext.current
     val repo = remember { VideoLoadingRepository(context) }
     var count by rememberSaveable { mutableStateOf(repo.loadConfig().count.toString()) }
@@ -2625,6 +2697,13 @@ private fun VideoLoadingScreen(onBack: () -> Unit) {
     Scaffold(topBar = { TopAppBar(title = { Text("YouTube Video Loading") }, navigationIcon = { TextButton(onClick = onBack) { Text("Back") } }) }) { pad ->
         Column(Modifier.padding(pad).padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Preparation", style = MaterialTheme.typography.titleMedium)
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Visual AI Collector", style = MaterialTheme.typography.titleSmall)
+                    Text("Independent screen-data collection. It does NOT use PLAY/RECS auto-result logic.", style = MaterialTheme.typography.bodySmall)
+                    Button(onClick = onVisualAiCollector, modifier = Modifier.fillMaxWidth()) { Text("Open Visual AI Collector") }
+                }
+            }
             Text("On every DUT/REF: open YouTube → the same creator → Videos, with the same first video visible. Each phone measures its own loading delay; simultaneous start is not required.", style = MaterialTheme.typography.bodySmall)
             OutlinedTextField(count, { count = it.filter(Char::isDigit) }, label = { Text("Test count (AUTO only)") }, singleLine = true, enabled = !semiAuto)
             OutlinedTextField(timeout, { timeout = it.filter(Char::isDigit) }, label = { Text("Load timeout (s)") }, singleLine = true)
