@@ -107,7 +107,7 @@ class BasementTestService : Service() {
     }
 
     private suspend fun samplingLoop() {
-        while (isActive && BasementTestStore.state.value.isRunning) {
+        while (currentCoroutineContext().isActive && BasementTestStore.state.value.isRunning) {
             val started = System.currentTimeMillis()
             val sample = captureNetworkSample()
             if (sample != null) {
