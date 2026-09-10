@@ -4,6 +4,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 
 enum class BasementStage(val label: String) {
     IDLE("Ready"),
+    PREPARED("Ready to Start"),
     START_TO_B1("START → B1"),
     B1_STABILIZING("B1 · Stabilizing"),
     B1_PING("B1 · Ping Testing"),

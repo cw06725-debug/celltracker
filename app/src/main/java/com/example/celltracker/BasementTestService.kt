@@ -19,6 +19,7 @@ import android.provider.MediaStore
 import android.provider.Settings
 import android.telephony.SubscriptionManager
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
@@ -60,6 +61,7 @@ class BasementTestService : Service() {
     private var overlayNetwork: TextView? = null
     private var overlaySub: TextView? = null
     private var overlayButton: Button? = null
+    private var overlayLp: WindowManager.LayoutParams? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -69,6 +71,7 @@ class BasementTestService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
+            ACTION_PREPARE -> prepareTest(readConfig(intent))
             ACTION_START -> startTest(readConfig(intent))
             ACTION_PRIMARY -> handlePrimaryAction()
             ACTION_ABORT -> finishTest("ABORTED")
@@ -77,9 +80,32 @@ class BasementTestService : Service() {
         return START_NOT_STICKY
     }
 
-    private fun startTest(newConfig: BasementTestConfig) {
+    private fun prepareTest(newConfig: BasementTestConfig) {
         if (BasementTestStore.state.value.isRunning) return
         config = newConfig
+        startForegroundServiceNotification("Ready to Start")
+        BasementTestStore.state.value = BasementLiveState(
+            isRunning = true,
+            stage = BasementStage.PREPARED,
+            stageStartedAt = System.currentTimeMillis(),
+            statusMessage = "Floating controller ready · press START TEST"
+        )
+        showOverlay()
+        updateOverlay()
+    }
+
+    // Kept for compatibility with callers that still send ACTION_START directly.
+    private fun startTest(newConfig: BasementTestConfig) {
+        if (BasementTestStore.state.value.stage != BasementStage.PREPARED) {
+            config = newConfig
+        }
+        beginTest()
+    }
+
+    private fun beginTest() {
+        if (BasementTestStore.state.value.stage != BasementStage.PREPARED &&
+            BasementTestStore.state.value.stage != BasementStage.IDLE) return
+
         sessionStartedAt = System.currentTimeMillis()
         sessionDirName = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date(sessionStartedAt))
         lastSample = null
@@ -91,7 +117,6 @@ class BasementTestService : Service() {
         segmentStart[SEG_START_B1] = sessionStartedAt
 
         acquireWakeLock()
-        startForegroundServiceNotification("START → B1")
         BasementTestStore.state.value = BasementLiveState(
             isRunning = true,
             stage = BasementStage.START_TO_B1,
@@ -100,9 +125,8 @@ class BasementTestService : Service() {
             statusMessage = "Walking to B1"
         )
         appendEvent("TEST_START", "", "START", "Basement weak coverage test started")
-        showOverlay()
         updateOverlay()
-
+        updateNotification("START → B1")
         sampleJob = scope.launch { samplingLoop() }
     }
 
@@ -264,6 +288,7 @@ class BasementTestService : Service() {
 
     private fun handlePrimaryAction() {
         when (BasementTestStore.state.value.stage) {
+            BasementStage.PREPARED -> beginTest()
             BasementStage.START_TO_B1 -> arriveB1First()
             BasementStage.B1_COMPLETE -> startRoute(BasementStage.B1_TO_B2, SEG_B1_B2, "B1", "B2")
             BasementStage.B1_TO_B2 -> arriveB2()
@@ -388,32 +413,81 @@ class BasementTestService : Service() {
         recoveryJob = scope.launch {
             val requireNr = startHadNr == true
             val requireLte = startHadLte != false
+            val arrivalSnap = lastSample
+
+            fun lteAvailable(snap: BasementNetworkSample?): Boolean =
+                snap != null && snap.registered && (
+                    snap.lteRsrp != "--" || snap.rat == "4G" || snap.displayRat.contains("LTE", true)
+                )
+            fun nrAvailable(snap: BasementNetworkSample?): Boolean =
+                snap != null && (snap.nrState == "CONNECTED" || snap.rat == "5G")
+
+            // If the capability is already present at the exact ARRIVE START mark, this is not
+            // a "recovery after arrival"; report 0.0 s instead of waiting two more samples and
+            // misleadingly showing ~1–2 s.
+            var lteRecovery: Long? = when {
+                !requireLte -> -2L
+                lteAvailable(arrivalSnap) -> 0L
+                else -> null
+            }
+            var nrRecovery: Long? = when {
+                !requireNr -> -2L
+                nrAvailable(arrivalSnap) -> 0L
+                else -> null
+            }
+            var dataRecovery: Long? = null
+
             BasementTestStore.state.value = BasementTestStore.state.value.copy(
                 lteRecoveryRequired = requireLte,
                 nrRecoveryRequired = requireNr,
-                lteRecoveryMs = if (requireLte) null else -2L,
-                nrRecoveryMs = if (requireNr) null else -2L
+                lteRecoveryMs = lteRecovery,
+                nrRecoveryMs = nrRecovery,
+                dataRecoveryMs = null
             )
 
             var lteStreak = 0
             var nrStreak = 0
-            var dataStreak = 0
-            var lteRecovery: Long? = if (requireLte) null else -2L
-            var nrRecovery: Long? = if (requireNr) null else -2L
-            var dataRecovery: Long? = null
+            var lteFirstSeenMs: Long? = null
+            var nrFirstSeenMs: Long? = null
 
             val maxSeconds = config.recoverySeconds.coerceAtLeast(1)
             for (sec in 1..maxSeconds) {
                 if (!BasementTestStore.state.value.isRunning) return@launch
                 val cycleStarted = System.currentTimeMillis()
                 val snap = lastSample
-                val lteAvailable = snap != null && snap.registered && (
-                    snap.lteRsrp != "--" || snap.rat == "4G" || snap.displayRat.contains("LTE", true)
-                    )
-                val nrAvailable = snap != null && (snap.nrState == "CONNECTED" || snap.rat == "5G")
-                lteStreak = if (lteAvailable) lteStreak + 1 else 0
-                nrStreak = if (nrAvailable) nrStreak + 1 else 0
+                val lteNow = lteAvailable(snap)
+                val nrNow = nrAvailable(snap)
 
+                if (lteRecovery == null) {
+                    if (lteNow) {
+                        if (lteStreak == 0) lteFirstSeenMs = snap?.timestampMs ?: System.currentTimeMillis()
+                        lteStreak++
+                    } else {
+                        lteStreak = 0
+                        lteFirstSeenMs = null
+                    }
+                    if (lteStreak >= 2) {
+                        lteRecovery = ((lteFirstSeenMs ?: System.currentTimeMillis()) - arrivalMs).coerceAtLeast(0L)
+                        appendEvent("LTE_RECOVERY", "", "${lteRecovery}ms", "LTE restored and confirmed by 2 consecutive 1Hz samples")
+                    }
+                }
+
+                if (nrRecovery == null) {
+                    if (nrNow) {
+                        if (nrStreak == 0) nrFirstSeenMs = snap?.timestampMs ?: System.currentTimeMillis()
+                        nrStreak++
+                    } else {
+                        nrStreak = 0
+                        nrFirstSeenMs = null
+                    }
+                    if (nrStreak >= 2) {
+                        nrRecovery = ((nrFirstSeenMs ?: System.currentTimeMillis()) - arrivalMs).coerceAtLeast(0L)
+                        appendEvent("NR_RECOVERY", "", "${nrRecovery}ms", "NR restored and confirmed by 2 consecutive 1Hz samples")
+                    }
+                }
+
+                // Data Recovery is based on real data-plane availability. The first successful
+                // recovery Ping is T_data; no icon-only inference is used.
                 val (rtt, recoveryMessage) = runSinglePing(config.host, 850L)
                 val recoverySnap = lastSample
                 pingSamples += BasementPingSample(
@@ -430,19 +504,9 @@ class BasementTestService : Service() {
                         else -> recoverySnap.lteRsrp
                     }
                 )
-                dataStreak = if (rtt != null) dataStreak + 1 else 0
-                val now = System.currentTimeMillis()
-                if (requireLte && lteRecovery == null && lteStreak >= 2) {
-                    lteRecovery = (now - arrivalMs).coerceAtLeast(0L)
-                    appendEvent("LTE_RECOVERY", "", "${lteRecovery}ms", "LTE stable for 2 samples")
-                }
-                if (requireNr && nrRecovery == null && nrStreak >= 2) {
-                    nrRecovery = (now - arrivalMs).coerceAtLeast(0L)
-                    appendEvent("NR_RECOVERY", "", "${nrRecovery}ms", "NR stable for 2 samples")
-                }
-                if (dataRecovery == null && dataStreak >= 2) {
-                    dataRecovery = (now - arrivalMs).coerceAtLeast(0L)
-                    appendEvent("DATA_RECOVERY", "", "${dataRecovery}ms", "Ping succeeded twice")
+                if (dataRecovery == null && rtt != null) {
+                    dataRecovery = (System.currentTimeMillis() - arrivalMs).coerceAtLeast(0L)
+                    appendEvent("DATA_RECOVERY", "", "${dataRecovery}ms", "First successful recovery Ping")
                 }
 
                 val doneLte = !requireLte || lteRecovery != null
@@ -492,6 +556,7 @@ class BasementTestService : Service() {
     }
 
     private fun segmentFor(stage: BasementStage): String = when (stage) {
+        BasementStage.PREPARED -> ""
         BasementStage.START_TO_B1 -> SEG_START_B1
         BasementStage.B1_TO_B2 -> SEG_B1_B2
         BasementStage.B2_TO_B1 -> SEG_B2_B1
@@ -532,6 +597,13 @@ class BasementTestService : Service() {
 
     private fun finishTest(status: String) {
         if (!BasementTestStore.state.value.isRunning) return
+        if (BasementTestStore.state.value.stage == BasementStage.PREPARED) {
+            BasementTestStore.state.value = BasementLiveState()
+            removeOverlay()
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return
+        }
         sampleJob?.cancel(); sampleJob = null
         stageJob?.cancel(); stageJob = null
         recoveryJob?.cancel(); recoveryJob = null
@@ -703,12 +775,29 @@ class BasementTestService : Service() {
                 row("Segment $seg", "NR Avg SS-RSRP", String.format(Locale.US, "%.1f dBm", nrRsrp.average()))
                 row("Segment $seg", "NR Min SS-RSRP", "${nrRsrp.minOrNull()} dBm")
             }
+            val bandDist = bandDistribution(seg, end)
+            bandDist.entries.sortedByDescending { it.value }.forEach { (band, ms) ->
+                val pct = if (end > start) ms * 100.0 / (end - start) else 0.0
+                row("Segment $seg", "Band $band", "${formatDuration(ms)} / ${String.format(Locale.US, "%.1f%%", pct)}")
+            }
+            val ratChanges = events.filter { it.segment == seg && it.type == "RAT_CHANGE" }.sortedBy { it.timestampMs }
+            row("Segment $seg", "RAT Transition Count", ratChanges.size.toString())
+            ratChanges.forEachIndexed { i, e ->
+                row("Segment $seg", "RAT Transition ${i+1}", "${e.from} → ${e.to} @ ${String.format(Locale.US, "%.1fs", (e.timestampMs-start).coerceAtLeast(0L)/1000.0)}")
+            }
+            val bandChanges = events.filter { it.segment == seg && it.type == "BAND_CHANGE" }.sortedBy { it.timestampMs }
+            row("Segment $seg", "Band Transition Count", bandChanges.size.toString())
+            bandChanges.forEachIndexed { i, e ->
+                row("Segment $seg", "Band Transition ${i+1}", "${e.from} → ${e.to} @ ${String.format(Locale.US, "%.1fs", (e.timestampMs-start).coerceAtLeast(0L)/1000.0)}")
+            }
         }
     }
 
     private fun buildSummaryHtml(endedAt: Long, status: String): String {
         val st = BasementTestStore.state.value
         val ns = noServiceStats(endedAt)
+        val routeSegments = listOf(SEG_START_B1, SEG_B1_B2, SEG_B2_B1, SEG_B1_START)
+
         val points = pointResults.values.joinToString("") { r ->
             val snap = samples.firstOrNull { it.segment == r.point }
             val network = snap?.let { "${it.rat} ${if (it.rat == "5G") it.nrBand else it.lteBand}" } ?: "--"
@@ -716,27 +805,94 @@ class BasementTestService : Service() {
             val sinr = snap?.let { if (it.rat == "5G" && it.nrSsSinr != "--") it.nrSsSinr else it.lteSinr } ?: "--"
             "<tr><td>${html(r.point)}</td><td>${html(network)}</td><td>${html(rsrp)}</td><td>${html(sinr)}</td><td>${html(r.result)}</td><td>${String.format(Locale.US, "%.1f%%", r.lossPct)}</td><td>${r.avgRttMs?.let { String.format(Locale.US, "%.1f ms", it) } ?: "--"}</td></tr>"
         }
-        val transitions = events.filter { it.type in setOf("RAT_CHANGE", "CELL_CHANGE", "BAND_CHANGE", "NR_ADD", "NR_RELEASE", "NO_SERVICE_START", "NO_SERVICE_END") }
-            .joinToString("") { e ->
-                "<tr><td>${timeText(e.timestampMs)}</td><td>${html(e.segment)}</td><td>${html(e.type)}</td><td>${html(e.from)}</td><td>${html(e.to)}</td><td>${html(e.description)}</td></tr>"
-            }
-        val segmentsHtml = listOf(SEG_START_B1, SEG_B1_B2, SEG_B2_B1, SEG_B1_START).joinToString("") { seg ->
-            val start = segmentStart[seg] ?: sessionStartedAt
-            val end = segmentEnd[seg] ?: endedAt
-            val dist = ratDistribution(seg, end)
-            val total = (end - start).coerceAtLeast(1L)
+
+        val segmentsHtml = routeSegments.joinToString("") { seg ->
+            val startMs = segmentStart[seg] ?: sessionStartedAt
+            val endMs = segmentEnd[seg] ?: endedAt
+            val dist = ratDistribution(seg, endMs)
+            val total = (endMs - startMs).coerceAtLeast(1L)
             fun d(r: String): String {
                 val ms = dist[r] ?: 0L
                 return "${formatDuration(ms)} / ${String.format(Locale.US, "%.1f%%", ms * 100.0 / total)}"
             }
+            val otherMs = dist.filterKeys { it !in setOf("5G","4G","3G","2G","NO_SERVICE") }.values.sum()
+            val other = "${formatDuration(otherMs)} / ${String.format(Locale.US, "%.1f%%", otherMs * 100.0 / total)}"
             val lte = samples.filter { it.segment == seg }.mapNotNull { it.lteRsrp.toDoubleOrNull() }
             val nr = samples.filter { it.segment == seg }.mapNotNull { it.nrSsRsrp.toDoubleOrNull() }
-            "<tr><td>${html(seg)}</td><td>${formatDuration(end-start)}</td><td>${d("5G")}</td><td>${d("4G")}</td><td>${d("NO_SERVICE")}</td><td>${lte.takeIf { it.isNotEmpty() }?.average()?.let { String.format(Locale.US, "%.1f", it) } ?: "--"}</td><td>${nr.takeIf { it.isNotEmpty() }?.average()?.let { String.format(Locale.US, "%.1f", it) } ?: "--"}</td></tr>"
+            "<tr><td>${html(seg)}</td><td>${formatDuration(endMs-startMs)}</td><td>${d("5G")}</td><td>${d("4G")}</td><td>${d("3G")}</td><td>${d("2G")}</td><td>${d("NO_SERVICE")}</td><td>$other</td><td>${lte.takeIf { it.isNotEmpty() }?.average()?.let { String.format(Locale.US, "%.1f", it) } ?: "--"}</td><td>${nr.takeIf { it.isNotEmpty() }?.average()?.let { String.format(Locale.US, "%.1f", it) } ?: "--"}</td></tr>"
         }
+
+        val perSegmentAnalysis = routeSegments.joinToString("") { seg ->
+            val startMs = segmentStart[seg] ?: sessionStartedAt
+            val endMs = segmentEnd[seg] ?: endedAt
+            val duration = (endMs - startMs).coerceAtLeast(1L)
+            val ratDist = ratDistribution(seg, endMs)
+            val bandDist = bandDistribution(seg, endMs)
+
+            val ratRows = ratDist.entries.sortedByDescending { it.value }.joinToString("") { (k,v) ->
+                "<tr><td>${html(k)}</td><td>${formatDuration(v)}</td><td>${String.format(Locale.US, "%.1f%%", v*100.0/duration)}</td></tr>"
+            }.ifBlank { "<tr><td colspan='3'>No samples</td></tr>" }
+
+            val bandRows = bandDist.entries.sortedByDescending { it.value }.joinToString("") { (k,v) ->
+                "<tr><td>${html(k)}</td><td>${formatDuration(v)}</td><td>${String.format(Locale.US, "%.1f%%", v*100.0/duration)}</td></tr>"
+            }.ifBlank { "<tr><td colspan='3'>No samples</td></tr>" }
+
+            val ratEvents = events.filter { it.segment == seg && it.type == "RAT_CHANGE" }.sortedBy { it.timestampMs }
+            val bandEvents = events.filter { it.segment == seg && it.type == "BAND_CHANGE" }.sortedBy { it.timestampMs }
+            val otherEvents = events.filter {
+                it.segment == seg && it.type in setOf("CELL_CHANGE","NR_ADD","NR_RELEASE","NO_SERVICE_START","NO_SERVICE_END","DATA_STATE_CHANGE")
+            }.sortedBy { it.timestampMs }
+
+            fun elapsedText(e: BasementEvent): String =
+                String.format(Locale.US, "%.1fs", (e.timestampMs - startMs).coerceAtLeast(0L) / 1000.0)
+
+            val ratTransitionRows = ratEvents.joinToString("") { e ->
+                "<tr><td>${elapsedText(e)}</td><td>${html(e.from)}</td><td>${html(e.to)}</td><td>${timeText(e.timestampMs)}</td></tr>"
+            }.ifBlank { "<tr><td colspan='4'>None</td></tr>" }
+
+            val bandTransitionRows = bandEvents.joinToString("") { e ->
+                "<tr><td>${elapsedText(e)}</td><td>${html(e.from)}</td><td>${html(e.to)}</td><td>${timeText(e.timestampMs)}</td></tr>"
+            }.ifBlank { "<tr><td colspan='4'>None</td></tr>" }
+
+            val otherRows = otherEvents.joinToString("") { e ->
+                "<tr><td>${elapsedText(e)}</td><td>${html(e.type)}</td><td>${html(e.from)}</td><td>${html(e.to)}</td></tr>"
+            }.ifBlank { "<tr><td colspan='4'>None</td></tr>" }
+
+            """
+            <section class="segment-block">
+              <h3>${html(seg)}</h3>
+              <div class="mini-grid">
+                <div><b>Duration</b><br>${formatDuration(duration)}</div>
+                <div><b>RAT transitions</b><br>${ratEvents.size}</div>
+                <div><b>Band transitions</b><br>${bandEvents.size}</div>
+              </div>
+              <h4>Network RAT Distribution</h4>
+              <table><tr><th>RAT</th><th>Duration</th><th>Share</th></tr>$ratRows</table>
+              <h4>Band Distribution</h4>
+              <table><tr><th>Band</th><th>Duration</th><th>Share</th></tr>$bandRows</table>
+              <h4>RAT Transitions (${ratEvents.size})</h4>
+              <table><tr><th>Segment elapsed</th><th>From</th><th>To</th><th>Timestamp</th></tr>$ratTransitionRows</table>
+              <h4>Band Transitions (${bandEvents.size})</h4>
+              <table><tr><th>Segment elapsed</th><th>From</th><th>To</th><th>Timestamp</th></tr>$bandTransitionRows</table>
+              <h4>Other Network Events</h4>
+              <table><tr><th>Segment elapsed</th><th>Event</th><th>From</th><th>To</th></tr>$otherRows</table>
+            </section>
+            """.trimIndent()
+        }
+
         return """
 <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Basement Weak Coverage Summary</title>
-<style>body{font-family:sans-serif;margin:18px;color:#1f2937}h1{font-size:24px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}.card{border:1px solid #ddd;border-radius:12px;padding:12px}.k{font-size:12px;color:#666}.v{font-size:18px;font-weight:700;margin-top:4px}table{border-collapse:collapse;width:100%;margin-top:8px}th,td{border-bottom:1px solid #ddd;padding:8px;text-align:left;font-size:13px}th{background:#f6f6f6}</style></head><body>
+<style>
+body{font-family:sans-serif;margin:18px;color:#1f2937}
+h1{font-size:24px}.grid,.mini-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.card,.segment-block{border:1px solid #ddd;border-radius:12px;padding:12px;margin-bottom:14px}
+.k{font-size:12px;color:#666}.v{font-size:18px;font-weight:700;margin-top:4px}
+table{border-collapse:collapse;width:100%;margin-top:8px;margin-bottom:14px}
+th,td{border-bottom:1px solid #ddd;padding:8px;text-align:left;font-size:13px}
+th{background:#f6f6f6} h3{margin-top:0} h4{margin-bottom:4px}
+.note{background:#f6f7fb;border-radius:10px;padding:10px;font-size:13px}
+</style></head><body>
 <h1>Weak Coverage Summary</h1>
 <div class="grid">
 <div class="card"><div class="k">Status</div><div class="v">${html(status)}</div></div>
@@ -747,30 +903,71 @@ class BasementTestService : Service() {
 <div class="card"><div class="k">Data Recovery</div><div class="v">${recoveryText(st.dataRecoveryMs, true)}</div></div>
 <div class="card"><div class="k">5G Recovery</div><div class="v">${recoveryText(st.nrRecoveryMs, st.nrRecoveryRequired)}</div></div>
 </div>
+<div class="note">
+<b>Recovery calculation:</b> T0 = ARRIVE START. LTE/5G = 0.0 s if already available at arrival; otherwise the first restored 1 Hz sample time, confirmed by the next consecutive sample. Data = completion time of the first successful recovery Ping minus ARRIVE START. Recovery timeout = ${config.recoverySeconds}s.
+</div>
 <h2>Fixed Points</h2>
 <table><tr><th>Point</th><th>Network</th><th>RSRP</th><th>SINR</th><th>Ping</th><th>Loss</th><th>Avg RTT</th></tr>$points</table>
 <h2>Route Segments</h2>
-<table><tr><th>Segment</th><th>Duration</th><th>5G</th><th>4G</th><th>No Service</th><th>LTE Avg RSRP</th><th>NR Avg SS-RSRP</th></tr>$segmentsHtml</table>
-<h2>Network Events</h2>
-<table><tr><th>Time</th><th>Segment</th><th>Event</th><th>From</th><th>To</th><th>Description</th></tr>$transitions</table>
+<table><tr><th>Segment</th><th>Duration</th><th>5G</th><th>4G</th><th>3G</th><th>2G</th><th>No Service</th><th>Other</th><th>LTE Avg RSRP</th><th>NR Avg SS-RSRP</th></tr>$segmentsHtml</table>
+<h2>Network Events by Route Segment</h2>
+$perSegmentAnalysis
 <h2>Session</h2><p>${timeText(sessionStartedAt)} → ${timeText(endedAt)} · ${formatDuration(endedAt-sessionStartedAt)}</p>
 <p>Raw files: network_raw.csv · events.csv · ping.csv · summary.csv</p>
 </body></html>
 """.trimIndent()
     }
 
-    private fun ratDistribution(segment: String, fallbackEnd: Long): Map<String, Long> {
-        val rows = samples.filter { it.segment == segment }.sortedBy { it.timestampMs }
-        if (rows.isEmpty()) return emptyMap()
-        val end = segmentEnd[segment] ?: fallbackEnd
+    /**
+     * Exact segment-time allocation. v0.37 started counting at the first sample after the
+     * segment mark, leaving the first ~0–1 s unclassified; therefore an all-LTE segment could
+     * show 96–99% instead of 100%. v0.38 allocates the whole [segmentStart, segmentEnd] range.
+     */
+    private fun distributionFor(
+        segment: String,
+        fallbackEnd: Long,
+        selector: (BasementNetworkSample) -> String
+    ): Map<String, Long> {
+        val start = segmentStart[segment] ?: return emptyMap()
+        val end = (segmentEnd[segment] ?: fallbackEnd).coerceAtLeast(start)
+        if (end <= start) return emptyMap()
+
+        val rows = samples.filter { it.segment == segment && it.timestampMs <= end }.sortedBy { it.timestampMs }
+        val previous = samples.filter { it.timestampMs <= start }.maxByOrNull { it.timestampMs }
+        var current = previous ?: rows.firstOrNull()
+        if (current == null) return mapOf("UNKNOWN" to (end - start))
+
         val out = linkedMapOf<String, Long>()
-        rows.forEachIndexed { index, row ->
-            val next = rows.getOrNull(index + 1)?.timestampMs ?: end
-            val dur = (next - row.timestampMs).coerceIn(0L, 2000L)
-            out[row.rat] = (out[row.rat] ?: 0L) + dur
+        var cursor = start
+        rows.forEach { row ->
+            val t = row.timestampMs.coerceIn(start, end)
+            if (t > cursor) {
+                val key = selector(current!!).ifBlank { "UNKNOWN" }
+                out[key] = (out[key] ?: 0L) + (t - cursor)
+                cursor = t
+            }
+            current = row
+        }
+        if (cursor < end) {
+            val key = selector(current!!).ifBlank { "UNKNOWN" }
+            out[key] = (out[key] ?: 0L) + (end - cursor)
         }
         return out
     }
+
+    private fun ratDistribution(segment: String, fallbackEnd: Long): Map<String, Long> =
+        distributionFor(segment, fallbackEnd) { it.rat }
+
+    private fun bandDistribution(segment: String, fallbackEnd: Long): Map<String, Long> =
+        distributionFor(segment, fallbackEnd) { row ->
+            when (row.rat) {
+                "5G" -> row.nrBand.takeIf { it != "--" } ?: "5G UNKNOWN"
+                "4G" -> row.lteBand.takeIf { it != "--" } ?: "4G UNKNOWN"
+                "3G", "2G" -> "${row.rat} ${row.displayRat}".trim()
+                "NO_SERVICE" -> "NO SERVICE"
+                else -> row.displayRat.ifBlank { "UNKNOWN" }
+            }
+        }
 
     private fun initialRetentionMs(rat: String): Long {
         val routeRows = samples.filter { it.segment == SEG_START_B1 }.sortedBy { it.timestampMs }
@@ -843,8 +1040,34 @@ class BasementTestService : Service() {
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
             PixelFormat.TRANSLUCENT
         ).apply {
-            gravity = Gravity.TOP or Gravity.END
-            x = dp(8); y = dp(80)
+            gravity = Gravity.TOP or Gravity.START
+            x = (resources.displayMetrics.widthPixels - dp(238)).coerceAtLeast(0)
+            y = dp(80)
+        }
+        overlayLp = lp
+
+        // Drag by the title area so the primary action button remains easy to tap while walking.
+        var downRawX = 0f
+        var downRawY = 0f
+        var downX = 0
+        var downY = 0
+        overlayTitle?.setOnTouchListener { _, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    downRawX = event.rawX; downRawY = event.rawY
+                    downX = lp.x; downY = lp.y
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val maxX = (resources.displayMetrics.widthPixels - dp(230)).coerceAtLeast(0)
+                    val maxY = (resources.displayMetrics.heightPixels - dp(120)).coerceAtLeast(0)
+                    lp.x = (downX + (event.rawX - downRawX).toInt()).coerceIn(0, maxX)
+                    lp.y = (downY + (event.rawY - downRawY).toInt()).coerceIn(0, maxY)
+                    runCatching { wm.updateViewLayout(root, lp) }
+                    true
+                }
+                else -> false
+            }
         }
         runCatching { wm.addView(root, lp); overlay = root }
     }
@@ -883,6 +1106,7 @@ class BasementTestService : Service() {
     }
 
     private fun primaryActionLabel(stage: BasementStage): Pair<String, Boolean> = when (stage) {
+        BasementStage.PREPARED -> "START TEST" to true
         BasementStage.START_TO_B1 -> "ARRIVE B1" to true
         BasementStage.B1_COMPLETE -> "START B1 → B2" to true
         BasementStage.B1_TO_B2 -> "ARRIVE B2" to true
@@ -905,6 +1129,7 @@ class BasementTestService : Service() {
         overlayNetwork = null
         overlaySub = null
         overlayButton = null
+        overlayLp = null
     }
 
     private fun startForegroundServiceNotification(text: String) {
@@ -985,6 +1210,7 @@ class BasementTestService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     companion object {
+        const val ACTION_PREPARE = "com.example.celltracker.BASEMENT_PREPARE"
         const val ACTION_START = "com.example.celltracker.BASEMENT_START"
         const val ACTION_PRIMARY = "com.example.celltracker.BASEMENT_PRIMARY"
         const val ACTION_ABORT = "com.example.celltracker.BASEMENT_ABORT"

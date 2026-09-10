@@ -2635,6 +2635,54 @@ private fun BasementTestScreen(selectedSim: SimCellState?, onBack: () -> Unit) {
     var pingSeconds by rememberSaveable { mutableStateOf("60") }
     var recovery by rememberSaveable { mutableStateOf("60") }
 
+    fun basementReportUri(path: String): Uri? {
+        if (Build.VERSION.SDK_INT < 29 || path.isBlank()) return null
+        val name = path.substringAfterLast('/')
+        val relative = path.substringBeforeLast('/', "") + "/"
+        val projection = arrayOf(android.provider.MediaStore.Downloads._ID)
+        val selection = "${android.provider.MediaStore.Downloads.DISPLAY_NAME}=? AND ${android.provider.MediaStore.Downloads.RELATIVE_PATH}=?"
+        return runCatching {
+            context.contentResolver.query(
+                android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                projection,
+                selection,
+                arrayOf(name, relative),
+                "${android.provider.MediaStore.Downloads.DATE_ADDED} DESC"
+            )?.use { c ->
+                if (!c.moveToFirst()) null
+                else android.content.ContentUris.withAppendedId(
+                    android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                    c.getLong(0)
+                )
+            }
+        }.getOrNull()
+    }
+
+    fun basementReportUris(path: String): ArrayList<Uri> {
+        val out = arrayListOf<Uri>()
+        if (Build.VERSION.SDK_INT < 29 || path.isBlank()) return out
+        val relative = path.substringBeforeLast('/', "") + "/"
+        val projection = arrayOf(android.provider.MediaStore.Downloads._ID)
+        val selection = "${android.provider.MediaStore.Downloads.RELATIVE_PATH}=?"
+        runCatching {
+            context.contentResolver.query(
+                android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                projection,
+                selection,
+                arrayOf(relative),
+                null
+            )?.use { c ->
+                while (c.moveToNext()) {
+                    out += android.content.ContentUris.withAppendedId(
+                        android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                        c.getLong(0)
+                    )
+                }
+            }
+        }
+        return out
+    }
+
     fun startBasement() {
         if (!android.provider.Settings.canDrawOverlays(context)) {
             Toast.makeText(context, "Please enable 'Display over other apps', then start again.", Toast.LENGTH_LONG).show()
@@ -2647,7 +2695,7 @@ private fun BasementTestScreen(selectedSim: SimCellState?, onBack: () -> Unit) {
             return
         }
         val intent = Intent(context, BasementTestService::class.java).apply {
-            action = BasementTestService.ACTION_START
+            action = BasementTestService.ACTION_PREPARE
             putExtra(BasementTestService.EXTRA_DEVICE_LABEL, deviceLabel.trim().ifBlank { "DUT" })
             putExtra(BasementTestService.EXTRA_HOST, host.trim().ifBlank { "8.8.8.8" })
             putExtra(BasementTestService.EXTRA_STABILIZE_SECONDS, stabilize.toIntOrNull() ?: 30)
@@ -2680,10 +2728,11 @@ private fun BasementTestScreen(selectedSim: SimCellState?, onBack: () -> Unit) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(stabilize, { stabilize = it.filter(Char::isDigit) }, label = { Text("Stabilize s") }, singleLine = true, modifier = Modifier.weight(1f))
                     OutlinedTextField(pingSeconds, { pingSeconds = it.filter(Char::isDigit) }, label = { Text("Ping s") }, singleLine = true, modifier = Modifier.weight(1f))
-                    OutlinedTextField(recovery, { recovery = it.filter(Char::isDigit) }, label = { Text("Recovery s") }, singleLine = true, modifier = Modifier.weight(1f))
+                    OutlinedTextField(recovery, { recovery = it.filter(Char::isDigit) }, label = { Text("Recovery timeout s") }, singleLine = true, modifier = Modifier.weight(1f))
                 }
-                Button(onClick = { startBasement() }, modifier = Modifier.fillMaxWidth()) { Text("START TEST") }
-                Text("The floating window is the primary controller while walking. First version uses fixed stabilization time; no GPS/map/stability algorithm.", style = MaterialTheme.typography.bodySmall)
+                Button(onClick = { startBasement() }, modifier = Modifier.fillMaxWidth()) { Text("PREPARE FLOATING TEST") }
+                Text("Recovery timeout is the maximum wait after ARRIVE START for LTE/Data/5G recovery (default 60s). Preparing does NOT start timing; press START TEST on the floating window to create T0 and begin logging.", style = MaterialTheme.typography.bodySmall)
+                Text("The floating window is the primary controller while walking. Drag it by the title area if it blocks content.", style = MaterialTheme.typography.bodySmall)
             } else {
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -2712,15 +2761,27 @@ private fun BasementTestScreen(selectedSim: SimCellState?, onBack: () -> Unit) {
 
                 if (live.isRunning) {
                     val actionable = live.stage in setOf(
-                        BasementStage.START_TO_B1, BasementStage.B1_COMPLETE, BasementStage.B1_TO_B2,
+                        BasementStage.PREPARED, BasementStage.START_TO_B1, BasementStage.B1_COMPLETE, BasementStage.B1_TO_B2,
                         BasementStage.B2_COMPLETE, BasementStage.B2_TO_B1, BasementStage.B1_RETURN_COMPLETE,
                         BasementStage.B1_TO_START, BasementStage.RECOVERY_COMPLETE
                     )
                     if (actionable) {
+                        val actionText = when (live.stage) {
+                            BasementStage.PREPARED -> "START TEST"
+                            BasementStage.START_TO_B1 -> "ARRIVE B1"
+                            BasementStage.B1_COMPLETE -> "START B1 → B2"
+                            BasementStage.B1_TO_B2 -> "ARRIVE B2"
+                            BasementStage.B2_COMPLETE -> "START B2 → B1"
+                            BasementStage.B2_TO_B1 -> "ARRIVE B1"
+                            BasementStage.B1_RETURN_COMPLETE -> "START B1 → START"
+                            BasementStage.B1_TO_START -> "ARRIVE START"
+                            BasementStage.RECOVERY_COMPLETE -> "FINISH TEST"
+                            else -> "CONTINUE"
+                        }
                         Button(
                             onClick = { context.startService(Intent(context, BasementTestService::class.java).apply { action = BasementTestService.ACTION_PRIMARY }) },
                             modifier = Modifier.fillMaxWidth()
-                        ) { Text("Trigger Current Stage Action") }
+                        ) { Text(actionText) }
                     }
                     OutlinedButton(
                         onClick = { context.startService(Intent(context, BasementTestService::class.java).apply { action = BasementTestService.ACTION_ABORT }) },
@@ -2730,6 +2791,36 @@ private fun BasementTestScreen(selectedSim: SimCellState?, onBack: () -> Unit) {
                     if (live.reportPath.isNotBlank()) {
                         Text("Report saved:", style = MaterialTheme.typography.labelLarge)
                         Text(live.reportPath, style = MaterialTheme.typography.bodySmall)
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                onClick = {
+                                    val uri = basementReportUri(live.reportPath)
+                                    if (uri != null) {
+                                        val intent = Intent(Intent.ACTION_VIEW).apply {
+                                            setDataAndType(uri, "text/html")
+                                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                        }
+                                        runCatching { context.startActivity(intent) }
+                                            .onFailure { Toast.makeText(context, "No HTML viewer found", Toast.LENGTH_SHORT).show() }
+                                    } else Toast.makeText(context, "Summary file not found", Toast.LENGTH_SHORT).show()
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) { Text("PREVIEW") }
+                            Button(
+                                onClick = {
+                                    val uris = basementReportUris(live.reportPath)
+                                    if (uris.isNotEmpty()) {
+                                        val share = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+                                            type = "*/*"
+                                            putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+                                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                        }
+                                        context.startActivity(Intent.createChooser(share, "Share Basement report"))
+                                    } else Toast.makeText(context, "Report files not found", Toast.LENGTH_SHORT).show()
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) { Text("SHARE / EXPORT") }
+                        }
                     }
                     Button(onClick = {
                         BasementTestStore.state.value = BasementLiveState()
