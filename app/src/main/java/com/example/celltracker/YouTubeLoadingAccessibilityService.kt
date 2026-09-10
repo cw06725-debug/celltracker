@@ -6,6 +6,7 @@ import android.graphics.PixelFormat
 import android.graphics.Bitmap
 import android.graphics.Rect
 import android.graphics.Path
+import android.media.AudioManager
 import android.os.SystemClock
 import android.os.Build
 import android.accessibilityservice.GestureDescription
@@ -76,6 +77,8 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
     private var visualWatchJob: Job? = null
     private var visualWatchGeneration = 0
     private val visualExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+    private var autoCaptureFailureCount = 0
+    private var autoLastCaptureError = 0
     private var semiCaptureOverlay: View? = null
     private var overlayLp: WindowManager.LayoutParams? = null
     // Keep the original touch instant for a short time. If a gesture we classified as a scroll
@@ -196,46 +199,149 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         val attemptT0Elapsed = semiT0ElapsedMs
         if (attemptT0Elapsed <= 0L || t0 <= 0L) return
 
+        autoCaptureFailureCount = 0
+        autoLastCaptureError = 0
+        val audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
+        val audioWasActiveAtT0 = runCatching { audioManager.isMusicActive }.getOrDefault(false)
+
         visualWatchJob = scope.launch {
-            // Ignore the initial page transition. One large transition must never equal "loaded".
-            delay(320)
+            delay(280)
             var previous: IntArray? = null
             var dynamicStreak = 0
-            var validFrames = 0
+            var audioStreak = 0
+            var recommendationStreak = 0
+            var playbackReady = false
+            var playbackSource = ""
             val started = SystemClock.elapsedRealtime()
 
             while (isActive && running && t0 > 0L && generation == visualWatchGeneration) {
+                // Condition A: actual video playback.
+                if (!playbackReady) {
+                    val audioActive = runCatching { audioManager.isMusicActive }.getOrDefault(false)
+                    if (!audioWasActiveAtT0 && audioActive &&
+                        SystemClock.elapsedRealtime() - attemptT0Elapsed >= 400L) {
+                        audioStreak++
+                    } else {
+                        audioStreak = 0
+                    }
+                    if (audioStreak >= 2) {
+                        playbackReady = true
+                        playbackSource = "AUDIO"
+                    }
+                }
+
                 val signature = capturePlayerSignature()
                 if (signature != null) {
-                    validFrames++
                     val prior = previous
-                    if (prior != null && prior.size == signature.size) {
+                    if (!playbackReady && prior != null && prior.size == signature.size) {
                         val motion = visualMotion(prior, signature)
-                        // Spinner/UI chrome affects only a small part of the ROI. Real playback
-                        // normally changes a much larger fraction of sampled pixels repeatedly.
-                        if (motion.first >= 10.0 && motion.second >= 0.18) {
+                        if (motion.first >= 8.0 && motion.second >= 0.14) {
                             dynamicStreak++
                         } else {
                             dynamicStreak = 0
                         }
-
                         if (dynamicStreak >= 3 &&
                             SystemClock.elapsedRealtime() - attemptT0Elapsed >= 500L) {
-                            overlayStatus?.text = "SEMI · #$seq AUTO loaded detected"
-                            completeSemiAttempt("PASS", "AUTO_VISUAL", overlayStatus, performBack = true)
-                            return@launch
+                            playbackReady = true
+                            playbackSource = "VISUAL"
                         }
                     }
                     previous = signature
                 }
 
-                if (SystemClock.elapsedRealtime() - started > 12_000L) {
-                    overlayStatus?.text = "SEMI · #$seq AUTO not confirmed · use LOADED"
+                // Condition B: the recommendation list under the player is populated.
+                // Check at a lower cadence to avoid Accessibility tree pressure.
+                if (SystemClock.elapsedRealtime() - attemptT0Elapsed >= 500L) {
+                    val recReady = detectRecommendationListLoaded()
+                    recommendationStreak = if (recReady) recommendationStreak + 1 else 0
+                }
+                val recommendationsReady = recommendationStreak >= 2
+
+                overlayStatus?.text = buildString {
+                    append("SEMI · #"); append(seq); append(" ")
+                    append(if (playbackReady) "PLAY✓" else "PLAY…")
+                    append("  ")
+                    append(if (recommendationsReady) "RECS✓" else "RECS…")
+                    append(" · LOADED=fallback")
+                }
+
+                // Success means BOTH user-visible conditions are satisfied.
+                if (playbackReady && recommendationsReady) {
+                    completeSemiAttempt(
+                        "PASS",
+                        "AUTO_${playbackSource}+RECS",
+                        overlayStatus,
+                        performBack = true
+                    )
                     return@launch
                 }
-                delay(150)
+
+                val elapsed = SystemClock.elapsedRealtime() - started
+                if (elapsed > 2_000L && autoCaptureFailureCount >= 4 && previous == null) {
+                    overlayStatus?.text = "SEMI · #$seq PLAY capture unavailable($autoLastCaptureError) · RECS checking · LOADED=fallback"
+                }
+                if (elapsed > 15_000L) {
+                    overlayStatus?.text = buildString {
+                        append("SEMI · #"); append(seq); append(" AUTO timeout · ")
+                        append(if (playbackReady) "PLAY✓" else "PLAY✗")
+                        append(" ")
+                        append(if (recommendationsReady) "RECS✓" else "RECS✗")
+                        append(" · use LOADED")
+                    }
+                    return@launch
+                }
+                delay(180)
             }
         }
+    }
+
+    /**
+     * A bounded, low-cost Accessibility check for the recommendation area below the player.
+     * We intentionally do not search for language-specific words such as "Recommended":
+     * YouTube layouts/locales differ. Instead we require several visible text/click targets
+     * in the lower half, which is what populated video cards expose.
+     */
+    private fun detectRecommendationListLoaded(): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val screenHeight = resources.displayMetrics.heightPixels
+        val minTop = (screenHeight * 0.43f).toInt()
+        val queue = java.util.ArrayDeque<AccessibilityNodeInfo>()
+        queue.add(root)
+        var visited = 0
+        var lowerText = 0
+        var lowerClickable = 0
+        var distinctLongText = 0
+
+        while (queue.isNotEmpty() && visited < 120) {
+            val node = queue.removeFirst()
+            visited++
+            val bounds = Rect()
+            runCatching { node.getBoundsInScreen(bounds) }
+            val inLowerArea = bounds.bottom > minTop && bounds.top < screenHeight && node.isVisibleToUser
+
+            if (inLowerArea) {
+                val text = node.text?.toString()?.trim().orEmpty()
+                val desc = node.contentDescription?.toString()?.trim().orEmpty()
+                val label = if (text.isNotBlank()) text else desc
+                if (label.length >= 3) {
+                    lowerText++
+                    if (label.length >= 12) distinctLongText++
+                }
+                if (node.isClickable && bounds.height() >= 40 && bounds.width() >= 80) {
+                    lowerClickable++
+                }
+            }
+
+            val childCount = node.childCount.coerceAtMost(20)
+            for (i in 0 until childCount) {
+                node.getChild(i)?.let { queue.addLast(it) }
+            }
+        }
+
+        // A loaded recommendation feed normally exposes multiple titles/channel labels
+        // plus several clickable cards. Requiring both avoids accepting just the title/
+        // action row directly below the player.
+        return lowerText >= 6 && distinctLongText >= 2 && lowerClickable >= 2
     }
 
     private suspend fun capturePlayerSignature(): IntArray? =
@@ -265,6 +371,8 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                         }
 
                         override fun onFailure(errorCode: Int) {
+                            autoCaptureFailureCount++
+                            autoLastCaptureError = errorCode
                             if (cont.isActive) cont.resume(null)
                         }
                     }
