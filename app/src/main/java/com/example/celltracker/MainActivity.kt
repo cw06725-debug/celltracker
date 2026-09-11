@@ -21,6 +21,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
@@ -254,6 +256,8 @@ class MainActivity : ComponentActivity() {
                     contentAlignment = Alignment.TopStart,
                     transitionSpec = {
                         when {
+                            targetState == RootDestination.CallSetup || initialState == RootDestination.CallSetup ->
+                                EnterTransition.None.togetherWith(ExitTransition.None)
                             targetState == RootDestination.Settings ->
                                 (slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(220)) + fadeIn(tween(180)))
                                     .togetherWith(slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(220)) + fadeOut(tween(160)))
@@ -2891,6 +2895,7 @@ private fun BasementTestScreen(selectedSim: SimCellState?, onBack: () -> Unit) {
     var stabilize by rememberSaveable { mutableStateOf("30") }
     var pingSeconds by rememberSaveable { mutableStateOf("60") }
     var recovery by rememberSaveable { mutableStateOf("60") }
+    var rounds by rememberSaveable { mutableStateOf("1") }
 
     val routePoints = remember {
         mutableStateListOf(
@@ -2985,12 +2990,14 @@ private fun BasementTestScreen(selectedSim: SimCellState?, onBack: () -> Unit) {
             putExtra(BasementTestService.EXTRA_STABILIZE_SECONDS, stabilize.toIntOrNull() ?: 30)
             putExtra(BasementTestService.EXTRA_PING_SECONDS, pingSeconds.toIntOrNull() ?: 60)
             putExtra(BasementTestService.EXTRA_RECOVERY_SECONDS, recovery.toIntOrNull() ?: 60)
+            putExtra(BasementTestService.EXTRA_ROUNDS, (rounds.toIntOrNull() ?: 1).coerceIn(1, 20))
             putExtra(BasementTestService.EXTRA_SUBSCRIPTION_ID, selectedSim?.subscriptionId ?: -1)
         }
         ContextCompat.startForegroundService(context, intent)
     }
 
     Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             TopAppBar(
                 title = { Text("Weak Coverage Route Test") },
@@ -3092,6 +3099,14 @@ private fun BasementTestScreen(selectedSim: SimCellState?, onBack: () -> Unit) {
                 )
 
                 OutlinedTextField(host, { host = it }, label = { Text("Ping host") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(
+                    rounds,
+                    { rounds = it.filter(Char::isDigit) },
+                    label = { Text("Test rounds") },
+                    supportingText = { Text("Repeat the complete route 1–20 times. Final report shows averages across completed rounds.") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
                         stabilize, { stabilize = it.filter(Char::isDigit) },
@@ -3122,11 +3137,13 @@ private fun BasementTestScreen(selectedSim: SimCellState?, onBack: () -> Unit) {
                                 BasementStage.ROUTE_TRAVEL -> live.currentSegment
                                 BasementStage.POINT_STABILIZING, BasementStage.POINT_PING, BasementStage.POINT_COMPLETE -> live.currentPointName
                                 BasementStage.RECOVERY, BasementStage.RECOVERY_COMPLETE -> "${live.currentPointName} · Recovery"
+                                BasementStage.ROUND_COMPLETE -> "Round ${live.currentRound} Completed"
                                 else -> live.stage.label
                             },
                             style = MaterialTheme.typography.titleMedium
                         )
                         if (live.routeName.isNotBlank()) Field("Route", live.routeName)
+                        Field("Round", "${live.currentRound} / ${live.totalRounds}")
                         if (live.routeSegmentCount > 0) Field("Progress", "${live.routeSegmentIndex} / ${live.routeSegmentCount}")
                         Field("Network", "${live.currentRat} · ${live.currentRsrp} dBm")
                         Field("Operator", live.operator)
@@ -3139,11 +3156,11 @@ private fun BasementTestScreen(selectedSim: SimCellState?, onBack: () -> Unit) {
                                 "${it.result} · Success ${String.format(Locale.US, "%.1f%%", success)} · Avg ${it.avgRttMs?.let { v -> String.format(Locale.US, "%.0f ms", v) } ?: "--"}"
                             )
                         }
-                        if (live.stage == BasementStage.RECOVERY || live.stage == BasementStage.RECOVERY_COMPLETE || live.stage == BasementStage.FINISHED) {
+                        if (live.stage == BasementStage.RECOVERY || live.stage == BasementStage.RECOVERY_COMPLETE || live.stage == BasementStage.ROUND_COMPLETE || live.stage == BasementStage.FINISHED) {
                             fun rec(v: Long?, required: Boolean): String = when {
                                 !required || v == -2L -> "N/A"
                                 v != null -> String.format(Locale.US, "%.1fs", v / 1000.0)
-                                live.stage == BasementStage.RECOVERY_COMPLETE && live.recoveryTimedOut -> "FAIL"
+                                (live.stage == BasementStage.RECOVERY_COMPLETE || live.stage == BasementStage.ROUND_COMPLETE) && live.recoveryTimedOut -> "FAIL"
                                 else -> "Waiting"
                             }
                             Field("LTE Recovery", rec(live.lteRecoveryMs, live.lteRecoveryRequired))
@@ -3159,6 +3176,7 @@ private fun BasementTestScreen(selectedSim: SimCellState?, onBack: () -> Unit) {
                         BasementStage.PREPARED,
                         BasementStage.ROUTE_TRAVEL,
                         BasementStage.POINT_COMPLETE,
+                        BasementStage.ROUND_COMPLETE,
                         BasementStage.RECOVERY_COMPLETE
                     )
                     if (actionable) {
@@ -3166,6 +3184,7 @@ private fun BasementTestScreen(selectedSim: SimCellState?, onBack: () -> Unit) {
                             BasementStage.PREPARED -> "START TEST"
                             BasementStage.ROUTE_TRAVEL -> "ARRIVE ${live.nextPointName.uppercase(Locale.US)}"
                             BasementStage.POINT_COMPLETE -> "START → ${live.nextPointName.uppercase(Locale.US)}"
+                            BasementStage.ROUND_COMPLETE -> "START ROUND ${live.currentRound + 1}"
                             BasementStage.RECOVERY_COMPLETE -> "FINISH TEST"
                             else -> "CONTINUE"
                         }
@@ -3341,7 +3360,10 @@ private fun VideoLoadingScreen(onBack: () -> Unit, onVisualAiCollector: () -> Un
     var showMetadata by remember { mutableStateOf(false) }
     var pendingConfig by remember { mutableStateOf<VideoLoadingConfig?>(null) }
 
-    Scaffold(topBar = { TopAppBar(title = { Text("YouTube Video Loading") }, navigationIcon = { TextButton(onClick = onBack) { Text("Back") } }) }) { pad ->
+    Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        topBar = { TopAppBar(title = { Text("YouTube Video Loading") }, navigationIcon = { TextButton(onClick = onBack) { Text("Back") } }) }
+    ) { pad ->
         Column(Modifier.padding(pad).padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Preparation", style = MaterialTheme.typography.titleMedium)
             Card(Modifier.fillMaxWidth()) {

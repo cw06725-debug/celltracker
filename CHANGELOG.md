@@ -1,5 +1,23 @@
 # CellTracker Changelog
 
+## v0.9.3.0.52
+
+- Fix secondary-page bottom white space for YouTube Video Loading and Weak Coverage Route by removing Scaffold bottom content insets.
+- Make Call Setup open more responsively:
+  - disable the root fade transition for Call Setup;
+  - render the first frame before Bluetooth/telephony refresh;
+  - request only permissions that are actually missing.
+- Add `Test rounds` to Weak Coverage Route Test (1–20).
+- Each round repeats the full configured route and recovery flow.
+- After a non-final round completes, the floating controller shows `START ROUND N`.
+- Raw Weak Coverage CSV files now include a `round` column.
+- Final Weak Coverage summary averages completed rounds with equal round weight:
+  - fixed-point Ping success rate and RTT;
+  - LTE/Data/5G recovery;
+  - No Service duration/count;
+  - route-segment duration, RAT share, Band share and signal averages.
+- HTML report keeps per-round details and network events below the averaged summary.
+
 ## v0.9.3.0.51
 
 - Hide the bottom navigation on all embedded Settings child pages.

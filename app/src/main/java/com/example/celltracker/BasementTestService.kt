@@ -34,6 +34,37 @@ import java.util.concurrent.TimeUnit
 import kotlin.math.ceil
 
 class BasementTestService : Service() {
+    private data class SegmentRoundMetric(
+        val segment: String,
+        val durationMs: Long,
+        val ratShare: Map<String, Double>,
+        val bandShare: Map<String, Double>,
+        val lteAvgRsrp: Double?,
+        val nrAvgRsrp: Double?
+    )
+
+    private data class PointRoundMetric(
+        val point: String,
+        val successPct: Double,
+        val avgRttMs: Double?,
+        val result: String
+    )
+
+    private data class RoundSummary(
+        val round: Int,
+        val segments: List<SegmentRoundMetric>,
+        val points: List<PointRoundMetric>,
+        val lteRecoveryMs: Long?,
+        val dataRecoveryMs: Long?,
+        val nrRecoveryMs: Long?,
+        val lteRecoveryRequired: Boolean,
+        val nrRecoveryRequired: Boolean,
+        val recoveryTimedOut: Boolean,
+        val noServiceCount: Int,
+        val noServiceTotalMs: Long,
+        val noServiceLongestMs: Long
+    )
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private lateinit var cellular: CellularRepository
     private var wakeLock: PowerManager.WakeLock? = null
@@ -49,6 +80,8 @@ class BasementTestService : Service() {
     private var startHadNr: Boolean? = null
     private var startHadLte: Boolean? = null
     private var activeSegmentIndex = 0
+    private var currentRound = 1
+    private val roundSummaries = mutableListOf<RoundSummary>()
 
     private val samples = mutableListOf<BasementNetworkSample>()
     private val events = mutableListOf<BasementEvent>()
@@ -93,6 +126,8 @@ class BasementTestService : Service() {
             currentPointName = config.routePoints.firstOrNull()?.name.orEmpty(),
             nextPointName = config.routePoints.getOrNull(1)?.name.orEmpty(),
             routeSegmentCount = (config.routePoints.size - 1).coerceAtLeast(0),
+            currentRound = 1,
+            totalRounds = config.rounds,
             statusMessage = "Floating controller ready · press START TEST"
         )
         showOverlay()
@@ -116,6 +151,8 @@ class BasementTestService : Service() {
     private fun routeSegments(): List<String> =
         (0 until (config.routePoints.size - 1).coerceAtLeast(0)).map { routeSegmentName(it) }
 
+    private fun segmentKey(round: Int, segment: String): String = "R$round|$segment"
+
     private fun beginTest() {
         if (BasementTestStore.state.value.stage != BasementStage.PREPARED &&
             BasementTestStore.state.value.stage != BasementStage.IDLE) return
@@ -128,11 +165,12 @@ class BasementTestService : Service() {
         startHadNr = null
         startHadLte = null
         activeSegmentIndex = 0
-        samples.clear(); events.clear(); pingSamples.clear(); pointResults.clear()
+        currentRound = 1
+        samples.clear(); events.clear(); pingSamples.clear(); pointResults.clear(); roundSummaries.clear()
         segmentStart.clear(); segmentEnd.clear()
 
         val firstSegment = routeSegmentName(0)
-        segmentStart[firstSegment] = sessionStartedAt
+        segmentStart[segmentKey(currentRound, firstSegment)] = sessionStartedAt
         val from = config.routePoints[0].name
         val to = config.routePoints[1].name
         acquireWakeLock()
@@ -147,7 +185,9 @@ class BasementTestService : Service() {
             nextPointName = to,
             routeSegmentIndex = 1,
             routeSegmentCount = config.routePoints.size - 1,
-            statusMessage = "Walking: $from → $to"
+            currentRound = currentRound,
+            totalRounds = config.rounds,
+            statusMessage = "Round $currentRound/${config.rounds} · Walking: $from → $to"
         )
         appendEvent("TEST_START", "", from, "${config.routeName} weak coverage route started", firstSegment)
         updateOverlay()
@@ -212,6 +252,7 @@ class BasementTestService : Service() {
 
         val stage = BasementTestStore.state.value.stage
         return BasementNetworkSample(
+            round = currentRound,
             timestampMs = System.currentTimeMillis(),
             stage = stage.name,
             segment = BasementTestStore.state.value.currentSegment.ifBlank { segmentFor(stage) },
@@ -299,6 +340,7 @@ class BasementTestService : Service() {
             val start = noServiceStartedAt
             val duration = start?.let { cur.timestampMs - it }
             events += BasementEvent(
+                round = currentRound,
                 timestampMs = cur.timestampMs,
                 segment = cur.segment,
                 type = "NO_SERVICE_END",
@@ -316,6 +358,7 @@ class BasementTestService : Service() {
             BasementStage.PREPARED -> beginTest()
             BasementStage.ROUTE_TRAVEL -> arriveNextPoint()
             BasementStage.POINT_COMPLETE -> startNextSegment()
+            BasementStage.ROUND_COMPLETE -> startNextRound()
             BasementStage.RECOVERY_COMPLETE -> finishTest("COMPLETED")
             else -> Unit
         }
@@ -324,7 +367,7 @@ class BasementTestService : Service() {
     private fun arriveNextPoint() {
         val now = System.currentTimeMillis()
         val segment = routeSegmentName(activeSegmentIndex)
-        segmentEnd[segment] = now
+        segmentEnd[segmentKey(currentRound, segment)] = now
         val from = config.routePoints.getOrNull(activeSegmentIndex)?.name ?: ""
         val point = config.routePoints.getOrNull(activeSegmentIndex + 1) ?: return
         appendEvent("ARRIVE_POINT", from, point.name, "Arrived ${point.name}", segment)
@@ -365,7 +408,7 @@ class BasementTestService : Service() {
                     currentSegment = point.name
                 )
                 val result = runPointPing(point.name)
-                pointResults[point.name] = result
+                pointResults["$currentRound|${point.name}"] = result
                 BasementTestStore.state.value = BasementTestStore.state.value.copy(lastPointResult = result)
             }
             updateStage(BasementStage.POINT_COMPLETE, if (point.pingEnabled) "${point.name} completed" else "${point.name} ready")
@@ -385,7 +428,7 @@ class BasementTestService : Service() {
         val from = config.routePoints[activeSegmentIndex].name
         val to = config.routePoints[activeSegmentIndex + 1].name
         val now = System.currentTimeMillis()
-        segmentStart[segment] = now
+        segmentStart[segmentKey(currentRound, segment)] = now
         BasementTestStore.state.value = BasementTestStore.state.value.copy(
             stage = BasementStage.ROUTE_TRAVEL,
             stageStartedAt = now,
@@ -394,10 +437,12 @@ class BasementTestService : Service() {
             nextPointName = to,
             routeSegmentIndex = activeSegmentIndex + 1,
             routeSegmentCount = config.routePoints.size - 1,
+            currentRound = currentRound,
+            totalRounds = config.rounds,
             countdownSeconds = null,
             pingProgress = 0,
             pingTotal = 0,
-            statusMessage = "$from → $to"
+            statusMessage = "Round $currentRound/${config.rounds} · $from → $to"
         )
         appendEvent("SEGMENT_START", from, to, "$from → $to started", segment)
         updateOverlay()
@@ -412,6 +457,7 @@ class BasementTestService : Service() {
             val (rtt, message) = runSinglePing(config.host, 2000L)
             val snap = lastSample
             pingSamples += BasementPingSample(
+                round = currentRound,
                 point = point,
                 timestampMs = System.currentTimeMillis(),
                 sequence = seq,
@@ -434,12 +480,13 @@ class BasementTestService : Service() {
             val spent = System.currentTimeMillis() - cycleStarted
             delay((1000L - spent).coerceAtLeast(0L))
         }
-        val rows = pingSamples.filter { it.point == point }
+        val rows = pingSamples.filter { it.round == currentRound && it.point == point }
         val sent = rows.size
         val recv = rows.count { it.success }
         val values = rows.mapNotNull { it.rttMs }
         val loss = if (sent == 0) 100.0 else (sent - recv) * 100.0 / sent
         return BasementPointResult(
+            round = currentRound,
             point = point,
             sent = sent,
             received = recv,
@@ -469,7 +516,7 @@ class BasementTestService : Service() {
         description: String,
         segment: String = segmentFor(BasementTestStore.state.value.stage)
     ) {
-        events += BasementEvent(System.currentTimeMillis(), segment, type, from, to, null, description)
+        events += BasementEvent(currentRound, System.currentTimeMillis(), segment, type, from, to, null, description)
     }
 
     private fun updateStage(stage: BasementStage, message: String) {
@@ -571,7 +618,8 @@ class BasementTestService : Service() {
                 val (rtt, recoveryMessage) = runSinglePing(config.host, 850L)
                 val recoverySnap = lastSample
                 pingSamples += BasementPingSample(
-                    point = "START Recovery",
+                    round = currentRound,
+                    point = "${config.routePoints.lastOrNull()?.name ?: "START"} Recovery",
                     timestampMs = System.currentTimeMillis(),
                     sequence = sec,
                     success = rtt != null,
@@ -601,7 +649,7 @@ class BasementTestService : Service() {
                 )
                 updateOverlay()
                 if (doneLte && doneNr && doneData) {
-                    updateStage(BasementStage.RECOVERY_COMPLETE, "Recovery completed")
+                    completeCurrentRound(false)
                     return@launch
                 }
                 val spent = System.currentTimeMillis() - cycleStarted
@@ -613,7 +661,7 @@ class BasementTestService : Service() {
                 countdownSeconds = 0
             )
             appendEvent("RECOVERY_TIMEOUT", "", "", "Recovery exceeded ${config.recoverySeconds}s")
-            updateStage(BasementStage.RECOVERY_COMPLETE, "Recovery timeout")
+            completeCurrentRound(true)
         }
     }
 
@@ -654,7 +702,7 @@ class BasementTestService : Service() {
         recoveryJob?.cancel(); recoveryJob = null
         if (noServiceStartedAt != null) {
             val now = System.currentTimeMillis()
-            events += BasementEvent(now, segmentFor(BasementTestStore.state.value.stage), "NO_SERVICE_END", "NO_SERVICE", "TEST_END", now - noServiceStartedAt!!, "Test ended while out of service")
+            events += BasementEvent(currentRound, now, segmentFor(BasementTestStore.state.value.stage), "NO_SERVICE_END", "NO_SERVICE", "TEST_END", now - noServiceStartedAt!!, "Test ended while out of service")
             noServiceStartedAt = null
         }
         appendEvent("TEST_END", BasementTestStore.state.value.stage.name, status, "Basement test finished")
@@ -726,10 +774,10 @@ class BasementTestService : Service() {
     }
 
     private fun buildNetworkCsv(): String = buildString {
-        appendLine("timestamp_ms,timestamp,stage,segment,sim,subscription_id,operator,rat,display_rat,registered,lte_band,lte_pci,lte_earfcn,lte_rsrp,lte_rsrq,lte_sinr,lte_cell_id,lte_tac,nr_state,nr_band,nr_pci,nr_arfcn,nr_ss_rsrp,nr_ss_rsrq,nr_ss_sinr,nr_cell_id,nr_tac,data_state")
+        appendLine("round,timestamp_ms,timestamp,stage,segment,sim,subscription_id,operator,rat,display_rat,registered,lte_band,lte_pci,lte_earfcn,lte_rsrp,lte_rsrq,lte_sinr,lte_cell_id,lte_tac,nr_state,nr_band,nr_pci,nr_arfcn,nr_ss_rsrp,nr_ss_rsrq,nr_ss_sinr,nr_cell_id,nr_tac,data_state")
         samples.forEach { s ->
             appendLine(listOf(
-                s.timestampMs, timeText(s.timestampMs), s.stage, s.segment, s.simSlot + 1, s.subscriptionId, s.operator,
+                s.round, s.timestampMs, timeText(s.timestampMs), s.stage, s.segment, s.simSlot + 1, s.subscriptionId, s.operator,
                 s.rat, s.displayRat, s.registered, s.lteBand, s.ltePci, s.lteArfcn, s.lteRsrp, s.lteRsrq, s.lteSinr,
                 s.lteCellId, s.lteTac, s.nrState, s.nrBand, s.nrPci, s.nrArfcn, s.nrSsRsrp, s.nrSsRsrq, s.nrSsSinr,
                 s.nrCellId, s.nrTac, s.dataState
@@ -738,18 +786,18 @@ class BasementTestService : Service() {
     }
 
     private fun buildEventsCsv(): String = buildString {
-        appendLine("timestamp_ms,timestamp,segment,segment_elapsed_ms,event_type,from,to,duration_ms,description")
+        appendLine("round,timestamp_ms,timestamp,segment,segment_elapsed_ms,event_type,from,to,duration_ms,description")
         events.sortedBy { it.timestampMs }.forEach { e ->
-            val elapsed = segmentStart[e.segment]?.let { (e.timestampMs - it).coerceAtLeast(0L) } ?: ""
-            appendLine(listOf(e.timestampMs, timeText(e.timestampMs), e.segment, elapsed, e.type, e.from, e.to, e.durationMs ?: "", e.description)
+            val elapsed = segmentStart[segmentKey(e.round, e.segment)]?.let { (e.timestampMs - it).coerceAtLeast(0L) } ?: ""
+            appendLine(listOf(e.round, e.timestampMs, timeText(e.timestampMs), e.segment, elapsed, e.type, e.from, e.to, e.durationMs ?: "", e.description)
                 .joinToString(",") { csv(it.toString()) })
         }
     }
 
     private fun buildPingCsv(): String = buildString {
-        appendLine("point,timestamp_ms,timestamp,sequence,result,rtt_ms,rat,rsrp,message")
+        appendLine("round,point,timestamp_ms,timestamp,sequence,result,rtt_ms,rat,rsrp,message")
         pingSamples.forEach { p ->
-            appendLine(listOf(p.point, p.timestampMs, timeText(p.timestampMs), p.sequence, if (p.success) "PASS" else "FAIL",
+            appendLine(listOf(p.round, p.point, p.timestampMs, timeText(p.timestampMs), p.sequence, if (p.success) "PASS" else "FAIL",
                 p.rttMs?.let { String.format(Locale.US, "%.2f", it) } ?: "", p.rat, p.rsrp, p.message)
                 .joinToString(",") { csv(it.toString()) })
         }
@@ -757,86 +805,82 @@ class BasementTestService : Service() {
 
     private fun buildSummaryCsv(endedAt: Long, status: String): String = buildString {
         appendLine("section,item,value")
-        fun row(section: String, item: String, value: String) = appendLine("${csv(section)},${csv(item)},${csv(value)}")
+        fun row(section: String, item: String, value: String) =
+            appendLine("${csv(section)},${csv(item)},${csv(value)}")
+
+        val completed = roundSummaries.sortedBy { it.round }
         row("Session", "Status", status)
         row("Session", "Route Name", config.routeName)
         row("Session", "Route", config.routePoints.joinToString(" → ") { it.name })
+        row("Session", "Configured Rounds", config.rounds.toString())
+        row("Session", "Completed Rounds", completed.size.toString())
         row("Session", "Started", timeText(sessionStartedAt))
         row("Session", "Ended", timeText(endedAt))
         row("Session", "Duration", formatDuration(endedAt - sessionStartedAt))
-        row("Weak Coverage", "5G Retention", formatDuration(initialRetentionMs("5G")))
-        row("Weak Coverage", "LTE Retention", formatDuration(firstContiguousRatMs("4G")))
-        val routeSamples = samples.filter { it.segment in routeSegments().toSet() }
-        val minLteRsrp = routeSamples.mapNotNull { it.lteRsrp.toDoubleOrNull() }.minOrNull()
-        val minNrRsrp = routeSamples.mapNotNull { it.nrSsRsrp.toDoubleOrNull() }.minOrNull()
-        row("Weak Coverage", "Minimum LTE RSRP", minLteRsrp?.let { "$it dBm" } ?: "--")
-        row("Weak Coverage", "Minimum NR SS-RSRP", minNrRsrp?.let { "$it dBm" } ?: "--")
-        val pingFailPoints = pointResults.values.count { it.result == "FAIL" }
-        row("Data Availability", "Ping Fail", "$pingFailPoints / ${pointResults.size}")
-        val ns = noServiceStats(endedAt)
-        row("Extreme Weak Coverage", "No Service", if (ns.first > 0) "YES" else "NO")
-        row("Extreme Weak Coverage", "No Service Count", ns.first.toString())
-        row("Extreme Weak Coverage", "Total No Service", formatDuration(ns.second))
-        row("Extreme Weak Coverage", "Longest No Service", formatDuration(ns.third))
-        pointResults.values.forEach { r ->
-            val snap = samples.firstOrNull { it.segment == r.point }
-            if (snap != null) {
-                row(r.point, "Network", "${snap.rat} ${if (snap.rat == "5G") snap.nrBand else snap.lteBand}".trim())
-                row(r.point, "LTE RSRP", snap.lteRsrp)
-                row(r.point, "LTE RSRQ", snap.lteRsrq)
-                row(r.point, "LTE SINR", snap.lteSinr)
-                row(r.point, "NR SS-RSRP", snap.nrSsRsrp)
-                row(r.point, "NR SS-RSRQ", snap.nrSsRsrq)
-                row(r.point, "NR SS-SINR", snap.nrSsSinr)
-            }
-            row(r.point, "Ping Result", r.result)
-            row(r.point, "Sent", r.sent.toString())
-            row(r.point, "Received", r.received.toString())
-            val successPct = if (r.sent > 0) r.received * 100.0 / r.sent else 0.0
-            row(r.point, "Success Rate", String.format(Locale.US, "%.1f%%", successPct))
-            row(r.point, "Avg RTT", r.avgRttMs?.let { String.format(Locale.US, "%.1f ms", it) } ?: "--")
-            row(r.point, "Min RTT", r.minRttMs?.let { String.format(Locale.US, "%.1f ms", it) } ?: "--")
-            row(r.point, "Max RTT", r.maxRttMs?.let { String.format(Locale.US, "%.1f ms", it) } ?: "--")
+
+        fun avgRecovery(selector: (RoundSummary) -> Long?, required: (RoundSummary) -> Boolean): String {
+            val values = completed.filter(required).mapNotNull(selector).filter { it >= 0L }
+            return if (values.isEmpty()) "N/A" else String.format(Locale.US, "%.1fs", values.average() / 1000.0)
         }
-        val st = BasementTestStore.state.value
-        row("Recovery", "LTE", recoveryText(st.lteRecoveryMs, st.lteRecoveryRequired))
-        row("Recovery", "Data", recoveryText(st.dataRecoveryMs, true))
-        row("Recovery", "5G", recoveryText(st.nrRecoveryMs, st.nrRecoveryRequired))
+
+        row("Average", "LTE Recovery", avgRecovery({ it.lteRecoveryMs }, { it.lteRecoveryRequired }))
+        row("Average", "Data Recovery", avgRecovery({ it.dataRecoveryMs }, { true }))
+        row("Average", "5G Recovery", avgRecovery({ it.nrRecoveryMs }, { it.nrRecoveryRequired }))
+        if (completed.isNotEmpty()) {
+            row("Average", "No Service Count", String.format(Locale.US, "%.2f", completed.map { it.noServiceCount }.average()))
+            row("Average", "Total No Service", formatDuration(completed.map { it.noServiceTotalMs }.average().toLong()))
+            row("Average", "Longest No Service", formatDuration(completed.map { it.noServiceLongestMs }.average().toLong()))
+        }
+
+        config.routePoints.filter { it.pingEnabled }.forEach { point ->
+            val rows = completed.flatMap { r -> r.points.filter { it.point == point.name } }
+            if (rows.isNotEmpty()) {
+                row("Average Point ${point.name}", "Success Rate", String.format(Locale.US, "%.1f%%", rows.map { it.successPct }.average()))
+                val rtts = rows.mapNotNull { it.avgRttMs }
+                row("Average Point ${point.name}", "Avg RTT", if (rtts.isEmpty()) "--" else String.format(Locale.US, "%.1f ms", rtts.average()))
+                row("Average Point ${point.name}", "PASS Rounds", "${rows.count { it.result == "PASS" }} / ${rows.size}")
+            }
+        }
+
         routeSegments().forEach { seg ->
-            val start = segmentStart[seg] ?: return@forEach
-            val end = segmentEnd[seg] ?: endedAt
-            row("Segment $seg", "Duration", formatDuration(end - start))
-            val dist = ratDistribution(seg, end)
-            listOf("5G", "4G", "3G", "2G", "NO_SERVICE").forEach { rat ->
-                val ms = dist[rat] ?: 0L
-                val pct = if (end > start) ms * 100.0 / (end - start) else 0.0
-                row("Segment $seg", "$rat Distribution", "${formatDuration(ms)} / ${String.format(Locale.US, "%.1f%%", pct)}")
+            val metrics = completed.mapNotNull { r -> r.segments.firstOrNull { it.segment == seg } }
+            if (metrics.isNotEmpty()) {
+                row("Average Segment $seg", "Duration", formatDuration(metrics.map { it.durationMs }.average().toLong()))
+                listOf("5G", "4G", "3G", "2G", "NO_SERVICE").forEach { rat ->
+                    val avg = metrics.map { it.ratShare[rat] ?: 0.0 }.average()
+                    row("Average Segment $seg", "$rat Share", String.format(Locale.US, "%.1f%%", avg))
+                }
+                val lte = metrics.mapNotNull { it.lteAvgRsrp }
+                val nr = metrics.mapNotNull { it.nrAvgRsrp }
+                row("Average Segment $seg", "LTE Avg RSRP", if (lte.isEmpty()) "--" else String.format(Locale.US, "%.1f dBm", lte.average()))
+                row("Average Segment $seg", "NR Avg SS-RSRP", if (nr.isEmpty()) "--" else String.format(Locale.US, "%.1f dBm", nr.average()))
+                val bands = metrics.flatMap { it.bandShare.keys }.toSet()
+                bands.sorted().forEach { band ->
+                    val avg = metrics.map { it.bandShare[band] ?: 0.0 }.average()
+                    row("Average Segment $seg", "Band $band Share", String.format(Locale.US, "%.1f%%", avg))
+                }
             }
-            val lteRsrp = samples.filter { it.segment == seg }.mapNotNull { it.lteRsrp.toDoubleOrNull() }
-            if (lteRsrp.isNotEmpty()) {
-                row("Segment $seg", "LTE Avg RSRP", String.format(Locale.US, "%.1f dBm", lteRsrp.average()))
-                row("Segment $seg", "LTE Min RSRP", "${lteRsrp.minOrNull()} dBm")
-                row("Segment $seg", "LTE Max RSRP", "${lteRsrp.maxOrNull()} dBm")
+        }
+
+        completed.forEach { r ->
+            row("Round ${r.round}", "Recovery LTE", recoveryText(r.lteRecoveryMs, r.lteRecoveryRequired))
+            row("Round ${r.round}", "Recovery Data", recoveryText(r.dataRecoveryMs, true))
+            row("Round ${r.round}", "Recovery 5G", recoveryText(r.nrRecoveryMs, r.nrRecoveryRequired))
+            row("Round ${r.round}", "No Service Count", r.noServiceCount.toString())
+            row("Round ${r.round}", "Total No Service", formatDuration(r.noServiceTotalMs))
+            r.points.forEach { p ->
+                row("Round ${r.round} · ${p.point}", "Success Rate", String.format(Locale.US, "%.1f%%", p.successPct))
+                row("Round ${r.round} · ${p.point}", "Avg RTT", p.avgRttMs?.let { String.format(Locale.US, "%.1f ms", it) } ?: "--")
+                row("Round ${r.round} · ${p.point}", "Result", p.result)
             }
-            val nrRsrp = samples.filter { it.segment == seg }.mapNotNull { it.nrSsRsrp.toDoubleOrNull() }
-            if (nrRsrp.isNotEmpty()) {
-                row("Segment $seg", "NR Avg SS-RSRP", String.format(Locale.US, "%.1f dBm", nrRsrp.average()))
-                row("Segment $seg", "NR Min SS-RSRP", "${nrRsrp.minOrNull()} dBm")
-            }
-            val bandDist = bandDistribution(seg, end)
-            bandDist.entries.sortedByDescending { it.value }.forEach { (band, ms) ->
-                val pct = if (end > start) ms * 100.0 / (end - start) else 0.0
-                row("Segment $seg", "Band $band", "${formatDuration(ms)} / ${String.format(Locale.US, "%.1f%%", pct)}")
-            }
-            val ratChanges = events.filter { it.segment == seg && it.type == "RAT_CHANGE" }.sortedBy { it.timestampMs }
-            row("Segment $seg", "RAT Transition Count", ratChanges.size.toString())
-            ratChanges.forEachIndexed { i, e ->
-                row("Segment $seg", "RAT Transition ${i+1}", "${e.from} → ${e.to} @ ${String.format(Locale.US, "%.1fs", (e.timestampMs-start).coerceAtLeast(0L)/1000.0)}")
-            }
-            val bandChanges = events.filter { it.segment == seg && it.type == "BAND_CHANGE" }.sortedBy { it.timestampMs }
-            row("Segment $seg", "Band Transition Count", bandChanges.size.toString())
-            bandChanges.forEachIndexed { i, e ->
-                row("Segment $seg", "Band Transition ${i+1}", "${e.from} → ${e.to} @ ${String.format(Locale.US, "%.1fs", (e.timestampMs-start).coerceAtLeast(0L)/1000.0)}")
+            r.segments.forEach { seg ->
+                row("Round ${r.round} · ${seg.segment}", "Duration", formatDuration(seg.durationMs))
+                seg.ratShare.entries.sortedBy { it.key }.forEach { (rat, share) ->
+                    row("Round ${r.round} · ${seg.segment}", "$rat Share", String.format(Locale.US, "%.1f%%", share))
+                }
+                seg.bandShare.entries.sortedBy { it.key }.forEach { (band, share) ->
+                    row("Round ${r.round} · ${seg.segment}", "Band $band Share", String.format(Locale.US, "%.1f%%", share))
+                }
             }
         }
     }
@@ -848,13 +892,14 @@ class BasementTestService : Service() {
         val band: String
     )
 
-    private fun timelineIntervals(segment: String, fallbackEnd: Long): List<BasementTimelineInterval> {
-        val start = segmentStart[segment] ?: return emptyList()
-        val end = (segmentEnd[segment] ?: fallbackEnd).coerceAtLeast(start)
+    private fun timelineIntervals(segment: String, fallbackEnd: Long, round: Int = currentRound): List<BasementTimelineInterval> {
+        val key = segmentKey(round, segment)
+        val start = segmentStart[key] ?: return emptyList()
+        val end = (segmentEnd[key] ?: fallbackEnd).coerceAtLeast(start)
         if (end <= start) return emptyList()
 
-        val rows = samples.filter { it.segment == segment && it.timestampMs <= end }.sortedBy { it.timestampMs }
-        val previous = samples.filter { it.timestampMs <= start }.maxByOrNull { it.timestampMs }
+        val rows = samples.filter { it.round == round && it.segment == segment && it.timestampMs <= end }.sortedBy { it.timestampMs }
+        val previous = samples.filter { it.round == round && it.timestampMs <= start }.maxByOrNull { it.timestampMs }
         var current = previous ?: rows.firstOrNull() ?: return emptyList()
         var cursor = start
         val raw = mutableListOf<BasementTimelineInterval>()
@@ -890,85 +935,71 @@ class BasementTestService : Service() {
     }
 
     private fun buildSummaryHtml(endedAt: Long, status: String): String {
-        val st = BasementTestStore.state.value
-        val ns = noServiceStats(endedAt)
-        val routeSegments = routeSegments()
+        val completed = roundSummaries.sortedBy { it.round }
 
-        val points = pointResults.values.joinToString("") { r ->
-            val snap = samples.firstOrNull { it.segment == r.point }
-            val network = snap?.let { "${it.rat} ${if (it.rat == "5G") it.nrBand else it.lteBand}" } ?: "--"
-            val rsrp = snap?.let { if (it.rat == "5G" && it.nrSsRsrp != "--") it.nrSsRsrp else it.lteRsrp } ?: "--"
-            val sinr = snap?.let { if (it.rat == "5G" && it.nrSsSinr != "--") it.nrSsSinr else it.lteSinr } ?: "--"
-            val success = if (r.sent > 0) r.received * 100.0 / r.sent else 0.0
-            "<tr><td>${html(r.point)}</td><td>${html(network)}</td><td>${html(rsrp)}</td><td>${html(sinr)}</td><td>${html(r.result)}</td><td>${String.format(Locale.US, "%.1f%%", success)}</td><td>${r.avgRttMs?.let { String.format(Locale.US, "%.1f ms", it) } ?: "--"}</td></tr>"
+        fun avgRecovery(selector: (RoundSummary) -> Long?, required: (RoundSummary) -> Boolean): String {
+            val values = completed.filter(required).mapNotNull(selector).filter { it >= 0L }
+            return if (values.isEmpty()) "N/A" else String.format(Locale.US, "%.1fs", values.average() / 1000.0)
         }
 
-        val segmentsHtml = routeSegments.joinToString("") { seg ->
-            val startMs = segmentStart[seg] ?: sessionStartedAt
-            val endMs = segmentEnd[seg] ?: endedAt
-            val dist = ratDistribution(seg, endMs)
-            val total = (endMs - startMs).coerceAtLeast(1L)
-            fun d(r: String): String {
-                val ms = dist[r] ?: 0L
-                return "${formatDuration(ms)} / ${String.format(Locale.US, "%.1f%%", ms * 100.0 / total)}"
+        val pointAverageRows = config.routePoints.filter { it.pingEnabled }.joinToString("") { point ->
+            val rows = completed.flatMap { r -> r.points.filter { it.point == point.name } }
+            if (rows.isEmpty()) "" else {
+                val success = rows.map { it.successPct }.average()
+                val rtts = rows.mapNotNull { it.avgRttMs }
+                val avgRtt = if (rtts.isEmpty()) "--" else String.format(Locale.US, "%.1f ms", rtts.average())
+                "<tr><td>${html(point.name)}</td><td>${String.format(Locale.US, "%.1f%%", success)}</td><td>$avgRtt</td><td>${rows.count { it.result == "PASS" }} / ${rows.size}</td></tr>"
             }
-            val otherMs = dist.filterKeys { it !in setOf("5G","4G","3G","2G","NO_SERVICE") }.values.sum()
-            val other = "${formatDuration(otherMs)} / ${String.format(Locale.US, "%.1f%%", otherMs * 100.0 / total)}"
-            val lte = samples.filter { it.segment == seg }.mapNotNull { it.lteRsrp.toDoubleOrNull() }
-            val nr = samples.filter { it.segment == seg }.mapNotNull { it.nrSsRsrp.toDoubleOrNull() }
-            "<tr><td>${html(seg)}</td><td>${formatDuration(endMs-startMs)}</td><td>${d("5G")}</td><td>${d("4G")}</td><td>${d("3G")}</td><td>${d("2G")}</td><td>${d("NO_SERVICE")}</td><td>$other</td><td>${lte.takeIf { it.isNotEmpty() }?.average()?.let { String.format(Locale.US, "%.1f", it) } ?: "--"}</td><td>${nr.takeIf { it.isNotEmpty() }?.average()?.let { String.format(Locale.US, "%.1f", it) } ?: "--"}</td></tr>"
-        }
+        }.ifBlank { "<tr><td colspan='4'>No fixed-point Ping results</td></tr>" }
 
-        val perSegmentAnalysis = routeSegments.joinToString("") { seg ->
-            val startMs = segmentStart[seg] ?: sessionStartedAt
-            val endMs = segmentEnd[seg] ?: endedAt
-            val duration = (endMs - startMs).coerceAtLeast(1L)
-            val timeline = timelineIntervals(seg, endMs)
+        val segmentAverageRows = routeSegments().joinToString("") { seg ->
+            val metrics = completed.mapNotNull { r -> r.segments.firstOrNull { it.segment == seg } }
+            if (metrics.isEmpty()) "" else {
+                fun avgRat(rat: String) = String.format(Locale.US, "%.1f%%", metrics.map { it.ratShare[rat] ?: 0.0 }.average())
+                val lte = metrics.mapNotNull { it.lteAvgRsrp }
+                val nr = metrics.mapNotNull { it.nrAvgRsrp }
+                "<tr><td>${html(seg)}</td><td>${formatDuration(metrics.map { it.durationMs }.average().toLong())}</td><td>${avgRat("5G")}</td><td>${avgRat("4G")}</td><td>${avgRat("3G")}</td><td>${avgRat("2G")}</td><td>${avgRat("NO_SERVICE")}</td><td>${if(lte.isEmpty()) "--" else String.format(Locale.US, "%.1f", lte.average())}</td><td>${if(nr.isEmpty()) "--" else String.format(Locale.US, "%.1f", nr.average())}</td></tr>"
+            }
+        }.ifBlank { "<tr><td colspan='9'>No completed segment data</td></tr>" }
 
-            val ratTimelineRows = timeline.joinToString("") { row ->
-                val share = (row.endMs-row.startMs) * 100.0 / duration
-                "<tr><td>${html(row.rat)}</td><td>${timeText(row.startMs)}</td><td>${timeText(row.endMs)}</td><td>${formatDuration(row.endMs-row.startMs)}</td><td>${String.format(Locale.US, "%.1f%%", share)}</td><td>${html(row.band)}</td></tr>"
-            }.ifBlank { "<tr><td colspan='6'>No samples</td></tr>" }
+        val roundSections = completed.joinToString("") { r ->
+            val pointRows = r.points.joinToString("") { p ->
+                "<tr><td>${html(p.point)}</td><td>${String.format(Locale.US, "%.1f%%", p.successPct)}</td><td>${p.avgRttMs?.let { String.format(Locale.US, "%.1f ms", it) } ?: "--"}</td><td>${html(p.result)}</td></tr>"
+            }.ifBlank { "<tr><td colspan='4'>No Ping points</td></tr>" }
 
-            val bandSummary = bandDistribution(seg, endMs).entries.sortedByDescending { it.value }.joinToString("") { (band,ms) ->
-                "<tr><td>${html(band)}</td><td>${formatDuration(ms)}</td><td>${String.format(Locale.US, "%.1f%%", ms*100.0/duration)}</td></tr>"
-            }.ifBlank { "<tr><td colspan='3'>No samples</td></tr>" }
+            val segmentRows = r.segments.joinToString("") { seg ->
+                fun share(rat: String) = String.format(Locale.US, "%.1f%%", seg.ratShare[rat] ?: 0.0)
+                "<tr><td>${html(seg.segment)}</td><td>${formatDuration(seg.durationMs)}</td><td>${share("5G")}</td><td>${share("4G")}</td><td>${share("3G")}</td><td>${share("2G")}</td><td>${share("NO_SERVICE")}</td></tr>"
+            }
 
-            val ratChanges = timeline.zipWithNext().filter { it.first.rat != it.second.rat }
-            val bandChanges = timeline.zipWithNext().filter { it.first.band != it.second.band }
-            val otherEvents = events.filter {
-                it.segment == seg && it.type in setOf("CELL_CHANGE","NR_ADD","NR_RELEASE","NO_SERVICE_START","NO_SERVICE_END","DATA_STATE_CHANGE")
-            }.sortedBy { it.timestampMs }
-
-            fun bandAt(ts: Long): String =
-                timeline.firstOrNull { ts >= it.startMs && ts <= it.endMs }?.band ?: "--"
-
-            val otherRows = otherEvents.joinToString("") { e ->
-                val nextTs = events.filter { it.segment == seg && it.timestampMs > e.timestampMs }.minOfOrNull { it.timestampMs } ?: endMs
-                val eventEnd = when {
-                    e.durationMs != null -> (e.timestampMs + e.durationMs).coerceAtMost(endMs)
-                    else -> nextTs.coerceAtLeast(e.timestampMs)
-                }
-                "<tr><td>${html(e.type)}</td><td>${timeText(e.timestampMs)}</td><td>${timeText(eventEnd)}</td><td>${formatDuration((eventEnd-e.timestampMs).coerceAtLeast(0L))}</td><td>${html(bandAt(e.timestampMs))}</td><td>${html(e.from)}</td><td>${html(e.to)}</td></tr>"
-            }.ifBlank { "<tr><td colspan='7'>None</td></tr>" }
+            val eventBlocks = routeSegments().joinToString("") { seg ->
+                val rows = events.filter { it.round == r.round && it.segment == seg }.sortedBy { it.timestampMs }
+                    .joinToString("") { e ->
+                        "<tr><td>${timeText(e.timestampMs)}</td><td>${html(e.type)}</td><td>${html(e.from)}</td><td>${html(e.to)}</td><td>${e.durationMs?.let { formatDuration(it) } ?: "--"}</td><td>${html(e.description)}</td></tr>"
+                    }.ifBlank { "<tr><td colspan='6'>None</td></tr>" }
+                "<h4>${html(seg)}</h4><table><tr><th>Time</th><th>Event</th><th>From</th><th>To</th><th>Duration</th><th>Description</th></tr>$rows</table>"
+            }
 
             """
             <section class="segment-block">
-              <h3>${html(seg)}</h3>
+              <h2>Round ${r.round}</h2>
               <div class="mini-grid">
-                <div><b>Duration</b><br>${formatDuration(duration)}</div>
-                <div><b>RAT transitions</b><br>${ratChanges.size}</div>
-                <div><b>Band transitions</b><br>${bandChanges.size}</div>
+                <div><b>LTE Recovery</b><br>${recoveryText(r.lteRecoveryMs, r.lteRecoveryRequired)}</div>
+                <div><b>Data Recovery</b><br>${recoveryText(r.dataRecoveryMs, true)}</div>
+                <div><b>5G Recovery</b><br>${recoveryText(r.nrRecoveryMs, r.nrRecoveryRequired)}</div>
+                <div><b>Total No Service</b><br>${formatDuration(r.noServiceTotalMs)}</div>
               </div>
-              <h4>RAT / Band Timeline</h4>
-              <table><tr><th>RAT</th><th>Start</th><th>End</th><th>Duration</th><th>Share</th><th>Band</th></tr>$ratTimelineRows</table>
-              <h4>Band Distribution</h4>
-              <table><tr><th>Band</th><th>Total Duration</th><th>Share</th></tr>$bandSummary</table>
-              <h4>Other Network Events</h4>
-              <table><tr><th>Event</th><th>Start</th><th>End</th><th>Duration</th><th>Band</th><th>From</th><th>To</th></tr>$otherRows</table>
+              <h3>Fixed Points</h3>
+              <table><tr><th>Point</th><th>Success Rate</th><th>Avg RTT</th><th>Result</th></tr>$pointRows</table>
+              <h3>Route Segments</h3>
+              <table><tr><th>Segment</th><th>Duration</th><th>5G</th><th>4G</th><th>3G</th><th>2G</th><th>No Service</th></tr>$segmentRows</table>
+              <h3>Network Events</h3>
+              $eventBlocks
             </section>
             """.trimIndent()
-        }
+        }.ifBlank { "<p>No completed rounds yet.</p>" }
+
+        val avgNoService = if (completed.isEmpty()) "--" else formatDuration(completed.map { it.noServiceTotalMs }.average().toLong())
 
         return """
 <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -980,28 +1011,27 @@ h1{font-size:24px}.grid,.mini-grid{display:grid;grid-template-columns:repeat(aut
 .k{font-size:12px;color:#666}.v{font-size:18px;font-weight:700;margin-top:4px}
 table{border-collapse:collapse;width:100%;margin-top:8px;margin-bottom:14px}
 th,td{border-bottom:1px solid #ddd;padding:8px;text-align:left;font-size:13px;vertical-align:top}
-th{background:#f6f6f6} h3{margin-top:0} h4{margin-bottom:4px}
-.note{background:#f6f7fb;border-radius:10px;padding:10px;font-size:13px}
+th{background:#f6f6f6}.note{background:#f6f7fb;border-radius:10px;padding:10px;font-size:13px}
 </style></head><body>
 <h1>Weak Coverage Route Summary</h1>
 <p><b>Route:</b> ${html(config.routeName)} · ${html(config.routePoints.joinToString(" → ") { it.name })}</p>
+<p><b>Rounds:</b> ${completed.size} completed / ${config.rounds} configured</p>
 <div class="grid">
 <div class="card"><div class="k">Status</div><div class="v">${html(status)}</div></div>
-<div class="card"><div class="k">5G Retention</div><div class="v">${formatDuration(initialRetentionMs("5G"))}</div></div>
-<div class="card"><div class="k">LTE Retention</div><div class="v">${formatDuration(firstContiguousRatMs("4G"))}</div></div>
-<div class="card"><div class="k">No Service</div><div class="v">${if (ns.first > 0) "YES · ${formatDuration(ns.second)}" else "NO"}</div></div>
-<div class="card"><div class="k">LTE Recovery</div><div class="v">${recoveryText(st.lteRecoveryMs, st.lteRecoveryRequired)}</div></div>
-<div class="card"><div class="k">Data Recovery</div><div class="v">${recoveryText(st.dataRecoveryMs, true)}</div></div>
-<div class="card"><div class="k">5G Recovery</div><div class="v">${recoveryText(st.nrRecoveryMs, st.nrRecoveryRequired)}</div></div>
+<div class="card"><div class="k">Avg LTE Recovery</div><div class="v">${avgRecovery({ it.lteRecoveryMs }, { it.lteRecoveryRequired })}</div></div>
+<div class="card"><div class="k">Avg Data Recovery</div><div class="v">${avgRecovery({ it.dataRecoveryMs }, { true })}</div></div>
+<div class="card"><div class="k">Avg 5G Recovery</div><div class="v">${avgRecovery({ it.nrRecoveryMs }, { it.nrRecoveryRequired })}</div></div>
+<div class="card"><div class="k">Avg No Service</div><div class="v">$avgNoService</div></div>
 </div>
-<div class="note"><b>Recovery:</b> T0 = ARRIVE START. LTE/5G = 0.0 s if already available at arrival; otherwise first restored 1 Hz sample time, confirmed by the next sample. Data = first successful real recovery Ping completion minus ARRIVE START. Timeout = ${config.recoverySeconds}s.</div>
-<h2>Fixed Points</h2>
-<table><tr><th>Point</th><th>Network</th><th>RSRP</th><th>SINR</th><th>Ping</th><th>Success Rate</th><th>Avg RTT</th></tr>$points</table>
-<h2>Route Segments</h2>
-<table><tr><th>Segment</th><th>Duration</th><th>5G</th><th>4G</th><th>3G</th><th>2G</th><th>No Service</th><th>Other</th><th>LTE Avg RSRP</th><th>NR Avg SS-RSRP</th></tr>$segmentsHtml</table>
-<h2>Network Events by Route Segment</h2>
-$perSegmentAnalysis
-<h2>Session</h2><p>${timeText(sessionStartedAt)} → ${timeText(endedAt)} · ${formatDuration(endedAt-sessionStartedAt)}</p>
+<div class="note"><b>Average rule:</b> each completed route round has equal weight. Fixed-point Success Rate / RTT, Recovery and Route Segment statistics are averaged across completed rounds.</div>
+<h2>Average Fixed Points</h2>
+<table><tr><th>Point</th><th>Avg Success Rate</th><th>Avg RTT</th><th>PASS Rounds</th></tr>$pointAverageRows</table>
+<h2>Average Route Segments</h2>
+<table><tr><th>Segment</th><th>Avg Duration</th><th>5G</th><th>4G</th><th>3G</th><th>2G</th><th>No Service</th><th>LTE Avg RSRP</th><th>NR Avg SS-RSRP</th></tr>$segmentAverageRows</table>
+<h2>Round Details</h2>
+$roundSections
+<h2>Session</h2>
+<p>${timeText(sessionStartedAt)} → ${timeText(endedAt)} · ${formatDuration(endedAt-sessionStartedAt)}</p>
 <p>Raw files: network_raw.csv · events.csv · ping.csv · summary.csv</p>
 </body></html>
 """.trimIndent()
@@ -1015,14 +1045,16 @@ $perSegmentAnalysis
     private fun distributionFor(
         segment: String,
         fallbackEnd: Long,
+        round: Int = currentRound,
         selector: (BasementNetworkSample) -> String
     ): Map<String, Long> {
-        val start = segmentStart[segment] ?: return emptyMap()
-        val end = (segmentEnd[segment] ?: fallbackEnd).coerceAtLeast(start)
+        val key = segmentKey(round, segment)
+        val start = segmentStart[key] ?: return emptyMap()
+        val end = (segmentEnd[key] ?: fallbackEnd).coerceAtLeast(start)
         if (end <= start) return emptyMap()
 
-        val rows = samples.filter { it.segment == segment && it.timestampMs <= end }.sortedBy { it.timestampMs }
-        val previous = samples.filter { it.timestampMs <= start }.maxByOrNull { it.timestampMs }
+        val rows = samples.filter { it.round == round && it.segment == segment && it.timestampMs <= end }.sortedBy { it.timestampMs }
+        val previous = samples.filter { it.round == round && it.timestampMs <= start }.maxByOrNull { it.timestampMs }
         var current = previous ?: rows.firstOrNull()
         if (current == null) return mapOf("UNKNOWN" to (end - start))
 
@@ -1044,11 +1076,11 @@ $perSegmentAnalysis
         return out
     }
 
-    private fun ratDistribution(segment: String, fallbackEnd: Long): Map<String, Long> =
-        distributionFor(segment, fallbackEnd) { it.rat }
+    private fun ratDistribution(segment: String, fallbackEnd: Long, round: Int = currentRound): Map<String, Long> =
+        distributionFor(segment, fallbackEnd, round) { it.rat }
 
-    private fun bandDistribution(segment: String, fallbackEnd: Long): Map<String, Long> =
-        distributionFor(segment, fallbackEnd) { row ->
+    private fun bandDistribution(segment: String, fallbackEnd: Long, round: Int = currentRound): Map<String, Long> =
+        distributionFor(segment, fallbackEnd, round) { row ->
             when (row.rat) {
                 "5G" -> row.nrBand.takeIf { it != "--" } ?: "5G UNKNOWN"
                 "4G" -> row.lteBand.takeIf { it != "--" } ?: "4G UNKNOWN"
@@ -1058,17 +1090,18 @@ $perSegmentAnalysis
             }
         }
 
-    private fun initialRetentionMs(rat: String): Long {
-        val routeRows = samples.filter { it.segment == SEG_START_B1 }.sortedBy { it.timestampMs }
+    private fun initialRetentionMs(rat: String, round: Int = currentRound): Long {
+        val firstSeg = routeSegments().firstOrNull() ?: return 0L
+        val routeRows = samples.filter { it.round == round && it.segment == firstSeg }.sortedBy { it.timestampMs }
         if (routeRows.isEmpty() || routeRows.first().rat != rat) return 0L
         val firstOther = routeRows.firstOrNull { it.rat != rat }?.timestampMs
-            ?: segmentEnd[SEG_START_B1]
+            ?: segmentEnd[segmentKey(round, firstSeg)]
             ?: routeRows.last().timestampMs
         return (firstOther - routeRows.first().timestampMs).coerceAtLeast(0L)
     }
 
-    private fun firstContiguousRatMs(rat: String): Long {
-        val routeRows = samples.filter { it.segment in routeSegments().toSet() }.sortedBy { it.timestampMs }
+    private fun firstContiguousRatMs(rat: String, round: Int = currentRound): Long {
+        val routeRows = samples.filter { it.round == round && it.segment in routeSegments().toSet() }.sortedBy { it.timestampMs }
         val first = routeRows.indexOfFirst { it.rat == rat }
         if (first < 0) return 0L
         var end = routeRows[first].timestampMs
@@ -1079,10 +1112,10 @@ $perSegmentAnalysis
         return (end - routeRows[first].timestampMs + 1000L).coerceAtLeast(0L)
     }
 
-    private fun noServiceStats(endedAt: Long): Triple<Int, Long, Long> {
+    private fun noServiceStats(endedAt: Long, round: Int? = null): Triple<Int, Long, Long> {
         val intervals = mutableListOf<Long>()
         var start: Long? = null
-        samples.sortedBy { it.timestampMs }.forEach { s ->
+        samples.filter { round == null || it.round == round }.sortedBy { it.timestampMs }.forEach { s ->
             if (s.rat == "NO_SERVICE" && start == null) start = s.timestampMs
             if (s.rat != "NO_SERVICE" && start != null) {
                 intervals += (s.timestampMs - start!!).coerceAtLeast(0L)
@@ -1096,6 +1129,113 @@ $perSegmentAnalysis
     private fun recoveryText(value: Long?, required: Boolean): String {
         if (!required || value == -2L) return "N/A"
         return value?.let { String.format(Locale.US, "%.1fs", it / 1000.0) } ?: "FAIL >${config.recoverySeconds}s"
+    }
+
+    private fun snapshotCurrentRound(recoveryTimedOut: Boolean) {
+        val live = BasementTestStore.state.value
+        val segments = routeSegments().mapNotNull { seg ->
+            val key = segmentKey(currentRound, seg)
+            val start = segmentStart[key] ?: return@mapNotNull null
+            val end = segmentEnd[key] ?: System.currentTimeMillis()
+            val duration = (end - start).coerceAtLeast(1L)
+            val rat = ratDistribution(seg, end, currentRound)
+            val band = bandDistribution(seg, end, currentRound)
+            val lte = samples.filter { it.round == currentRound && it.segment == seg }.mapNotNull { it.lteRsrp.toDoubleOrNull() }
+            val nr = samples.filter { it.round == currentRound && it.segment == seg }.mapNotNull { it.nrSsRsrp.toDoubleOrNull() }
+            SegmentRoundMetric(
+                segment = seg,
+                durationMs = duration,
+                ratShare = rat.mapValues { (_, ms) -> ms * 100.0 / duration },
+                bandShare = band.mapValues { (_, ms) -> ms * 100.0 / duration },
+                lteAvgRsrp = lte.takeIf { it.isNotEmpty() }?.average(),
+                nrAvgRsrp = nr.takeIf { it.isNotEmpty() }?.average()
+            )
+        }
+        val points = pointResults.values
+            .filter { it.round == currentRound }
+            .map { r ->
+                PointRoundMetric(
+                    point = r.point,
+                    successPct = if (r.sent > 0) r.received * 100.0 / r.sent else 0.0,
+                    avgRttMs = r.avgRttMs,
+                    result = r.result
+                )
+            }
+        val ns = noServiceStats(System.currentTimeMillis(), currentRound)
+        roundSummaries.removeAll { it.round == currentRound }
+        roundSummaries += RoundSummary(
+            round = currentRound,
+            segments = segments,
+            points = points,
+            lteRecoveryMs = live.lteRecoveryMs,
+            dataRecoveryMs = live.dataRecoveryMs,
+            nrRecoveryMs = live.nrRecoveryMs,
+            lteRecoveryRequired = live.lteRecoveryRequired,
+            nrRecoveryRequired = live.nrRecoveryRequired,
+            recoveryTimedOut = recoveryTimedOut,
+            noServiceCount = ns.first,
+            noServiceTotalMs = ns.second,
+            noServiceLongestMs = ns.third
+        )
+    }
+
+    private fun completeCurrentRound(timedOut: Boolean) {
+        snapshotCurrentRound(timedOut)
+        if (currentRound < config.rounds) {
+            updateStage(BasementStage.ROUND_COMPLETE, "Round $currentRound/${config.rounds} completed")
+            BasementTestStore.state.value = BasementTestStore.state.value.copy(
+                recoveryTimedOut = timedOut,
+                statusMessage = "Round $currentRound/${config.rounds} completed"
+            )
+            updateOverlay()
+        } else {
+            updateStage(BasementStage.RECOVERY_COMPLETE, if (timedOut) "Recovery timeout" else "Recovery completed")
+            BasementTestStore.state.value = BasementTestStore.state.value.copy(recoveryTimedOut = timedOut)
+            updateOverlay()
+        }
+    }
+
+    private fun startNextRound() {
+        if (currentRound >= config.rounds) return
+        currentRound++
+        activeSegmentIndex = 0
+        startHadNr = null
+        startHadLte = null
+        noServiceStartedAt = null
+        pointResults.entries.removeAll { it.value.round == currentRound }
+        val now = System.currentTimeMillis()
+        val firstSegment = routeSegmentName(0)
+        segmentStart[segmentKey(currentRound, firstSegment)] = now
+        val from = config.routePoints.first().name
+        val to = config.routePoints[1].name
+        BasementTestStore.state.value = BasementTestStore.state.value.copy(
+            stage = BasementStage.ROUTE_TRAVEL,
+            stageStartedAt = now,
+            currentSegment = firstSegment,
+            currentPointName = from,
+            nextPointName = to,
+            routeSegmentIndex = 1,
+            routeSegmentCount = config.routePoints.size - 1,
+            currentRound = currentRound,
+            totalRounds = config.rounds,
+            countdownSeconds = null,
+            pingProgress = 0,
+            pingTotal = 0,
+            lastPointResult = null,
+            lteRecoveryMs = null,
+            dataRecoveryMs = null,
+            nrRecoveryMs = null,
+            recoveryTimedOut = false,
+            statusMessage = "Round $currentRound/${config.rounds} · Walking: $from → $to"
+        )
+        appendEvent("ROUND_START", "", from, "Round $currentRound started", firstSegment)
+        updateOverlay()
+        updateNotification("Round $currentRound/${config.rounds} · $firstSegment")
+    }
+
+    private fun avgLong(values: List<Long?>): Long? {
+        val valid = values.filterNotNull().filter { it >= 0L }
+        return if (valid.isEmpty()) null else valid.average().toLong()
     }
 
     private fun showOverlay() {
@@ -1169,6 +1309,7 @@ $perSegmentAnalysis
                 BasementStage.ROUTE_TRAVEL -> state.currentSegment
                 BasementStage.POINT_STABILIZING, BasementStage.POINT_PING, BasementStage.POINT_COMPLETE -> state.currentPointName
                 BasementStage.RECOVERY, BasementStage.RECOVERY_COMPLETE -> "${state.currentPointName} · Recovery"
+                BasementStage.ROUND_COMPLETE -> "Round ${state.currentRound} Completed"
                 else -> state.stage.label
             }
             overlayTitle?.text = "Weak Coverage · $title"
@@ -1194,7 +1335,8 @@ $perSegmentAnalysis
         } ?: "Point completed"
         BasementStage.RECOVERY, BasementStage.RECOVERY_COMPLETE ->
             "LTE ${shortRecovery(state.lteRecoveryMs, state.lteRecoveryRequired)} · Data ${shortRecovery(state.dataRecoveryMs, true)} · 5G ${shortRecovery(state.nrRecoveryMs, state.nrRecoveryRequired)}"
-        BasementStage.ROUTE_TRAVEL -> "Segment ${state.routeSegmentIndex}/${state.routeSegmentCount}"
+        BasementStage.ROUND_COMPLETE -> "Round ${state.currentRound}/${state.totalRounds} completed"
+        BasementStage.ROUTE_TRAVEL -> "Round ${state.currentRound}/${state.totalRounds} · Segment ${state.routeSegmentIndex}/${state.routeSegmentCount}"
         else -> state.operator
     }
 
@@ -1207,6 +1349,7 @@ $perSegmentAnalysis
         BasementStage.PREPARED -> "START TEST" to true
         BasementStage.ROUTE_TRAVEL -> "ARRIVE ${state.nextPointName.uppercase(Locale.US)}" to true
         BasementStage.POINT_COMPLETE -> "START → ${state.nextPointName.uppercase(Locale.US)}" to true
+        BasementStage.ROUND_COMPLETE -> "START ROUND ${state.currentRound + 1}" to true
         BasementStage.RECOVERY_COMPLETE -> "FINISH TEST" to true
         BasementStage.POINT_STABILIZING -> "AUTO WAIT" to false
         BasementStage.POINT_PING -> "PING RUNNING" to false
@@ -1283,7 +1426,8 @@ $perSegmentAnalysis
             stabilizeSeconds = intent.getIntExtra(EXTRA_STABILIZE_SECONDS, 30).coerceIn(0, 120),
             pingSeconds = intent.getIntExtra(EXTRA_PING_SECONDS, 60).coerceIn(1, 180),
             recoverySeconds = intent.getIntExtra(EXTRA_RECOVERY_SECONDS, 60).coerceIn(5, 180),
-            selectedSubscriptionId = intent.getIntExtra(EXTRA_SUBSCRIPTION_ID, -1)
+            selectedSubscriptionId = intent.getIntExtra(EXTRA_SUBSCRIPTION_ID, -1),
+            rounds = intent.getIntExtra(EXTRA_ROUNDS, 1).coerceIn(1, 20)
         )
     }
 
@@ -1330,6 +1474,7 @@ $perSegmentAnalysis
         const val EXTRA_PING_SECONDS = "ping_seconds"
         const val EXTRA_RECOVERY_SECONDS = "recovery_seconds"
         const val EXTRA_SUBSCRIPTION_ID = "subscription_id"
+        const val EXTRA_ROUNDS = "rounds"
 
         const val CHANNEL_ID = "celltracker_basement_test"
         const val NOTIFICATION_ID = 1011

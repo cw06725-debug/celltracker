@@ -42,6 +42,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -74,10 +75,14 @@ fun CallSetupScreen(
     val enableLauncher=rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()){ onLinkAction(DeviceLinkService.ACTION_REFRESH,"") }
     val discoverableLauncher=rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()){ permissionEpoch++; onLinkAction(DeviceLinkService.ACTION_REFRESH,"") }
     LaunchedEffect(Unit){
-        val p=mutableListOf(Manifest.permission.CALL_PHONE,Manifest.permission.ANSWER_PHONE_CALLS,Manifest.permission.READ_PHONE_STATE,Manifest.permission.READ_PHONE_NUMBERS,Manifest.permission.RECORD_AUDIO)
-        if(Build.VERSION.SDK_INT>=31){p+=Manifest.permission.BLUETOOTH_SCAN;p+=Manifest.permission.BLUETOOTH_CONNECT;p+=Manifest.permission.BLUETOOTH_ADVERTISE}
-        permissionLauncher.launch(p.toTypedArray())
-        onLinkAction(DeviceLinkService.ACTION_REFRESH,"")
+        // Let the first frame render before touching Bluetooth/telephony. This removes the
+        // visible hitch when opening Call Setup on slower OEM builds.
+        delay(120)
+        val requested=mutableListOf(Manifest.permission.CALL_PHONE,Manifest.permission.ANSWER_PHONE_CALLS,Manifest.permission.READ_PHONE_STATE,Manifest.permission.READ_PHONE_NUMBERS,Manifest.permission.RECORD_AUDIO)
+        if(Build.VERSION.SDK_INT>=31){requested+=Manifest.permission.BLUETOOTH_SCAN;requested+=Manifest.permission.BLUETOOTH_CONNECT;requested+=Manifest.permission.BLUETOOTH_ADVERTISE}
+        val missing=requested.filter{ContextCompat.checkSelfPermission(context,it)!=PackageManager.PERMISSION_GRANTED}
+        if(missing.isNotEmpty()) permissionLauncher.launch(missing.toTypedArray())
+        else onLinkAction(DeviceLinkService.ACTION_REFRESH,"")
     }
     val identityRepo=remember{CallSetupRepository(context)}
     val activeSlots=remember(permissionEpoch,link.localProfile.subscriptionId){activeSimSlots(context)}

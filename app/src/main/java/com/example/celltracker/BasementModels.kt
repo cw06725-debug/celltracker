@@ -11,6 +11,7 @@ enum class BasementStage(val label: String) {
     POINT_COMPLETE("Point Completed"),
     RECOVERY("Recovery"),
     RECOVERY_COMPLETE("Recovery Completed"),
+    ROUND_COMPLETE("Round Completed"),
     FINISHED("Finished"),
     ABORTED("Aborted")
 }
@@ -34,10 +35,12 @@ data class BasementTestConfig(
     val stabilizeSeconds: Int = 30,
     val pingSeconds: Int = 60,
     val recoverySeconds: Int = 60,
-    val selectedSubscriptionId: Int = -1
+    val selectedSubscriptionId: Int = -1,
+    val rounds: Int = 1
 )
 
 data class BasementNetworkSample(
+    val round: Int,
     val timestampMs: Long,
     val stage: String,
     val segment: String,
@@ -68,6 +71,7 @@ data class BasementNetworkSample(
 )
 
 data class BasementEvent(
+    val round: Int,
     val timestampMs: Long,
     val segment: String,
     val type: String,
@@ -78,6 +82,7 @@ data class BasementEvent(
 )
 
 data class BasementPingSample(
+    val round: Int,
     val point: String,
     val timestampMs: Long,
     val sequence: Int,
@@ -89,6 +94,7 @@ data class BasementPingSample(
 )
 
 data class BasementPointResult(
+    val round: Int,
     val point: String,
     val sent: Int,
     val received: Int,
@@ -110,6 +116,8 @@ data class BasementLiveState(
     val nextPointName: String = "",
     val routeSegmentIndex: Int = 0,
     val routeSegmentCount: Int = 0,
+    val currentRound: Int = 1,
+    val totalRounds: Int = 1,
     val currentRat: String = "--",
     val currentRsrp: String = "--",
     val operator: String = "--",
