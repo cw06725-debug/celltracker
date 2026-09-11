@@ -1,5 +1,14 @@
 # CellTracker Changelog
 
+## v0.9.3.0.48
+
+- Replaced the frosted/liquid-glass bottom navigation with a simple WeChat-like bottom bar.
+- Solid white background, subtle top divider, no blur, no glass lens, no zoom/water animation.
+- Selected item uses WeChat-style green (#07C160); unselected items use dark gray.
+- Five top-level tabs remain: 测试 / Cell Info / Map / Setting / Reports.
+- Horizontal swipe between top-level tabs is retained.
+- Removed the Haze dependency and related runtime blur code.
+
 ## v0.9.3.0.47
 
 - Corrects navigation press feedback: the outer frosted-glass selection lens now enlarges, not the icon/text.
