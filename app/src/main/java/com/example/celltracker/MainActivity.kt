@@ -250,6 +250,8 @@ class MainActivity : ComponentActivity() {
                 }
                 AnimatedContent(
                     targetState = rootDestination,
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.TopStart,
                     transitionSpec = {
                         when {
                             targetState == RootDestination.Settings ->
@@ -639,6 +641,7 @@ private fun MainScreen(
     var showDeleteAll by remember { mutableStateOf(false) }
     var showMarkDialog by remember { mutableStateOf(false) }
     var showTaskNameDialog by remember { mutableStateOf(false) }
+    var settingsSubpageVisible by remember { mutableStateOf(false) }
 
     val selected = state.sims.firstOrNull { it.subscriptionId == state.selectedSubscriptionId } ?: state.sims.firstOrNull()
     val context = LocalContext.current
@@ -670,22 +673,24 @@ private fun MainScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        when (mainTab) {
-                            "TEST" -> "Tests"
-                            "MAP" -> "Map"
-                            "SETTINGS" -> "Setting"
-                            "REPORTS" -> "Reports"
-                            else -> "Cell Info"
-                        }
-                    )
-                },
-                actions = {
-                    if (mainTab == "MAP" && state.isRecording) TextButton(onClick = { showMarkDialog = true }) { Text("Mark") }
-                }
-            )
+            if (!(mainTab == "SETTINGS" && settingsSubpageVisible)) {
+                TopAppBar(
+                    title = {
+                        Text(
+                            when (mainTab) {
+                                "TEST" -> "Tests"
+                                "MAP" -> "Map"
+                                "SETTINGS" -> "Setting"
+                                "REPORTS" -> "Reports"
+                                else -> "Cell Info"
+                            }
+                        )
+                    },
+                    actions = {
+                        if (mainTab == "MAP" && state.isRecording) TextButton(onClick = { showMarkDialog = true }) { Text("Mark") }
+                    }
+                )
+            }
         }
     ) { padding ->
         Box(Modifier.padding(padding).fillMaxSize()) {
@@ -699,7 +704,9 @@ private fun MainScreen(
                         .togetherWith(slideOutOfContainer(direction, tween(220)) + fadeOut(tween(140)))
                 },
                 label = "mainTabs",
-                modifier = Modifier.fillMaxSize().padding(bottom = 67.dp)
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(bottom = if (mainTab == "SETTINGS" && settingsSubpageVisible) 0.dp else 67.dp)
             ) { tab ->
                 if (tab == "MAP") {
                     LiveMapScreen(
@@ -755,7 +762,8 @@ private fun MainScreen(
                     visitId = settingsVisitId,
                     onUpdate = onSettingsUpdate,
                     onBack = { onMainTabChange("CELL") },
-                    embedded = true
+                    embedded = true,
+                    onSubpageChanged = { settingsSubpageVisible = it }
                 )
                 return@mainContent
             }
@@ -892,11 +900,13 @@ private fun MainScreen(
                 }
             }
 
-            WeChatBottomBar(
-                selected = mainTab,
-                onSelect = onMainTabChange,
-                modifier = Modifier.align(Alignment.BottomCenter)
-            )
+            if (!(mainTab == "SETTINGS" && settingsSubpageVisible)) {
+                WeChatBottomBar(
+                    selected = mainTab,
+                    onSelect = onMainTabChange,
+                    modifier = Modifier.align(Alignment.BottomCenter)
+                )
+            }
         }
     }
 
@@ -2345,7 +2355,8 @@ private fun SettingsScreen(
     visitId: Int,
     onUpdate: (AppSettings) -> Unit,
     onBack: () -> Unit,
-    embedded: Boolean = false
+    embedded: Boolean = false,
+    onSubpageChanged: (Boolean) -> Unit = {}
 ) {
     var draft by remember(settings) { mutableStateOf(settings) }
     var page by remember { mutableStateOf("root") }
@@ -2358,6 +2369,12 @@ private fun SettingsScreen(
     val rootScrollState = rememberScrollState(initial = 0)
     LaunchedEffect(visitId) {
         rootScrollState.scrollTo(0)
+    }
+    LaunchedEffect(page) {
+        onSubpageChanged(page != "root")
+    }
+    DisposableEffect(Unit) {
+        onDispose { onSubpageChanged(false) }
     }
 
     fun applySetting(next: AppSettings) {

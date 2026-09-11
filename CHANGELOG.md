@@ -1,5 +1,14 @@
 # CellTracker Changelog
 
+## v0.9.3.0.51
+
+- Hide the bottom navigation on all embedded Settings child pages.
+- Remove the 67dp top-level navigation reservation while a Settings child page is open.
+- Hide the parent `Setting` app bar on Settings child pages, leaving only the child page header/back button.
+- Keep the bottom bar and its safe-area reservation only on the five top-level tabs.
+- Root secondary destinations now explicitly fill the full window so test/detail pages do not retain top-level navigation space.
+- Back from a Settings child page still returns to Settings; Back from test/detail pages still returns to the originating top-level tab.
+
 ## v0.9.3.0.50
 
 - Fix v0.9.3.0.49 Kotlin compile failure in Weak Coverage Route Test.
