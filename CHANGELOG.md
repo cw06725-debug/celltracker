@@ -1,5 +1,16 @@
 # CellTracker Changelog
 
+## v0.9.3.0.53
+
+- Restores the Reports navigation workflow: Reports home now shows test types only.
+- Tap a report type to open a second-level list showing all saved tests and the total report count.
+- Tap an individual report to open its result summary and report actions.
+- Ping / YouTube / WhatsApp / Call Setup report details support Preview Summary and Export / Share.
+- Weak Coverage report details support Preview Summary and sharing all saved HTML/CSV files.
+- Network Recording rows now open the original Recording Detail screen again, restoring its existing detail/export/delete workflow.
+- Reports second-level/detail pages hide the bottom main navigation, matching the rest of the app's secondary-page behavior.
+- Android back returns Detail → report list → Reports home.
+
 ## v0.9.3.0.52
 
 - Fix secondary-page bottom white space for YouTube Video Loading and Weak Coverage Route by removing Scaffold bottom content insets.

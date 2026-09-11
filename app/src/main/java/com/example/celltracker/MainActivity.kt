@@ -456,107 +456,378 @@ private fun GlassSection(title: String, content: @Composable ColumnScope.() -> U
 
 private data class BasementReportRow(val uri: Uri, val name: String, val relativePath: String, val addedMs: Long)
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ReportsHome(state: AppState, modifier: Modifier = Modifier) {
+private fun ReportsHome(
+    state: AppState,
+    onOpenRecording: (String) -> Unit,
+    onSubpageChanged: (Boolean) -> Unit = {},
+    modifier: Modifier = Modifier
+) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var videoReports by remember { mutableStateOf(emptyList<VideoLoadingDetail>()) }
     var whatsappReports by remember { mutableStateOf(emptyList<WhatsAppSendDetail>()) }
     var basementReports by remember { mutableStateOf(emptyList<BasementReportRow>()) }
+    var category by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedPath by rememberSaveable { mutableStateOf<String?>(null) }
+    var exportResult by remember { mutableStateOf<ExportResult?>(null) }
+    var busy by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) {
-        val loaded = withContext(Dispatchers.IO) {
-            Triple(
-                runCatching { VideoLoadingRepository(context).history() }.getOrDefault(emptyList()),
-                runCatching { WhatsAppSendRepository(context).history() }.getOrDefault(emptyList()),
-                loadBasementReports(context)
-            )
+    fun reloadReports() {
+        scope.launch {
+            val loaded = withContext(Dispatchers.IO) {
+                Triple(
+                    runCatching { VideoLoadingRepository(context).history() }.getOrDefault(emptyList()),
+                    runCatching { WhatsAppSendRepository(context).history() }.getOrDefault(emptyList()),
+                    loadBasementReports(context)
+                )
+            }
+            videoReports = loaded.first
+            whatsappReports = loaded.second
+            basementReports = loaded.third
         }
-        videoReports = loaded.first
-        whatsappReports = loaded.second
-        basementReports = loaded.third
     }
 
-    LazyColumn(modifier = modifier, contentPadding = PaddingValues(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    LaunchedEffect(Unit) { reloadReports() }
+    LaunchedEffect(category, selectedPath) { onSubpageChanged(category != null || selectedPath != null) }
+    DisposableEffect(Unit) { onDispose { onSubpageChanged(false) } }
+    BackHandler(enabled = category != null || selectedPath != null) {
+        if (selectedPath != null) selectedPath = null else category = null
+    }
+
+    fun exportPath(type: String, path: String, previewOnly: Boolean) {
+        if (busy) return
+        busy = true
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    when (type) {
+                        "PING" -> PingExporter.export(context, path)
+                        "YOUTUBE" -> VideoLoadingExporter.export(context, path)
+                        "WHATSAPP" -> WhatsAppSendExporter.export(context, path)
+                        "CALL" -> CallSetupExporter.export(context, path)
+                        else -> null
+                    }
+                }.getOrNull()
+            }
+            busy = false
+            if (result == null) {
+                Toast.makeText(context, "Unable to export report", Toast.LENGTH_SHORT).show()
+            } else if (previewOnly) {
+                result.summaryUri?.let { openExportedFile(context, it, "text/html") }
+                    ?: Toast.makeText(context, "Summary unavailable", Toast.LENGTH_SHORT).show()
+            } else {
+                exportResult = result
+            }
+        }
+    }
+
+
+    if (selectedPath != null && category != null) {
+        val path = selectedPath!!
+        val cat = category!!
+        val title = when (cat) {
+            "WEAK" -> basementReports.firstOrNull { it.uri.toString() == path }?.relativePath
+                ?.substringAfter("WeakCoverage/")?.substringBefore('/')?.ifBlank { "Weak Coverage Report" }
+                ?: "Weak Coverage Report"
+            "PING" -> state.pingHistory.firstOrNull { it.path == path }?.taskName?.ifBlank { "Ping Report" } ?: "Ping Report"
+            "YOUTUBE" -> File(path).nameWithoutExtension
+            "WHATSAPP" -> File(path).nameWithoutExtension
+            "CALL" -> state.callHistory.firstOrNull { it.path == path }?.taskName?.ifBlank { "Call Setup Report" } ?: "Call Setup Report"
+            else -> "Report"
+        }
+        Column(modifier.fillMaxSize()) {
+            TopAppBar(
+                title = { Text(title, maxLines = 1) },
+                navigationIcon = {
+                    TextButton(onClick = { selectedPath = null }) { Text("Back") }
+                }
+            )
+            Column(
+                Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                when (cat) {
+                    "WEAK" -> basementReports.firstOrNull { it.uri.toString() == path }?.let { r ->
+                        GlassSection("Weak Coverage Summary") {
+                            Field("Report", r.relativePath.substringAfter("WeakCoverage/").substringBefore('/').ifBlank { r.name })
+                            Field("Saved", SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(r.addedMs)))
+                            Text("Open the saved HTML summary or share all CSV/HTML files from this test.", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                    "PING" -> state.pingHistory.firstOrNull { it.path == path }?.let { r ->
+                        GlassSection("Ping Summary") {
+                            Field("Started", SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(r.startedAt)))
+                            Field("Host", r.host)
+                            Field("Packets", "${r.receivedCount} / ${r.packetCount}")
+                            Field("Success Rate", String.format(Locale.US, "%.1f%%", r.successRate))
+                            Field("Avg RTT", r.averageLatencyMs?.let { String.format(Locale.US, "%.1f ms", it) } ?: "--")
+                            Field("Status", r.status)
+                        }
+                    }
+                    "YOUTUBE" -> videoReports.firstOrNull { it.path == path }?.let { r ->
+                        val values = r.samples.mapNotNull { it.delayMs }
+                        GlassSection("YouTube Summary") {
+                            Field("Started", SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(r.startedAt)))
+                            Field("Attempts", r.samples.size.toString())
+                            Field("Average", values.takeIf { it.isNotEmpty() }?.average()?.let { String.format(Locale.US, "%.0f ms", it) } ?: "--")
+                            Field("Status", r.status)
+                        }
+                    }
+                    "WHATSAPP" -> whatsappReports.firstOrNull { it.path == path }?.let { r ->
+                        val values = r.samples.map { it.delayMs }
+                        GlassSection("WhatsApp Summary") {
+                            Field("Started", SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(r.startedAt)))
+                            Field("Attempts", r.samples.size.toString())
+                            Field("Average", values.takeIf { it.isNotEmpty() }?.average()?.let { String.format(Locale.US, "%.0f ms", it) } ?: "--")
+                            Field("Status", r.status)
+                        }
+                    }
+                    "CALL" -> state.callHistory.firstOrNull { it.path == path }?.let { r ->
+                        GlassSection("Call Setup Summary") {
+                            Field("Started", SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(r.startedAt)))
+                            Field("Attempts", r.attempts.toString())
+                            Field("Success", "${r.success} / ${r.attempts}")
+                            Field("Success Rate", String.format(Locale.US, "%.1f%%", r.successRate))
+                            Field("Avg Setup", r.averageMs?.let { String.format(Locale.US, "%.0f ms", it) } ?: "--")
+                            Field("Status", r.status)
+                        }
+                    }
+                }
+                if (cat == "WEAK") {
+                    Button(
+                        onClick = {
+                            basementReports.firstOrNull { it.uri.toString() == path }?.let { r ->
+                                val view = Intent(Intent.ACTION_VIEW).apply {
+                                    setDataAndType(r.uri, "text/html")
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                                runCatching { context.startActivity(view) }
+                                    .onFailure { Toast.makeText(context, "Unable to preview report", Toast.LENGTH_SHORT).show() }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("PREVIEW SUMMARY") }
+                    Button(
+                        onClick = {
+                            basementReports.firstOrNull { it.uri.toString() == path }?.let { r ->
+                                shareUris(context, weakCoverageReportUris(context, r.relativePath), "Share Weak Coverage report")
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("EXPORT / SHARE") }
+                } else {
+                    Button(
+                        onClick = { exportPath(cat, path, true) },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !busy
+                    ) { Text(if (busy) "PREPARING…" else "PREVIEW SUMMARY") }
+                    Button(
+                        onClick = { exportPath(cat, path, false) },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !busy
+                    ) { Text(if (busy) "PREPARING…" else "EXPORT / SHARE") }
+                }
+            }
+        }
+        exportResult?.let { ExportSuccessDialog(it) { exportResult = null } }
+        return
+    }
+
+    if (category != null) {
+        val cat = category!!
+        val count = when (cat) {
+            "WEAK" -> basementReports.size
+            "PING" -> state.pingHistory.size
+            "YOUTUBE" -> videoReports.size
+            "WHATSAPP" -> whatsappReports.size
+            "CALL" -> state.callHistory.size
+            "RECORDING" -> state.recordings.size
+            else -> 0
+        }
+        val title = when (cat) {
+            "WEAK" -> "Weak Coverage Route"
+            "PING" -> "Ping"
+            "YOUTUBE" -> "YouTube Video Loading"
+            "WHATSAPP" -> "WhatsApp Image Send"
+            "CALL" -> "Dual-DUT Call Setup"
+            "RECORDING" -> "Network Recording"
+            else -> "Reports"
+        }
+
+        Column(modifier.fillMaxSize()) {
+            TopAppBar(
+                title = { Text("$title Reports", maxLines = 1) },
+                navigationIcon = {
+                    TextButton(onClick = { category = null }) { Text("Back") }
+                }
+            )
+            LazyColumn(
+                Modifier.fillMaxSize().padding(horizontal = 16.dp),
+                contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                item {
+                    Text("$count test report${if (count == 1) "" else "s"}", style = MaterialTheme.typography.titleMedium)
+                    Text("Tap a test to open its result and report actions.", style = MaterialTheme.typography.bodySmall)
+                    Spacer(Modifier.height(6.dp))
+                }
+
+                when (cat) {
+                    "WEAK" -> items(basementReports, key = { it.uri.toString() }) { r ->
+                        val name = r.relativePath.substringAfter("WeakCoverage/").substringBefore('/').ifBlank { r.name }
+                        ReportListCard(
+                            title = name,
+                            subtitle = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(r.addedMs)),
+                            onClick = { selectedPath = r.uri.toString() }
+                        )
+                    }
+                    "PING" -> items(state.pingHistory, key = { it.path }) { r ->
+                        ReportListCard(
+                            title = r.taskName.ifBlank { "Ping ${r.host}" },
+                            subtitle = "${SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(r.startedAt))} · Success ${String.format(Locale.US, "%.1f%%", r.successRate)}",
+                            onClick = { selectedPath = r.path }
+                        )
+                    }
+                    "YOUTUBE" -> items(videoReports, key = { it.path }) { r ->
+                        val values = r.samples.mapNotNull { it.delayMs }
+                        ReportListCard(
+                            title = File(r.path).nameWithoutExtension,
+                            subtitle = "${SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(r.startedAt))} · ${r.samples.size} attempts · Avg ${values.takeIf { it.isNotEmpty() }?.average()?.let { String.format(Locale.US, "%.0fms", it) } ?: "--"}",
+                            onClick = { selectedPath = r.path }
+                        )
+                    }
+                    "WHATSAPP" -> items(whatsappReports, key = { it.path }) { r ->
+                        val values = r.samples.map { it.delayMs }
+                        ReportListCard(
+                            title = File(r.path).nameWithoutExtension,
+                            subtitle = "${SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(r.startedAt))} · ${r.samples.size} attempts · Avg ${values.takeIf { it.isNotEmpty() }?.average()?.let { String.format(Locale.US, "%.0fms", it) } ?: "--"}",
+                            onClick = { selectedPath = r.path }
+                        )
+                    }
+                    "CALL" -> items(state.callHistory, key = { it.path }) { r ->
+                        ReportListCard(
+                            title = r.taskName.ifBlank { "Call Setup" },
+                            subtitle = "${SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(r.startedAt))} · ${r.attempts} attempts · Success ${String.format(Locale.US, "%.1f%%", r.successRate)}",
+                            onClick = { selectedPath = r.path }
+                        )
+                    }
+                    "RECORDING" -> items(state.recordings, key = { it.path }) { r ->
+                        ReportListCard(
+                            title = recordingDisplayName(r.name),
+                            subtitle = "${SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(r.startedAt))} · ${r.simSummary} · ${formatElapsed(r.durationMs)}",
+                            onClick = { onOpenRecording(r.path) }
+                        )
+                    }
+                }
+            }
+        }
+        return
+    }
+
+    LazyColumn(
+        modifier = modifier.padding(horizontal = 16.dp),
+        contentPadding = PaddingValues(top = 8.dp, bottom = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
         item {
             Text("Reports by Type", style = MaterialTheme.typography.titleLarge)
-            Text("Saved reports are grouped here and no longer open a test configuration page.", style = MaterialTheme.typography.bodySmall)
+            Text("Choose a test type to view all saved test reports.", style = MaterialTheme.typography.bodySmall)
         }
-        item {
-            ReportTypeCard("Weak Coverage Route", basementReports.size) {
-                if (basementReports.isEmpty()) Text("No Basement reports", style = MaterialTheme.typography.bodySmall)
-                basementReports.take(8).forEach { r ->
-                    ReportRow(
-                        title = r.relativePath.substringAfter("WeakCoverage/").substringBefore('/').ifBlank { r.name },
-                        subtitle = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(r.addedMs)),
-                        onClick = {
-                            val view = Intent(Intent.ACTION_VIEW).apply {
-                                setDataAndType(r.uri, "text/html")
-                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                            }
-                            runCatching { context.startActivity(view) }
-                        }
-                    )
-                }
+        item { ReportCategoryCard("Weak Coverage Route", basementReports.size) { category = "WEAK" } }
+        item { ReportCategoryCard("Ping", state.pingHistory.size) { category = "PING" } }
+        item { ReportCategoryCard("YouTube Video Loading", videoReports.size) { category = "YOUTUBE" } }
+        item { ReportCategoryCard("WhatsApp Image Send", whatsappReports.size) { category = "WHATSAPP" } }
+        item { ReportCategoryCard("Dual-DUT Call Setup", state.callHistory.size) { category = "CALL" } }
+        item { ReportCategoryCard("Network Recording", state.recordings.size) { category = "RECORDING" } }
+    }
+}
+
+@Composable
+private fun ReportCategoryCard(title: String, count: Int, onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        shape = RoundedCornerShape(24.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.58f),
+        tonalElevation = 4.dp,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.10f))
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(18.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleMedium)
+                Text("$count saved test${if (count == 1) "" else "s"}", style = MaterialTheme.typography.bodySmall)
             }
-        }
-        item {
-            ReportTypeCard("Ping", state.pingHistory.size) {
-                if (state.pingHistory.isEmpty()) Text("No Ping reports", style = MaterialTheme.typography.bodySmall)
-                state.pingHistory.take(8).forEach { r ->
-                    ReportRow(
-                        title = r.taskName.ifBlank { "Ping ${r.host}" },
-                        subtitle = "${SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(r.startedAt))} · Success ${String.format(Locale.US, "%.1f%%", r.successRate)} · Avg ${r.averageLatencyMs?.let { String.format(Locale.US, "%.0fms", it) } ?: "--"}"
-                    )
-                }
-            }
-        }
-        item {
-            ReportTypeCard("YouTube Video Loading", videoReports.size) {
-                if (videoReports.isEmpty()) Text("No YouTube reports", style = MaterialTheme.typography.bodySmall)
-                videoReports.take(8).forEach { r ->
-                    val values = r.samples.mapNotNull { it.delayMs }
-                    ReportRow(
-                        title = File(r.path).nameWithoutExtension,
-                        subtitle = "${SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(r.startedAt))} · ${r.status} · ${r.samples.size} attempts · Avg ${values.takeIf { it.isNotEmpty() }?.average()?.let { String.format(Locale.US, "%.0fms", it) } ?: "--"}"
-                    )
-                }
-            }
-        }
-        item {
-            ReportTypeCard("WhatsApp Image Send", whatsappReports.size) {
-                if (whatsappReports.isEmpty()) Text("No WhatsApp reports", style = MaterialTheme.typography.bodySmall)
-                whatsappReports.take(8).forEach { r ->
-                    val values = r.samples.map { it.delayMs }
-                    ReportRow(
-                        title = File(r.path).nameWithoutExtension,
-                        subtitle = "${SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(r.startedAt))} · ${r.status} · ${r.samples.size} attempts · Avg ${values.takeIf { it.isNotEmpty() }?.average()?.let { String.format(Locale.US, "%.0fms", it) } ?: "--"}"
-                    )
-                }
-            }
-        }
-        item {
-            ReportTypeCard("Dual-DUT Call Setup", state.callHistory.size) {
-                if (state.callHistory.isEmpty()) Text("No Call Setup reports", style = MaterialTheme.typography.bodySmall)
-                state.callHistory.take(8).forEach { r ->
-                    ReportRow(
-                        title = r.taskName.ifBlank { "Call Setup" },
-                        subtitle = "${SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(r.startedAt))} · ${r.status} · ${r.attempts} attempts · Success ${String.format(Locale.US, "%.1f%%", r.successRate)}"
-                    )
-                }
-            }
-        }
-        item {
-            ReportTypeCard("Network Recording", state.recordings.size) {
-                if (state.recordings.isEmpty()) Text("No recording reports", style = MaterialTheme.typography.bodySmall)
-                state.recordings.take(8).forEach { r ->
-                    ReportRow(
-                        title = recordingDisplayName(r.name),
-                        subtitle = "${SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(r.startedAt))} · ${r.simSummary} · ${formatElapsed(r.durationMs)}"
-                    )
-                }
-            }
+            Text("›", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
+}
+
+@Composable
+private fun ReportListCard(
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit,
+    trailingActions: @Composable RowScope.() -> Unit = {}
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.48f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleSmall)
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Row(content = trailingActions)
+        }
+    }
+}
+
+private fun weakCoverageReportUris(context: android.content.Context, relativePath: String): ArrayList<Uri> {
+    val out = arrayListOf<Uri>()
+    if (Build.VERSION.SDK_INT < 29 || relativePath.isBlank()) return out
+    val projection = arrayOf(android.provider.MediaStore.Downloads._ID)
+    context.contentResolver.query(
+        android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+        projection,
+        "${android.provider.MediaStore.Downloads.RELATIVE_PATH}=?",
+        arrayOf(relativePath),
+        null
+    )?.use { c ->
+        while (c.moveToNext()) {
+            out += ContentUris.withAppendedId(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, c.getLong(0))
+        }
+    }
+    return out
+}
+
+private fun shareUris(context: android.content.Context, uris: ArrayList<Uri>, title: String) {
+    if (uris.isEmpty()) {
+        Toast.makeText(context, "Report files not found", Toast.LENGTH_SHORT).show()
+        return
+    }
+    val intent = if (uris.size == 1) {
+        Intent(Intent.ACTION_SEND).apply {
+            type = "*/*"
+            putExtra(Intent.EXTRA_STREAM, uris.first())
+        }
+    } else {
+        Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+            type = "*/*"
+            putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+        }
+    }.apply { addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+    runCatching { context.startActivity(Intent.createChooser(intent, title)) }
+        .onFailure { Toast.makeText(context, "Unable to share report", Toast.LENGTH_SHORT).show() }
 }
 
 @Composable
@@ -646,6 +917,7 @@ private fun MainScreen(
     var showMarkDialog by remember { mutableStateOf(false) }
     var showTaskNameDialog by remember { mutableStateOf(false) }
     var settingsSubpageVisible by remember { mutableStateOf(false) }
+    var reportsSubpageVisible by remember { mutableStateOf(false) }
 
     val selected = state.sims.firstOrNull { it.subscriptionId == state.selectedSubscriptionId } ?: state.sims.firstOrNull()
     val context = LocalContext.current
@@ -677,7 +949,7 @@ private fun MainScreen(
 
     Scaffold(
         topBar = {
-            if (!(mainTab == "SETTINGS" && settingsSubpageVisible)) {
+            if (!((mainTab == "SETTINGS" && settingsSubpageVisible) || (mainTab == "REPORTS" && reportsSubpageVisible))) {
                 TopAppBar(
                     title = {
                         Text(
@@ -710,7 +982,7 @@ private fun MainScreen(
                 label = "mainTabs",
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(bottom = if (mainTab == "SETTINGS" && settingsSubpageVisible) 0.dp else 67.dp)
+                    .padding(bottom = if ((mainTab == "SETTINGS" && settingsSubpageVisible) || (mainTab == "REPORTS" && reportsSubpageVisible)) 0.dp else 67.dp)
             ) { tab ->
                 if (tab == "MAP") {
                     LiveMapScreen(
@@ -773,7 +1045,12 @@ private fun MainScreen(
             }
 
             if (tab == "REPORTS") {
-                ReportsHome(state = state, modifier = Modifier.fillMaxSize().padding(16.dp))
+                ReportsHome(
+                    state = state,
+                    onOpenRecording = onOpenRecording,
+                    onSubpageChanged = { reportsSubpageVisible = it },
+                    modifier = Modifier.fillMaxSize()
+                )
                 return@mainContent
             }
 
@@ -904,7 +1181,7 @@ private fun MainScreen(
                 }
             }
 
-            if (!(mainTab == "SETTINGS" && settingsSubpageVisible)) {
+            if (!((mainTab == "SETTINGS" && settingsSubpageVisible) || (mainTab == "REPORTS" && reportsSubpageVisible))) {
                 WeChatBottomBar(
                     selected = mainTab,
                     onSelect = onMainTabChange,
