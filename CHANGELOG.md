@@ -1,5 +1,12 @@
 # CellTracker Changelog
 
+## v0.9.3.0.50
+
+- Fix v0.9.3.0.49 Kotlin compile failure in Weak Coverage Route Test.
+- Restore `updateStage`, `updateCountdown`, and `runRecovery` helpers accidentally removed during route state-machine generalization.
+- No functional scope change from v0.9.3.0.49.
+
+
 ## v0.9.3.0.49
 
 - Bottom navigation label changed from Chinese `测试` to English `Tests`.

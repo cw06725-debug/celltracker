@@ -472,6 +472,151 @@ class BasementTestService : Service() {
         events += BasementEvent(System.currentTimeMillis(), segment, type, from, to, null, description)
     }
 
+    private fun updateStage(stage: BasementStage, message: String) {
+        BasementTestStore.state.value = BasementTestStore.state.value.copy(
+            stage = stage,
+            stageStartedAt = System.currentTimeMillis(),
+            countdownSeconds = null,
+            statusMessage = message
+        )
+        updateOverlay()
+        updateNotification(message)
+    }
+
+    private fun updateCountdown(value: Int?) {
+        BasementTestStore.state.value = BasementTestStore.state.value.copy(countdownSeconds = value)
+        updateOverlay()
+    }
+
+    private fun runRecovery(arrivalMs: Long) {
+        recoveryJob?.cancel()
+        recoveryJob = scope.launch {
+            val requireNr = startHadNr == true
+            val requireLte = startHadLte != false
+            val arrivalSnap = lastSample
+
+            fun lteAvailable(snap: BasementNetworkSample?): Boolean =
+                snap != null && snap.registered && (
+                    snap.lteRsrp != "--" || snap.rat == "4G" || snap.displayRat.contains("LTE", true)
+                )
+            fun nrAvailable(snap: BasementNetworkSample?): Boolean =
+                snap != null && (snap.nrState == "CONNECTED" || snap.rat == "5G")
+
+            // If the capability is already present at the exact ARRIVE START mark, this is not
+            // a "recovery after arrival"; report 0.0 s instead of waiting two more samples and
+            // misleadingly showing ~1–2 s.
+            var lteRecovery: Long? = when {
+                !requireLte -> -2L
+                lteAvailable(arrivalSnap) -> 0L
+                else -> null
+            }
+            var nrRecovery: Long? = when {
+                !requireNr -> -2L
+                nrAvailable(arrivalSnap) -> 0L
+                else -> null
+            }
+            var dataRecovery: Long? = null
+
+            BasementTestStore.state.value = BasementTestStore.state.value.copy(
+                lteRecoveryRequired = requireLte,
+                nrRecoveryRequired = requireNr,
+                lteRecoveryMs = lteRecovery,
+                nrRecoveryMs = nrRecovery,
+                dataRecoveryMs = null
+            )
+
+            var lteStreak = 0
+            var nrStreak = 0
+            var lteFirstSeenMs: Long? = null
+            var nrFirstSeenMs: Long? = null
+
+            val maxSeconds = config.recoverySeconds.coerceAtLeast(1)
+            for (sec in 1..maxSeconds) {
+                if (!BasementTestStore.state.value.isRunning) return@launch
+                val cycleStarted = System.currentTimeMillis()
+                val snap = lastSample
+                val lteNow = lteAvailable(snap)
+                val nrNow = nrAvailable(snap)
+
+                if (lteRecovery == null) {
+                    if (lteNow) {
+                        if (lteStreak == 0) lteFirstSeenMs = snap?.timestampMs ?: System.currentTimeMillis()
+                        lteStreak++
+                    } else {
+                        lteStreak = 0
+                        lteFirstSeenMs = null
+                    }
+                    if (lteStreak >= 2) {
+                        lteRecovery = ((lteFirstSeenMs ?: System.currentTimeMillis()) - arrivalMs).coerceAtLeast(0L)
+                        appendEvent("LTE_RECOVERY", "", "${lteRecovery}ms", "LTE restored and confirmed by 2 consecutive 1Hz samples")
+                    }
+                }
+
+                if (nrRecovery == null) {
+                    if (nrNow) {
+                        if (nrStreak == 0) nrFirstSeenMs = snap?.timestampMs ?: System.currentTimeMillis()
+                        nrStreak++
+                    } else {
+                        nrStreak = 0
+                        nrFirstSeenMs = null
+                    }
+                    if (nrStreak >= 2) {
+                        nrRecovery = ((nrFirstSeenMs ?: System.currentTimeMillis()) - arrivalMs).coerceAtLeast(0L)
+                        appendEvent("NR_RECOVERY", "", "${nrRecovery}ms", "NR restored and confirmed by 2 consecutive 1Hz samples")
+                    }
+                }
+
+                // Data Recovery is based on real data-plane availability. The first successful
+                // recovery Ping is T_data; no icon-only inference is used.
+                val (rtt, recoveryMessage) = runSinglePing(config.host, 850L)
+                val recoverySnap = lastSample
+                pingSamples += BasementPingSample(
+                    point = "START Recovery",
+                    timestampMs = System.currentTimeMillis(),
+                    sequence = sec,
+                    success = rtt != null,
+                    rttMs = rtt,
+                    message = recoveryMessage,
+                    rat = recoverySnap?.rat ?: "--",
+                    rsrp = when {
+                        recoverySnap == null -> "--"
+                        recoverySnap.rat == "5G" && recoverySnap.nrSsRsrp != "--" -> recoverySnap.nrSsRsrp
+                        else -> recoverySnap.lteRsrp
+                    }
+                )
+                if (dataRecovery == null && rtt != null) {
+                    dataRecovery = (System.currentTimeMillis() - arrivalMs).coerceAtLeast(0L)
+                    appendEvent("DATA_RECOVERY", "", "${dataRecovery}ms", "First successful recovery Ping")
+                }
+
+                val doneLte = !requireLte || lteRecovery != null
+                val doneNr = !requireNr || nrRecovery != null
+                val doneData = dataRecovery != null
+                BasementTestStore.state.value = BasementTestStore.state.value.copy(
+                    lteRecoveryMs = lteRecovery,
+                    nrRecoveryMs = nrRecovery,
+                    dataRecoveryMs = dataRecovery,
+                    countdownSeconds = maxSeconds - sec,
+                    statusMessage = "Recovery ${sec}s / ${maxSeconds}s"
+                )
+                updateOverlay()
+                if (doneLte && doneNr && doneData) {
+                    updateStage(BasementStage.RECOVERY_COMPLETE, "Recovery completed")
+                    return@launch
+                }
+                val spent = System.currentTimeMillis() - cycleStarted
+                delay((1000L - spent).coerceAtLeast(0L))
+            }
+
+            BasementTestStore.state.value = BasementTestStore.state.value.copy(
+                recoveryTimedOut = true,
+                countdownSeconds = 0
+            )
+            appendEvent("RECOVERY_TIMEOUT", "", "", "Recovery exceeded ${config.recoverySeconds}s")
+            updateStage(BasementStage.RECOVERY_COMPLETE, "Recovery timeout")
+        }
+    }
+
     private suspend fun runSinglePing(host: String, timeoutMs: Long): Pair<Double?, String> = withContext(Dispatchers.IO) {
         var process: Process? = null
         try {
