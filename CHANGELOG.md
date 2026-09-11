@@ -1,5 +1,19 @@
 # CellTracker Changelog
 
+## v0.9.3.0.49
+
+- Bottom navigation label changed from Chinese `测试` to English `Tests`.
+- Added bottom safe-area padding so the WeChat-style navigation no longer covers page content.
+- Generalized Basement Weak Coverage into `Weak Coverage Route Test`.
+- Route name and route point names are configurable.
+- Add/delete intermediate points; supports routes with B3 or arbitrary names such as Lobby / Elevator / Parking.
+- Each intermediate point can independently enable/disable Ping.
+- First point is the start point; last point is the recovery point.
+- Floating controller and route state machine are generated from the configured route.
+- Reports use dynamic route-segment names instead of hard-coded START/B1/B2 segments.
+- Weak Coverage report output moves to `Reports/<date>/WeakCoverage/`.
+- Call testing is intentionally not added yet; Remote Call Anchor remains planned for a later version.
+
 ## v0.9.3.0.48
 
 - Replaced the frosted/liquid-glass bottom navigation with a simple WeChat-like bottom bar.

@@ -360,7 +360,7 @@ private fun WeChatBottomBar(
     modifier: Modifier = Modifier
 ) {
     val items = listOf(
-        Triple("TEST", "◉", "测试"),
+        Triple("TEST", "◉", "Tests"),
         Triple("CELL", "▥", "Cell Info"),
         Triple("MAP", "⌖", "Map"),
         Triple("SETTINGS", "⚙", "Setting"),
@@ -476,11 +476,11 @@ private fun ReportsHome(state: AppState, modifier: Modifier = Modifier) {
             Text("Saved reports are grouped here and no longer open a test configuration page.", style = MaterialTheme.typography.bodySmall)
         }
         item {
-            ReportTypeCard("Basement Weak Coverage", basementReports.size) {
+            ReportTypeCard("Weak Coverage Route", basementReports.size) {
                 if (basementReports.isEmpty()) Text("No Basement reports", style = MaterialTheme.typography.bodySmall)
                 basementReports.take(8).forEach { r ->
                     ReportRow(
-                        title = r.relativePath.substringAfter("Basement/").substringBefore('/').ifBlank { r.name },
+                        title = r.relativePath.substringAfter("WeakCoverage/").substringBefore('/').ifBlank { r.name },
                         subtitle = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(r.addedMs)),
                         onClick = {
                             val view = Intent(Intent.ACTION_VIEW).apply {
@@ -582,7 +582,7 @@ private fun loadBasementReports(context: android.content.Context): List<Basement
         android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI,
         projection,
         selection,
-        arrayOf("summary.html", "%/Basement/%"),
+        arrayOf("summary.html", "%/WeakCoverage/%"),
         "${android.provider.MediaStore.Downloads.DATE_ADDED} DESC"
     )?.use { c ->
         while (c.moveToNext()) {
@@ -699,7 +699,7 @@ private fun MainScreen(
                         .togetherWith(slideOutOfContainer(direction, tween(220)) + fadeOut(tween(140)))
                 },
                 label = "mainTabs",
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier.fillMaxSize().padding(bottom = 67.dp)
             ) { tab ->
                 if (tab == "MAP") {
                     LiveMapScreen(
@@ -720,9 +720,9 @@ private fun MainScreen(
                         Text("Latency, success rate and packet-loss test.", style = MaterialTheme.typography.bodySmall)
                         Button(onClick = onPingTest, modifier = Modifier.fillMaxWidth()) { Text(if (state.pingTest.isRunning) "Open Ping Test" else "Configure Ping Test") }
                         HorizontalDivider(Modifier.padding(vertical = 6.dp))
-                        Text("Basement Weak Coverage", style = MaterialTheme.typography.titleSmall)
-                        Text("START → B1 → B2 → B1 → START continuity, fixed-point Ping and recovery.", style = MaterialTheme.typography.bodySmall)
-                        Button(onClick = onBasementTest, modifier = Modifier.fillMaxWidth()) { Text(if (BasementTestStore.state.value.isRunning) "Open Basement Test" else "Configure Basement Test") }
+                        Text("Weak Coverage Route", style = MaterialTheme.typography.titleSmall)
+                        Text("Configurable weak-coverage route with custom points, optional fixed-point Ping and end recovery.", style = MaterialTheme.typography.bodySmall)
+                        Button(onClick = onBasementTest, modifier = Modifier.fillMaxWidth()) { Text(if (BasementTestStore.state.value.isRunning) "Open Weak Coverage Test" else "Configure Weak Coverage Test") }
                         HorizontalDivider(Modifier.padding(vertical = 6.dp))
                         Text("YouTube Video Loading", style = MaterialTheme.typography.titleSmall)
                         Button(onClick = onVideoLoading, modifier = Modifier.fillMaxWidth()) { Text("Configure Video Loading") }
@@ -2867,11 +2867,23 @@ private fun WhatsAppSendScreen(onBack: () -> Unit) {
 private fun BasementTestScreen(selectedSim: SimCellState?, onBack: () -> Unit) {
     val context = LocalContext.current
     val live by BasementTestStore.state.collectAsStateWithLifecycle()
+
     var deviceLabel by rememberSaveable { mutableStateOf("DUT") }
+    var routeName by rememberSaveable { mutableStateOf("Basement") }
     var host by rememberSaveable { mutableStateOf("8.8.8.8") }
     var stabilize by rememberSaveable { mutableStateOf("30") }
     var pingSeconds by rememberSaveable { mutableStateOf("60") }
     var recovery by rememberSaveable { mutableStateOf("60") }
+
+    val routePoints = remember {
+        mutableStateListOf(
+            WeakCoveragePoint("START", false),
+            WeakCoveragePoint("B1", true),
+            WeakCoveragePoint("B2", true),
+            WeakCoveragePoint("B1 Return", true),
+            WeakCoveragePoint("START Return", false)
+        )
+    }
 
     fun basementReportUri(path: String): Uri? {
         if (Build.VERSION.SDK_INT < 29 || path.isBlank()) return null
@@ -2921,7 +2933,7 @@ private fun BasementTestScreen(selectedSim: SimCellState?, onBack: () -> Unit) {
         return out
     }
 
-    fun startBasement() {
+    fun prepareWeakCoverage() {
         if (!android.provider.Settings.canDrawOverlays(context)) {
             Toast.makeText(context, "Please enable 'Display over other apps', then start again.", Toast.LENGTH_LONG).show()
             context.startActivity(
@@ -2932,9 +2944,26 @@ private fun BasementTestScreen(selectedSim: SimCellState?, onBack: () -> Unit) {
             )
             return
         }
+        val cleanPoints = routePoints
+            .map { it.copy(name = it.name.trim()) }
+            .filter { it.name.isNotBlank() }
+        if (cleanPoints.size < 2) {
+            Toast.makeText(context, "Route needs at least 2 points.", Toast.LENGTH_SHORT).show()
+            return
+        }
+
         val intent = Intent(context, BasementTestService::class.java).apply {
             action = BasementTestService.ACTION_PREPARE
             putExtra(BasementTestService.EXTRA_DEVICE_LABEL, deviceLabel.trim().ifBlank { "DUT" })
+            putExtra(BasementTestService.EXTRA_ROUTE_NAME, routeName.trim().ifBlank { "Weak Coverage" })
+            putStringArrayListExtra(
+                BasementTestService.EXTRA_ROUTE_NAMES,
+                ArrayList(cleanPoints.map { it.name })
+            )
+            putExtra(
+                BasementTestService.EXTRA_ROUTE_PING,
+                BooleanArray(cleanPoints.size) { cleanPoints[it].pingEnabled }
+            )
             putExtra(BasementTestService.EXTRA_HOST, host.trim().ifBlank { "8.8.8.8" })
             putExtra(BasementTestService.EXTRA_STABILIZE_SECONDS, stabilize.toIntOrNull() ?: 30)
             putExtra(BasementTestService.EXTRA_PING_SECONDS, pingSeconds.toIntOrNull() ?: 60)
@@ -2947,7 +2976,7 @@ private fun BasementTestScreen(selectedSim: SimCellState?, onBack: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Basement Weak Coverage") },
+                title = { Text("Weak Coverage Route Test") },
                 navigationIcon = { TextButton(onClick = onBack) { Text("Back") } }
             )
         }
@@ -2958,33 +2987,140 @@ private fun BasementTestScreen(selectedSim: SimCellState?, onBack: () -> Unit) {
         ) {
             if (!live.isRunning && live.stage != BasementStage.FINISHED && live.stage != BasementStage.ABORTED) {
                 Text("Test Setup", style = MaterialTheme.typography.titleMedium)
-                Text("Route: START → B1 → B2 → B1 Return → START. Network data is sampled continuously at 1 Hz; B1/B2/B1 Return automatically wait then Ping.", style = MaterialTheme.typography.bodySmall)
                 Field("Selected SIM", selectedSim?.let {
                     val op = it.servingCell.operator.trim().ifBlank { "--" }
                     "SIM ${it.simSlotIndex + 1} · $op"
                 } ?: "--")
-                Text("Before testing: turn Wi-Fi OFF and make this selected SIM the Android default mobile-data SIM, so Ping and network logging refer to the same SIM.", style = MaterialTheme.typography.bodySmall)
-                OutlinedTextField(deviceLabel, { deviceLabel = it }, label = { Text("Device label") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                Text(
+                    "Turn Wi-Fi OFF and make this SIM the Android default mobile-data SIM so Ping and network logging use the same SIM.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+
+                OutlinedTextField(
+                    routeName, { routeName = it },
+                    label = { Text("Route name") },
+                    placeholder = { Text("Basement / Mall / Tunnel / Parking") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    deviceLabel, { deviceLabel = it },
+                    label = { Text("Device label") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Text("Route Points", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "First point is the start. Last point is the recovery point. Intermediate points may run Ping after stabilization.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+
+                routePoints.forEachIndexed { index, point ->
+                    Card(Modifier.fillMaxWidth()) {
+                        Column(
+                            Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text("${index + 1}", style = MaterialTheme.typography.titleSmall)
+                                OutlinedTextField(
+                                    value = point.name,
+                                    onValueChange = { value -> routePoints[index] = point.copy(name = value) },
+                                    label = { Text(if (index == 0) "Start point" else if (index == routePoints.lastIndex) "Recovery point" else "Point name") },
+                                    singleLine = true,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                if (routePoints.size > 2 && index != 0 && index != routePoints.lastIndex) {
+                                    TextButton(onClick = { routePoints.removeAt(index) }) { Text("Delete") }
+                                }
+                            }
+                            if (index != 0 && index != routePoints.lastIndex) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Switch(
+                                        checked = point.pingEnabled,
+                                        onCheckedChange = { checked ->
+                                            routePoints[index] = point.copy(pingEnabled = checked)
+                                        }
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(if (point.pingEnabled) "Ping at this point" else "No Ping at this point")
+                                }
+                            } else {
+                                Text(
+                                    if (index == 0) "Start only · no fixed-point Ping"
+                                    else "Final point · Recovery measurement",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                        }
+                    }
+                }
+
+                OutlinedButton(
+                    onClick = {
+                        val insertAt = routePoints.lastIndex.coerceAtLeast(1)
+                        routePoints.add(insertAt, WeakCoveragePoint("Point ${routePoints.size}", true))
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("+ ADD POINT") }
+
+                Text(
+                    "Route: ${routePoints.joinToString(" → ") { it.name.ifBlank { "?" } }}",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+
                 OutlinedTextField(host, { host = it }, label = { Text("Ping host") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(stabilize, { stabilize = it.filter(Char::isDigit) }, label = { Text("Stabilize s") }, singleLine = true, modifier = Modifier.weight(1f))
-                    OutlinedTextField(pingSeconds, { pingSeconds = it.filter(Char::isDigit) }, label = { Text("Ping s") }, singleLine = true, modifier = Modifier.weight(1f))
-                    OutlinedTextField(recovery, { recovery = it.filter(Char::isDigit) }, label = { Text("Recovery timeout s") }, singleLine = true, modifier = Modifier.weight(1f))
+                    OutlinedTextField(
+                        stabilize, { stabilize = it.filter(Char::isDigit) },
+                        label = { Text("Stabilize s") }, singleLine = true, modifier = Modifier.weight(1f)
+                    )
+                    OutlinedTextField(
+                        pingSeconds, { pingSeconds = it.filter(Char::isDigit) },
+                        label = { Text("Ping s") }, singleLine = true, modifier = Modifier.weight(1f)
+                    )
+                    OutlinedTextField(
+                        recovery, { recovery = it.filter(Char::isDigit) },
+                        label = { Text("Recovery timeout s") }, singleLine = true, modifier = Modifier.weight(1f)
+                    )
                 }
-                Button(onClick = { startBasement() }, modifier = Modifier.fillMaxWidth()) { Text("PREPARE FLOATING TEST") }
-                Text("Recovery timeout is the maximum wait after ARRIVE START for LTE/Data/5G recovery (default 60s). Preparing does NOT start timing; press START TEST on the floating window to create T0 and begin logging.", style = MaterialTheme.typography.bodySmall)
-                Text("The floating window is the primary controller while walking. Drag it by the title area if it blocks content.", style = MaterialTheme.typography.bodySmall)
+
+                Button(onClick = { prepareWeakCoverage() }, modifier = Modifier.fillMaxWidth()) {
+                    Text("PREPARE FLOATING TEST")
+                }
+                Text(
+                    "Preparing does not start T0. Press START TEST on the floating controller. The controller follows the configured route automatically.",
+                    style = MaterialTheme.typography.bodySmall
+                )
             } else {
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(live.stage.label, style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            when (live.stage) {
+                                BasementStage.ROUTE_TRAVEL -> live.currentSegment
+                                BasementStage.POINT_STABILIZING, BasementStage.POINT_PING, BasementStage.POINT_COMPLETE -> live.currentPointName
+                                BasementStage.RECOVERY, BasementStage.RECOVERY_COMPLETE -> "${live.currentPointName} · Recovery"
+                                else -> live.stage.label
+                            },
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        if (live.routeName.isNotBlank()) Field("Route", live.routeName)
+                        if (live.routeSegmentCount > 0) Field("Progress", "${live.routeSegmentIndex} / ${live.routeSegmentCount}")
                         Field("Network", "${live.currentRat} · ${live.currentRsrp} dBm")
                         Field("Operator", live.operator)
                         live.countdownSeconds?.let { Field("Countdown", "${it}s") }
                         if (live.pingTotal > 0) Field("Ping", "${live.pingProgress} / ${live.pingTotal}")
                         live.lastPointResult?.let {
                             val success = if (it.sent > 0) it.received * 100.0 / it.sent else 0.0
-                            Field("Last Ping", "${it.result} · Success ${String.format(Locale.US, "%.1f%%", success)} · Avg ${it.avgRttMs?.let { v -> String.format(Locale.US, "%.0f ms", v) } ?: "--"}")
+                            Field(
+                                "Last Ping",
+                                "${it.result} · Success ${String.format(Locale.US, "%.1f%%", success)} · Avg ${it.avgRttMs?.let { v -> String.format(Locale.US, "%.0f ms", v) } ?: "--"}"
+                            )
                         }
                         if (live.stage == BasementStage.RECOVERY || live.stage == BasementStage.RECOVERY_COMPLETE || live.stage == BasementStage.FINISHED) {
                             fun rec(v: Long?, required: Boolean): String = when {
@@ -3003,30 +3139,38 @@ private fun BasementTestScreen(selectedSim: SimCellState?, onBack: () -> Unit) {
 
                 if (live.isRunning) {
                     val actionable = live.stage in setOf(
-                        BasementStage.PREPARED, BasementStage.START_TO_B1, BasementStage.B1_COMPLETE, BasementStage.B1_TO_B2,
-                        BasementStage.B2_COMPLETE, BasementStage.B2_TO_B1, BasementStage.B1_RETURN_COMPLETE,
-                        BasementStage.B1_TO_START, BasementStage.RECOVERY_COMPLETE
+                        BasementStage.PREPARED,
+                        BasementStage.ROUTE_TRAVEL,
+                        BasementStage.POINT_COMPLETE,
+                        BasementStage.RECOVERY_COMPLETE
                     )
                     if (actionable) {
                         val actionText = when (live.stage) {
                             BasementStage.PREPARED -> "START TEST"
-                            BasementStage.START_TO_B1 -> "ARRIVE B1"
-                            BasementStage.B1_COMPLETE -> "START B1 → B2"
-                            BasementStage.B1_TO_B2 -> "ARRIVE B2"
-                            BasementStage.B2_COMPLETE -> "START B2 → B1"
-                            BasementStage.B2_TO_B1 -> "ARRIVE B1"
-                            BasementStage.B1_RETURN_COMPLETE -> "START B1 → START"
-                            BasementStage.B1_TO_START -> "ARRIVE START"
+                            BasementStage.ROUTE_TRAVEL -> "ARRIVE ${live.nextPointName.uppercase(Locale.US)}"
+                            BasementStage.POINT_COMPLETE -> "START → ${live.nextPointName.uppercase(Locale.US)}"
                             BasementStage.RECOVERY_COMPLETE -> "FINISH TEST"
                             else -> "CONTINUE"
                         }
                         Button(
-                            onClick = { context.startService(Intent(context, BasementTestService::class.java).apply { action = BasementTestService.ACTION_PRIMARY }) },
+                            onClick = {
+                                context.startService(
+                                    Intent(context, BasementTestService::class.java).apply {
+                                        action = BasementTestService.ACTION_PRIMARY
+                                    }
+                                )
+                            },
                             modifier = Modifier.fillMaxWidth()
                         ) { Text(actionText) }
                     }
                     OutlinedButton(
-                        onClick = { context.startService(Intent(context, BasementTestService::class.java).apply { action = BasementTestService.ACTION_ABORT }) },
+                        onClick = {
+                            context.startService(
+                                Intent(context, BasementTestService::class.java).apply {
+                                    action = BasementTestService.ACTION_ABORT
+                                }
+                            )
+                        },
                         modifier = Modifier.fillMaxWidth()
                     ) { Text("Abort Test") }
                 } else {
@@ -3057,16 +3201,17 @@ private fun BasementTestScreen(selectedSim: SimCellState?, onBack: () -> Unit) {
                                             putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
                                             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                                         }
-                                        context.startActivity(Intent.createChooser(share, "Share Basement report"))
+                                        context.startActivity(Intent.createChooser(share, "Share Weak Coverage report"))
                                     } else Toast.makeText(context, "Report files not found", Toast.LENGTH_SHORT).show()
                                 },
                                 modifier = Modifier.weight(1f)
                             ) { Text("SHARE / EXPORT") }
                         }
                     }
-                    Button(onClick = {
-                        BasementTestStore.state.value = BasementLiveState()
-                    }, modifier = Modifier.fillMaxWidth()) { Text("NEW TEST") }
+                    Button(
+                        onClick = { BasementTestStore.state.value = BasementLiveState() },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("NEW TEST") }
                 }
             }
         }

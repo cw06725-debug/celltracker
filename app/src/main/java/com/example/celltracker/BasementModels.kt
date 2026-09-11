@@ -5,27 +5,31 @@ import kotlinx.coroutines.flow.MutableStateFlow
 enum class BasementStage(val label: String) {
     IDLE("Ready"),
     PREPARED("Ready to Start"),
-    START_TO_B1("START → B1"),
-    B1_STABILIZING("B1 · Stabilizing"),
-    B1_PING("B1 · Ping Testing"),
-    B1_COMPLETE("B1 Test Completed"),
-    B1_TO_B2("B1 → B2"),
-    B2_STABILIZING("B2 · Stabilizing"),
-    B2_PING("B2 · Ping Testing"),
-    B2_COMPLETE("B2 Test Completed"),
-    B2_TO_B1("B2 → B1 Return"),
-    B1_RETURN_STABILIZING("B1 Return · Stabilizing"),
-    B1_RETURN_PING("B1 Return · Ping Testing"),
-    B1_RETURN_COMPLETE("B1 Return Test Completed"),
-    B1_TO_START("B1 → START Return"),
-    RECOVERY("START · Recovery"),
+    ROUTE_TRAVEL("Route"),
+    POINT_STABILIZING("Stabilizing"),
+    POINT_PING("Ping Testing"),
+    POINT_COMPLETE("Point Completed"),
+    RECOVERY("Recovery"),
     RECOVERY_COMPLETE("Recovery Completed"),
     FINISHED("Finished"),
     ABORTED("Aborted")
 }
 
+data class WeakCoveragePoint(
+    val name: String,
+    val pingEnabled: Boolean = true
+)
+
 data class BasementTestConfig(
     val deviceLabel: String = "DUT",
+    val routeName: String = "Basement",
+    val routePoints: List<WeakCoveragePoint> = listOf(
+        WeakCoveragePoint("START", false),
+        WeakCoveragePoint("B1", true),
+        WeakCoveragePoint("B2", true),
+        WeakCoveragePoint("B1 Return", true),
+        WeakCoveragePoint("START Return", false)
+    ),
     val host: String = "8.8.8.8",
     val stabilizeSeconds: Int = 30,
     val pingSeconds: Int = 60,
@@ -100,6 +104,12 @@ data class BasementLiveState(
     val stage: BasementStage = BasementStage.IDLE,
     val stageStartedAt: Long = 0L,
     val sessionStartedAt: Long = 0L,
+    val routeName: String = "",
+    val currentSegment: String = "",
+    val currentPointName: String = "",
+    val nextPointName: String = "",
+    val routeSegmentIndex: Int = 0,
+    val routeSegmentCount: Int = 0,
     val currentRat: String = "--",
     val currentRsrp: String = "--",
     val operator: String = "--",

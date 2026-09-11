@@ -48,6 +48,7 @@ class BasementTestService : Service() {
     private var noServiceStartedAt: Long? = null
     private var startHadNr: Boolean? = null
     private var startHadLte: Boolean? = null
+    private var activeSegmentIndex = 0
 
     private val samples = mutableListOf<BasementNetworkSample>()
     private val events = mutableListOf<BasementEvent>()
@@ -88,6 +89,10 @@ class BasementTestService : Service() {
             isRunning = true,
             stage = BasementStage.PREPARED,
             stageStartedAt = System.currentTimeMillis(),
+            routeName = config.routeName,
+            currentPointName = config.routePoints.firstOrNull()?.name.orEmpty(),
+            nextPointName = config.routePoints.getOrNull(1)?.name.orEmpty(),
+            routeSegmentCount = (config.routePoints.size - 1).coerceAtLeast(0),
             statusMessage = "Floating controller ready · press START TEST"
         )
         showOverlay()
@@ -102,9 +107,19 @@ class BasementTestService : Service() {
         beginTest()
     }
 
+    private fun routeSegmentName(index: Int): String {
+        val from = config.routePoints.getOrNull(index)?.name ?: return ""
+        val to = config.routePoints.getOrNull(index + 1)?.name ?: return ""
+        return "$from → $to"
+    }
+
+    private fun routeSegments(): List<String> =
+        (0 until (config.routePoints.size - 1).coerceAtLeast(0)).map { routeSegmentName(it) }
+
     private fun beginTest() {
         if (BasementTestStore.state.value.stage != BasementStage.PREPARED &&
             BasementTestStore.state.value.stage != BasementStage.IDLE) return
+        if (config.routePoints.size < 2) return
 
         sessionStartedAt = System.currentTimeMillis()
         sessionDirName = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date(sessionStartedAt))
@@ -112,21 +127,31 @@ class BasementTestService : Service() {
         noServiceStartedAt = null
         startHadNr = null
         startHadLte = null
+        activeSegmentIndex = 0
         samples.clear(); events.clear(); pingSamples.clear(); pointResults.clear()
         segmentStart.clear(); segmentEnd.clear()
-        segmentStart[SEG_START_B1] = sessionStartedAt
 
+        val firstSegment = routeSegmentName(0)
+        segmentStart[firstSegment] = sessionStartedAt
+        val from = config.routePoints[0].name
+        val to = config.routePoints[1].name
         acquireWakeLock()
         BasementTestStore.state.value = BasementLiveState(
             isRunning = true,
-            stage = BasementStage.START_TO_B1,
+            stage = BasementStage.ROUTE_TRAVEL,
             stageStartedAt = sessionStartedAt,
             sessionStartedAt = sessionStartedAt,
-            statusMessage = "Walking to B1"
+            routeName = config.routeName,
+            currentSegment = firstSegment,
+            currentPointName = from,
+            nextPointName = to,
+            routeSegmentIndex = 1,
+            routeSegmentCount = config.routePoints.size - 1,
+            statusMessage = "Walking: $from → $to"
         )
-        appendEvent("TEST_START", "", "START", "Basement weak coverage test started")
+        appendEvent("TEST_START", "", from, "${config.routeName} weak coverage route started", firstSegment)
         updateOverlay()
-        updateNotification("START → B1")
+        updateNotification(firstSegment)
         sampleJob = scope.launch { samplingLoop() }
     }
 
@@ -139,7 +164,7 @@ class BasementTestService : Service() {
                 samples += sample
                 lastSample = sample
 
-                if (startHadNr == null && sample.stage == BasementStage.START_TO_B1.name) {
+                if (startHadNr == null && BasementTestStore.state.value.routeSegmentIndex == 1) {
                     startHadNr = sample.nrState == "CONNECTED" || sample.rat == "5G"
                     startHadLte = sample.lteRsrp != "--" || sample.rat == "4G" || sample.displayRat.contains("LTE", true)
                 }
@@ -189,7 +214,7 @@ class BasementTestService : Service() {
         return BasementNetworkSample(
             timestampMs = System.currentTimeMillis(),
             stage = stage.name,
-            segment = segmentFor(stage),
+            segment = BasementTestStore.state.value.currentSegment.ifBlank { segmentFor(stage) },
             simSlot = sim.simSlotIndex,
             subscriptionId = sim.subscriptionId,
             operator = serving.operator.ifBlank { "--" },
@@ -289,83 +314,108 @@ class BasementTestService : Service() {
     private fun handlePrimaryAction() {
         when (BasementTestStore.state.value.stage) {
             BasementStage.PREPARED -> beginTest()
-            BasementStage.START_TO_B1 -> arriveB1First()
-            BasementStage.B1_COMPLETE -> startRoute(BasementStage.B1_TO_B2, SEG_B1_B2, "B1", "B2")
-            BasementStage.B1_TO_B2 -> arriveB2()
-            BasementStage.B2_COMPLETE -> startRoute(BasementStage.B2_TO_B1, SEG_B2_B1, "B2", "B1 Return")
-            BasementStage.B2_TO_B1 -> arriveB1Return()
-            BasementStage.B1_RETURN_COMPLETE -> startRoute(BasementStage.B1_TO_START, SEG_B1_START, "B1 Return", "START")
-            BasementStage.B1_TO_START -> arriveStart()
+            BasementStage.ROUTE_TRAVEL -> arriveNextPoint()
+            BasementStage.POINT_COMPLETE -> startNextSegment()
             BasementStage.RECOVERY_COMPLETE -> finishTest("COMPLETED")
             else -> Unit
         }
     }
 
-    private fun arriveB1First() {
+    private fun arriveNextPoint() {
         val now = System.currentTimeMillis()
-        segmentEnd[SEG_START_B1] = now
-        appendEvent("ARRIVE_B1", "START", "B1", "Arrived B1", SEG_START_B1)
-        runFixedPoint("B1 First", BasementStage.B1_STABILIZING, BasementStage.B1_PING, BasementStage.B1_COMPLETE)
+        val segment = routeSegmentName(activeSegmentIndex)
+        segmentEnd[segment] = now
+        val from = config.routePoints.getOrNull(activeSegmentIndex)?.name ?: ""
+        val point = config.routePoints.getOrNull(activeSegmentIndex + 1) ?: return
+        appendEvent("ARRIVE_POINT", from, point.name, "Arrived ${point.name}", segment)
+        if (activeSegmentIndex + 1 == config.routePoints.lastIndex) {
+            BasementTestStore.state.value = BasementTestStore.state.value.copy(
+                currentPointName = point.name,
+                nextPointName = "",
+                currentSegment = "${point.name} Recovery"
+            )
+            updateStage(BasementStage.RECOVERY, "${point.name} recovery")
+            runRecovery(now)
+        } else {
+            runConfiguredPoint(point)
+        }
     }
 
-    private fun arriveB2() {
-        val now = System.currentTimeMillis()
-        segmentEnd[SEG_B1_B2] = now
-        appendEvent("ARRIVE_B2", "B1", "B2", "Arrived B2", SEG_B1_B2)
-        runFixedPoint("B2", BasementStage.B2_STABILIZING, BasementStage.B2_PING, BasementStage.B2_COMPLETE)
-    }
-
-    private fun arriveB1Return() {
-        val now = System.currentTimeMillis()
-        segmentEnd[SEG_B2_B1] = now
-        appendEvent("ARRIVE_B1_RETURN", "B2", "B1 Return", "Arrived B1 return", SEG_B2_B1)
-        runFixedPoint("B1 Return", BasementStage.B1_RETURN_STABILIZING, BasementStage.B1_RETURN_PING, BasementStage.B1_RETURN_COMPLETE)
-    }
-
-    private fun startRoute(stage: BasementStage, segment: String, from: String, to: String) {
-        val now = System.currentTimeMillis()
-        segmentStart[segment] = now
-        updateStage(stage, "$from → $to")
-        appendEvent("SEGMENT_START", from, to, "$from → $to started", segment)
-    }
-
-    private fun runFixedPoint(point: String, stabilize: BasementStage, pingStage: BasementStage, complete: BasementStage) {
+    private fun runConfiguredPoint(point: WeakCoveragePoint) {
         stageJob?.cancel()
         stageJob = scope.launch {
-            updateStage(stabilize, "$point stabilizing")
+            BasementTestStore.state.value = BasementTestStore.state.value.copy(
+                stage = BasementStage.POINT_STABILIZING,
+                stageStartedAt = System.currentTimeMillis(),
+                currentPointName = point.name,
+                nextPointName = config.routePoints.getOrNull(activeSegmentIndex + 2)?.name.orEmpty(),
+                currentSegment = point.name,
+                statusMessage = "${point.name} stabilizing"
+            )
+            updateOverlay()
             for (remain in config.stabilizeSeconds downTo 1) {
                 updateCountdown(remain)
                 delay(1000L)
             }
             updateCountdown(null)
-            updateStage(pingStage, "$point ping")
-            val result = runPointPing(point)
-            pointResults[point] = result
-            BasementTestStore.state.value = BasementTestStore.state.value.copy(lastPointResult = result)
-            updateStage(complete, "$point completed")
+            if (point.pingEnabled) {
+                updateStage(BasementStage.POINT_PING, "${point.name} ping")
+                BasementTestStore.state.value = BasementTestStore.state.value.copy(
+                    currentPointName = point.name,
+                    currentSegment = point.name
+                )
+                val result = runPointPing(point.name)
+                pointResults[point.name] = result
+                BasementTestStore.state.value = BasementTestStore.state.value.copy(lastPointResult = result)
+            }
+            updateStage(BasementStage.POINT_COMPLETE, if (point.pingEnabled) "${point.name} completed" else "${point.name} ready")
+            BasementTestStore.state.value = BasementTestStore.state.value.copy(
+                currentPointName = point.name,
+                nextPointName = config.routePoints.getOrNull(activeSegmentIndex + 2)?.name.orEmpty(),
+                currentSegment = point.name
+            )
             updateOverlay()
         }
     }
 
+    private fun startNextSegment() {
+        if (activeSegmentIndex >= config.routePoints.lastIndex - 1) return
+        activeSegmentIndex++
+        val segment = routeSegmentName(activeSegmentIndex)
+        val from = config.routePoints[activeSegmentIndex].name
+        val to = config.routePoints[activeSegmentIndex + 1].name
+        val now = System.currentTimeMillis()
+        segmentStart[segment] = now
+        BasementTestStore.state.value = BasementTestStore.state.value.copy(
+            stage = BasementStage.ROUTE_TRAVEL,
+            stageStartedAt = now,
+            currentSegment = segment,
+            currentPointName = from,
+            nextPointName = to,
+            routeSegmentIndex = activeSegmentIndex + 1,
+            routeSegmentCount = config.routePoints.size - 1,
+            countdownSeconds = null,
+            pingProgress = 0,
+            pingTotal = 0,
+            statusMessage = "$from → $to"
+        )
+        appendEvent("SEGMENT_START", from, to, "$from → $to started", segment)
+        updateOverlay()
+        updateNotification(segment)
+    }
+
     private suspend fun runPointPing(point: String): BasementPointResult {
         val total = config.pingSeconds.coerceAtLeast(1)
-        var received = 0
-        val latencies = mutableListOf<Double>()
         for (seq in 1..total) {
             if (!BasementTestStore.state.value.isRunning) break
             val cycleStarted = System.currentTimeMillis()
             val (rtt, message) = runSinglePing(config.host, 2000L)
-            val success = rtt != null
-            if (success) {
-                received++
-                latencies += rtt!!
-            }
             val snap = lastSample
             pingSamples += BasementPingSample(
                 point = point,
                 timestampMs = System.currentTimeMillis(),
                 sequence = seq,
-                success = success,
+                success = rtt != null,
                 rttMs = rtt,
                 message = message,
                 rat = snap?.rat ?: "--",
@@ -384,9 +434,10 @@ class BasementTestService : Service() {
             val spent = System.currentTimeMillis() - cycleStarted
             delay((1000L - spent).coerceAtLeast(0L))
         }
-        val sent = pingSamples.count { it.point == point }
-        val recv = pingSamples.count { it.point == point && it.success }
-        val values = pingSamples.filter { it.point == point }.mapNotNull { it.rttMs }
+        val rows = pingSamples.filter { it.point == point }
+        val sent = rows.size
+        val recv = rows.count { it.success }
+        val values = rows.mapNotNull { it.rttMs }
         val loss = if (sent == 0) 100.0 else (sent - recv) * 100.0 / sent
         return BasementPointResult(
             point = point,
@@ -400,175 +451,24 @@ class BasementTestService : Service() {
         )
     }
 
-    private fun arriveStart() {
-        val now = System.currentTimeMillis()
-        segmentEnd[SEG_B1_START] = now
-        appendEvent("ARRIVE_START", "B1 Return", "START", "Returned to START", SEG_B1_START)
-        updateStage(BasementStage.RECOVERY, "Checking LTE/Data/5G recovery")
-        runRecovery(now)
-    }
-
-    private fun runRecovery(arrivalMs: Long) {
-        recoveryJob?.cancel()
-        recoveryJob = scope.launch {
-            val requireNr = startHadNr == true
-            val requireLte = startHadLte != false
-            val arrivalSnap = lastSample
-
-            fun lteAvailable(snap: BasementNetworkSample?): Boolean =
-                snap != null && snap.registered && (
-                    snap.lteRsrp != "--" || snap.rat == "4G" || snap.displayRat.contains("LTE", true)
-                )
-            fun nrAvailable(snap: BasementNetworkSample?): Boolean =
-                snap != null && (snap.nrState == "CONNECTED" || snap.rat == "5G")
-
-            // If the capability is already present at the exact ARRIVE START mark, this is not
-            // a "recovery after arrival"; report 0.0 s instead of waiting two more samples and
-            // misleadingly showing ~1–2 s.
-            var lteRecovery: Long? = when {
-                !requireLte -> -2L
-                lteAvailable(arrivalSnap) -> 0L
-                else -> null
-            }
-            var nrRecovery: Long? = when {
-                !requireNr -> -2L
-                nrAvailable(arrivalSnap) -> 0L
-                else -> null
-            }
-            var dataRecovery: Long? = null
-
-            BasementTestStore.state.value = BasementTestStore.state.value.copy(
-                lteRecoveryRequired = requireLte,
-                nrRecoveryRequired = requireNr,
-                lteRecoveryMs = lteRecovery,
-                nrRecoveryMs = nrRecovery,
-                dataRecoveryMs = null
-            )
-
-            var lteStreak = 0
-            var nrStreak = 0
-            var lteFirstSeenMs: Long? = null
-            var nrFirstSeenMs: Long? = null
-
-            val maxSeconds = config.recoverySeconds.coerceAtLeast(1)
-            for (sec in 1..maxSeconds) {
-                if (!BasementTestStore.state.value.isRunning) return@launch
-                val cycleStarted = System.currentTimeMillis()
-                val snap = lastSample
-                val lteNow = lteAvailable(snap)
-                val nrNow = nrAvailable(snap)
-
-                if (lteRecovery == null) {
-                    if (lteNow) {
-                        if (lteStreak == 0) lteFirstSeenMs = snap?.timestampMs ?: System.currentTimeMillis()
-                        lteStreak++
-                    } else {
-                        lteStreak = 0
-                        lteFirstSeenMs = null
-                    }
-                    if (lteStreak >= 2) {
-                        lteRecovery = ((lteFirstSeenMs ?: System.currentTimeMillis()) - arrivalMs).coerceAtLeast(0L)
-                        appendEvent("LTE_RECOVERY", "", "${lteRecovery}ms", "LTE restored and confirmed by 2 consecutive 1Hz samples")
-                    }
-                }
-
-                if (nrRecovery == null) {
-                    if (nrNow) {
-                        if (nrStreak == 0) nrFirstSeenMs = snap?.timestampMs ?: System.currentTimeMillis()
-                        nrStreak++
-                    } else {
-                        nrStreak = 0
-                        nrFirstSeenMs = null
-                    }
-                    if (nrStreak >= 2) {
-                        nrRecovery = ((nrFirstSeenMs ?: System.currentTimeMillis()) - arrivalMs).coerceAtLeast(0L)
-                        appendEvent("NR_RECOVERY", "", "${nrRecovery}ms", "NR restored and confirmed by 2 consecutive 1Hz samples")
-                    }
-                }
-
-                // Data Recovery is based on real data-plane availability. The first successful
-                // recovery Ping is T_data; no icon-only inference is used.
-                val (rtt, recoveryMessage) = runSinglePing(config.host, 850L)
-                val recoverySnap = lastSample
-                pingSamples += BasementPingSample(
-                    point = "START Recovery",
-                    timestampMs = System.currentTimeMillis(),
-                    sequence = sec,
-                    success = rtt != null,
-                    rttMs = rtt,
-                    message = recoveryMessage,
-                    rat = recoverySnap?.rat ?: "--",
-                    rsrp = when {
-                        recoverySnap == null -> "--"
-                        recoverySnap.rat == "5G" && recoverySnap.nrSsRsrp != "--" -> recoverySnap.nrSsRsrp
-                        else -> recoverySnap.lteRsrp
-                    }
-                )
-                if (dataRecovery == null && rtt != null) {
-                    dataRecovery = (System.currentTimeMillis() - arrivalMs).coerceAtLeast(0L)
-                    appendEvent("DATA_RECOVERY", "", "${dataRecovery}ms", "First successful recovery Ping")
-                }
-
-                val doneLte = !requireLte || lteRecovery != null
-                val doneNr = !requireNr || nrRecovery != null
-                val doneData = dataRecovery != null
-                BasementTestStore.state.value = BasementTestStore.state.value.copy(
-                    lteRecoveryMs = lteRecovery,
-                    nrRecoveryMs = nrRecovery,
-                    dataRecoveryMs = dataRecovery,
-                    countdownSeconds = maxSeconds - sec,
-                    statusMessage = "Recovery ${sec}s / ${maxSeconds}s"
-                )
-                updateOverlay()
-                if (doneLte && doneNr && doneData) {
-                    updateStage(BasementStage.RECOVERY_COMPLETE, "Recovery completed")
-                    return@launch
-                }
-                val spent = System.currentTimeMillis() - cycleStarted
-                delay((1000L - spent).coerceAtLeast(0L))
-            }
-
-            BasementTestStore.state.value = BasementTestStore.state.value.copy(
-                recoveryTimedOut = true,
-                countdownSeconds = 0
-            )
-            appendEvent("RECOVERY_TIMEOUT", "", "", "Recovery exceeded ${config.recoverySeconds}s")
-            updateStage(BasementStage.RECOVERY_COMPLETE, "Recovery timeout")
+    private fun segmentFor(stage: BasementStage): String {
+        val live = BasementTestStore.state.value
+        return when (stage) {
+            BasementStage.PREPARED -> ""
+            BasementStage.ROUTE_TRAVEL -> live.currentSegment
+            BasementStage.POINT_STABILIZING, BasementStage.POINT_PING, BasementStage.POINT_COMPLETE -> live.currentPointName
+            BasementStage.RECOVERY, BasementStage.RECOVERY_COMPLETE -> live.currentPointName.ifBlank { "Recovery" } + " Recovery"
+            else -> live.currentSegment
         }
     }
 
-    private fun updateStage(stage: BasementStage, message: String) {
-        BasementTestStore.state.value = BasementTestStore.state.value.copy(
-            stage = stage,
-            stageStartedAt = System.currentTimeMillis(),
-            countdownSeconds = null,
-            pingProgress = if (stage.name.contains("PING")) BasementTestStore.state.value.pingProgress else 0,
-            pingTotal = if (stage.name.contains("PING")) BasementTestStore.state.value.pingTotal else 0,
-            statusMessage = message
-        )
-        updateOverlay()
-        updateNotification(stage.label)
-    }
-
-    private fun updateCountdown(value: Int?) {
-        BasementTestStore.state.value = BasementTestStore.state.value.copy(countdownSeconds = value)
-        updateOverlay()
-    }
-
-    private fun segmentFor(stage: BasementStage): String = when (stage) {
-        BasementStage.PREPARED -> ""
-        BasementStage.START_TO_B1 -> SEG_START_B1
-        BasementStage.B1_TO_B2 -> SEG_B1_B2
-        BasementStage.B2_TO_B1 -> SEG_B2_B1
-        BasementStage.B1_TO_START -> SEG_B1_START
-        BasementStage.B1_STABILIZING, BasementStage.B1_PING, BasementStage.B1_COMPLETE -> "B1 First"
-        BasementStage.B2_STABILIZING, BasementStage.B2_PING, BasementStage.B2_COMPLETE -> "B2"
-        BasementStage.B1_RETURN_STABILIZING, BasementStage.B1_RETURN_PING, BasementStage.B1_RETURN_COMPLETE -> "B1 Return"
-        BasementStage.RECOVERY, BasementStage.RECOVERY_COMPLETE -> "START Recovery"
-        else -> ""
-    }
-
-    private fun appendEvent(type: String, from: String, to: String, description: String, segment: String = segmentFor(BasementTestStore.state.value.stage)) {
+    private fun appendEvent(
+        type: String,
+        from: String,
+        to: String,
+        description: String,
+        segment: String = segmentFor(BasementTestStore.state.value.stage)
+    ) {
         events += BasementEvent(System.currentTimeMillis(), segment, type, from, to, null, description)
     }
 
@@ -638,7 +538,7 @@ class BasementTestService : Service() {
         val safeDevice = sanitize(config.deviceLabel.ifBlank { "DUT" })
         val folder = "${safeOperator}_${safeDevice}_${sessionDirName}"
         val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(sessionStartedAt))
-        val relative = "${Environment.DIRECTORY_DOWNLOADS}/CellTracker/Reports/$date/Basement/$folder"
+        val relative = "${Environment.DIRECTORY_DOWNLOADS}/CellTracker/Reports/$date/WeakCoverage/$folder"
 
         val raw = buildNetworkCsv()
         val evt = buildEventsCsv()
@@ -714,12 +614,14 @@ class BasementTestService : Service() {
         appendLine("section,item,value")
         fun row(section: String, item: String, value: String) = appendLine("${csv(section)},${csv(item)},${csv(value)}")
         row("Session", "Status", status)
+        row("Session", "Route Name", config.routeName)
+        row("Session", "Route", config.routePoints.joinToString(" → ") { it.name })
         row("Session", "Started", timeText(sessionStartedAt))
         row("Session", "Ended", timeText(endedAt))
         row("Session", "Duration", formatDuration(endedAt - sessionStartedAt))
         row("Weak Coverage", "5G Retention", formatDuration(initialRetentionMs("5G")))
         row("Weak Coverage", "LTE Retention", formatDuration(firstContiguousRatMs("4G")))
-        val routeSamples = samples.filter { it.segment in setOf(SEG_START_B1, SEG_B1_B2, SEG_B2_B1, SEG_B1_START) }
+        val routeSamples = samples.filter { it.segment in routeSegments().toSet() }
         val minLteRsrp = routeSamples.mapNotNull { it.lteRsrp.toDoubleOrNull() }.minOrNull()
         val minNrRsrp = routeSamples.mapNotNull { it.nrSsRsrp.toDoubleOrNull() }.minOrNull()
         row("Weak Coverage", "Minimum LTE RSRP", minLteRsrp?.let { "$it dBm" } ?: "--")
@@ -755,7 +657,7 @@ class BasementTestService : Service() {
         row("Recovery", "LTE", recoveryText(st.lteRecoveryMs, st.lteRecoveryRequired))
         row("Recovery", "Data", recoveryText(st.dataRecoveryMs, true))
         row("Recovery", "5G", recoveryText(st.nrRecoveryMs, st.nrRecoveryRequired))
-        listOf(SEG_START_B1, SEG_B1_B2, SEG_B2_B1, SEG_B1_START).forEach { seg ->
+        routeSegments().forEach { seg ->
             val start = segmentStart[seg] ?: return@forEach
             val end = segmentEnd[seg] ?: endedAt
             row("Segment $seg", "Duration", formatDuration(end - start))
@@ -845,7 +747,7 @@ class BasementTestService : Service() {
     private fun buildSummaryHtml(endedAt: Long, status: String): String {
         val st = BasementTestStore.state.value
         val ns = noServiceStats(endedAt)
-        val routeSegments = listOf(SEG_START_B1, SEG_B1_B2, SEG_B2_B1, SEG_B1_START)
+        val routeSegments = routeSegments()
 
         val points = pointResults.values.joinToString("") { r ->
             val snap = samples.firstOrNull { it.segment == r.point }
@@ -925,7 +827,7 @@ class BasementTestService : Service() {
 
         return """
 <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Basement Weak Coverage Summary</title>
+<title>Weak Coverage Route Summary</title>
 <style>
 body{font-family:sans-serif;margin:18px;color:#1f2937}
 h1{font-size:24px}.grid,.mini-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
@@ -936,7 +838,8 @@ th,td{border-bottom:1px solid #ddd;padding:8px;text-align:left;font-size:13px;ve
 th{background:#f6f6f6} h3{margin-top:0} h4{margin-bottom:4px}
 .note{background:#f6f7fb;border-radius:10px;padding:10px;font-size:13px}
 </style></head><body>
-<h1>Weak Coverage Summary</h1>
+<h1>Weak Coverage Route Summary</h1>
+<p><b>Route:</b> ${html(config.routeName)} · ${html(config.routePoints.joinToString(" → ") { it.name })}</p>
 <div class="grid">
 <div class="card"><div class="k">Status</div><div class="v">${html(status)}</div></div>
 <div class="card"><div class="k">5G Retention</div><div class="v">${formatDuration(initialRetentionMs("5G"))}</div></div>
@@ -1020,7 +923,7 @@ $perSegmentAnalysis
     }
 
     private fun firstContiguousRatMs(rat: String): Long {
-        val routeRows = samples.filter { it.segment in setOf(SEG_START_B1, SEG_B1_B2, SEG_B2_B1, SEG_B1_START) }.sortedBy { it.timestampMs }
+        val routeRows = samples.filter { it.segment in routeSegments().toSet() }.sortedBy { it.timestampMs }
         val first = routeRows.indexOfFirst { it.rat == rat }
         if (first < 0) return 0L
         var end = routeRows[first].timestampMs
@@ -1116,28 +1019,37 @@ $perSegmentAnalysis
     private fun updateOverlay() {
         val state = BasementTestStore.state.value
         android.os.Handler(mainLooper).post {
-            overlayTitle?.text = "Basement Test · ${state.stage.label}"
+            val title = when (state.stage) {
+                BasementStage.PREPARED -> "${config.routeName} · Ready"
+                BasementStage.ROUTE_TRAVEL -> state.currentSegment
+                BasementStage.POINT_STABILIZING, BasementStage.POINT_PING, BasementStage.POINT_COMPLETE -> state.currentPointName
+                BasementStage.RECOVERY, BasementStage.RECOVERY_COMPLETE -> "${state.currentPointName} · Recovery"
+                else -> state.stage.label
+            }
+            overlayTitle?.text = "Weak Coverage · $title"
             overlayNetwork?.text = "${state.currentRat} · RSRP ${state.currentRsrp} dBm"
             overlaySub?.text = overlaySubText(state)
-            val action = primaryActionLabel(state.stage)
+            val action = primaryActionLabel(state)
             overlayButton?.text = action.first
             overlayButton?.isEnabled = action.second
         }
     }
 
     private fun overlaySubText(state: BasementLiveState): String = when (state.stage) {
-        BasementStage.B1_STABILIZING, BasementStage.B2_STABILIZING, BasementStage.B1_RETURN_STABILIZING ->
-            "Stabilizing: ${state.countdownSeconds ?: 0}s"
-        BasementStage.B1_PING, BasementStage.B2_PING, BasementStage.B1_RETURN_PING -> {
-            val r = state.lastPointResult
-            if (state.pingProgress < state.pingTotal) "Ping: ${state.pingProgress}/${state.pingTotal}s"
-            else r?.let { "Loss ${String.format(Locale.US, "%.1f%%", it.lossPct)} · Avg ${it.avgRttMs?.let { v -> String.format(Locale.US, "%.0fms", v) } ?: "--"}" } ?: "Ping testing"
-        }
-        BasementStage.B1_COMPLETE, BasementStage.B2_COMPLETE, BasementStage.B1_RETURN_COMPLETE -> {
-            state.lastPointResult?.let { "${it.result} · Loss ${String.format(Locale.US, "%.1f%%", it.lossPct)} · Avg ${it.avgRttMs?.let { v -> String.format(Locale.US, "%.0fms", v) } ?: "--"}" } ?: "Completed"
-        }
+        BasementStage.POINT_STABILIZING -> "Stabilizing: ${state.countdownSeconds ?: 0}s"
+        BasementStage.POINT_PING -> if (state.pingProgress < state.pingTotal) {
+            "Ping: ${state.pingProgress}/${state.pingTotal}s"
+        } else state.lastPointResult?.let {
+            val success = if (it.sent > 0) it.received * 100.0 / it.sent else 0.0
+            "Success ${String.format(Locale.US, "%.1f%%", success)} · Avg ${it.avgRttMs?.let { v -> String.format(Locale.US, "%.0fms", v) } ?: "--"}"
+        } ?: "Ping testing"
+        BasementStage.POINT_COMPLETE -> state.lastPointResult?.let {
+            val success = if (it.sent > 0) it.received * 100.0 / it.sent else 0.0
+            "${it.result} · Success ${String.format(Locale.US, "%.1f%%", success)}"
+        } ?: "Point completed"
         BasementStage.RECOVERY, BasementStage.RECOVERY_COMPLETE ->
             "LTE ${shortRecovery(state.lteRecoveryMs, state.lteRecoveryRequired)} · Data ${shortRecovery(state.dataRecoveryMs, true)} · 5G ${shortRecovery(state.nrRecoveryMs, state.nrRecoveryRequired)}"
+        BasementStage.ROUTE_TRAVEL -> "Segment ${state.routeSegmentIndex}/${state.routeSegmentCount}"
         else -> state.operator
     }
 
@@ -1146,18 +1058,13 @@ $perSegmentAnalysis
         return v?.let { String.format(Locale.US, "%.1fs", it / 1000.0) } ?: "…"
     }
 
-    private fun primaryActionLabel(stage: BasementStage): Pair<String, Boolean> = when (stage) {
+    private fun primaryActionLabel(state: BasementLiveState): Pair<String, Boolean> = when (state.stage) {
         BasementStage.PREPARED -> "START TEST" to true
-        BasementStage.START_TO_B1 -> "ARRIVE B1" to true
-        BasementStage.B1_COMPLETE -> "START B1 → B2" to true
-        BasementStage.B1_TO_B2 -> "ARRIVE B2" to true
-        BasementStage.B2_COMPLETE -> "START B2 → B1" to true
-        BasementStage.B2_TO_B1 -> "ARRIVE B1" to true
-        BasementStage.B1_RETURN_COMPLETE -> "START B1 → START" to true
-        BasementStage.B1_TO_START -> "ARRIVE START" to true
+        BasementStage.ROUTE_TRAVEL -> "ARRIVE ${state.nextPointName.uppercase(Locale.US)}" to true
+        BasementStage.POINT_COMPLETE -> "START → ${state.nextPointName.uppercase(Locale.US)}" to true
         BasementStage.RECOVERY_COMPLETE -> "FINISH TEST" to true
-        BasementStage.B1_STABILIZING, BasementStage.B2_STABILIZING, BasementStage.B1_RETURN_STABILIZING -> "AUTO WAIT" to false
-        BasementStage.B1_PING, BasementStage.B2_PING, BasementStage.B1_RETURN_PING -> "PING RUNNING" to false
+        BasementStage.POINT_STABILIZING -> "AUTO WAIT" to false
+        BasementStage.POINT_PING -> "PING RUNNING" to false
         BasementStage.RECOVERY -> "RECOVERING" to false
         else -> "WAIT" to false
     }
@@ -1176,7 +1083,7 @@ $perSegmentAnalysis
     private fun startForegroundServiceNotification(text: String) {
         val n = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
-            .setContentTitle("CellTracker Basement Test")
+            .setContentTitle("CellTracker Weak Coverage")
             .setContentText(text)
             .setOngoing(true)
             .build()
@@ -1188,7 +1095,7 @@ $perSegmentAnalysis
         val state = BasementTestStore.state.value
         val n = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
-            .setContentTitle("CellTracker Basement Test")
+            .setContentTitle("CellTracker Weak Coverage")
             .setContentText("$text · ${state.currentRat} ${state.currentRsrp} dBm")
             .setOngoing(true)
             .build()
@@ -1198,7 +1105,7 @@ $perSegmentAnalysis
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= 26) {
             getSystemService(NotificationManager::class.java).createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, "Basement Weak Coverage Test", NotificationManager.IMPORTANCE_LOW)
+                NotificationChannel(CHANNEL_ID, "Weak Coverage Route Test", NotificationManager.IMPORTANCE_LOW)
             )
         }
     }
@@ -1214,14 +1121,26 @@ $perSegmentAnalysis
         wakeLock = null
     }
 
-    private fun readConfig(intent: Intent): BasementTestConfig = BasementTestConfig(
-        deviceLabel = intent.getStringExtra(EXTRA_DEVICE_LABEL).orEmpty().ifBlank { "DUT" },
-        host = intent.getStringExtra(EXTRA_HOST).orEmpty().ifBlank { "8.8.8.8" },
-        stabilizeSeconds = intent.getIntExtra(EXTRA_STABILIZE_SECONDS, 30).coerceIn(5, 120),
-        pingSeconds = intent.getIntExtra(EXTRA_PING_SECONDS, 60).coerceIn(5, 180),
-        recoverySeconds = intent.getIntExtra(EXTRA_RECOVERY_SECONDS, 60).coerceIn(10, 180),
-        selectedSubscriptionId = intent.getIntExtra(EXTRA_SUBSCRIPTION_ID, -1)
-    )
+    private fun readConfig(intent: Intent): BasementTestConfig {
+        val names = intent.getStringArrayListExtra(EXTRA_ROUTE_NAMES)
+            ?.map { it.trim() }?.filter { it.isNotBlank() }.orEmpty()
+        val pingFlags = intent.getBooleanArrayExtra(EXTRA_ROUTE_PING) ?: BooleanArray(0)
+        val points = if (names.size >= 2) {
+            names.mapIndexed { index, name ->
+                WeakCoveragePoint(name, pingFlags.getOrNull(index) ?: (index in 1 until names.lastIndex))
+            }
+        } else BasementTestConfig().routePoints
+        return BasementTestConfig(
+            deviceLabel = intent.getStringExtra(EXTRA_DEVICE_LABEL).orEmpty().ifBlank { "DUT" },
+            routeName = intent.getStringExtra(EXTRA_ROUTE_NAME).orEmpty().ifBlank { "Basement" },
+            routePoints = points,
+            host = intent.getStringExtra(EXTRA_HOST).orEmpty().ifBlank { "8.8.8.8" },
+            stabilizeSeconds = intent.getIntExtra(EXTRA_STABILIZE_SECONDS, 30).coerceIn(0, 120),
+            pingSeconds = intent.getIntExtra(EXTRA_PING_SECONDS, 60).coerceIn(1, 180),
+            recoverySeconds = intent.getIntExtra(EXTRA_RECOVERY_SECONDS, 60).coerceIn(5, 180),
+            selectedSubscriptionId = intent.getIntExtra(EXTRA_SUBSCRIPTION_ID, -1)
+        )
+    }
 
     private fun defaultDataSubscriptionId(): Int? = runCatching {
         SubscriptionManager.getDefaultDataSubscriptionId().takeIf { it != SubscriptionManager.INVALID_SUBSCRIPTION_ID }
@@ -1258,6 +1177,9 @@ $perSegmentAnalysis
         const val ACTION_FINISH = "com.example.celltracker.BASEMENT_FINISH"
 
         const val EXTRA_DEVICE_LABEL = "device_label"
+        const val EXTRA_ROUTE_NAME = "route_name"
+        const val EXTRA_ROUTE_NAMES = "route_names"
+        const val EXTRA_ROUTE_PING = "route_ping"
         const val EXTRA_HOST = "host"
         const val EXTRA_STABILIZE_SECONDS = "stabilize_seconds"
         const val EXTRA_PING_SECONDS = "ping_seconds"
