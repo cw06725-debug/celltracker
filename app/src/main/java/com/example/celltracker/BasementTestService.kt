@@ -58,8 +58,10 @@ class BasementTestService : Service() {
         val dataRecoveryMs: Long?,
         val nrRecoveryMs: Long?,
         val lteRecoveryRequired: Boolean,
+        val dataRecoveryRequired: Boolean,
         val nrRecoveryRequired: Boolean,
         val recoveryTimedOut: Boolean,
+        val completed: Boolean,
         val noServiceCount: Int,
         val noServiceTotalMs: Long,
         val noServiceLongestMs: Long
@@ -79,6 +81,13 @@ class BasementTestService : Service() {
     private var noServiceStartedAt: Long? = null
     private var startHadNr: Boolean? = null
     private var startHadLte: Boolean? = null
+    private var startHadData: Boolean? = null
+    private var lteLossStartedAt: Long? = null
+    private var nrLossStartedAt: Long? = null
+    private var dataLossStartedAt: Long? = null
+    private var lastLteRecoveryMs: Long? = null
+    private var lastNrRecoveryMs: Long? = null
+    private var lastDataRecoveryMs: Long? = null
     private var activeSegmentIndex = 0
     private var currentRound = 1
     private val roundSummaries = mutableListOf<RoundSummary>()
@@ -164,6 +173,13 @@ class BasementTestService : Service() {
         noServiceStartedAt = null
         startHadNr = null
         startHadLte = null
+        startHadData = null
+        lteLossStartedAt = null
+        nrLossStartedAt = null
+        dataLossStartedAt = null
+        lastLteRecoveryMs = null
+        lastNrRecoveryMs = null
+        lastDataRecoveryMs = null
         activeSegmentIndex = 0
         currentRound = 1
         samples.clear(); events.clear(); pingSamples.clear(); pointResults.clear(); roundSummaries.clear()
@@ -206,8 +222,10 @@ class BasementTestService : Service() {
 
                 if (startHadNr == null && BasementTestStore.state.value.routeSegmentIndex == 1) {
                     startHadNr = sample.nrState == "CONNECTED" || sample.rat == "5G"
-                    startHadLte = sample.lteRsrp != "--" || sample.rat == "4G" || sample.displayRat.contains("LTE", true)
+                    startHadLte = sample.lteRsrp != "--" || sample.rat == "4G" || sample.rat == "5G" || sample.displayRat.contains("LTE", true)
+                    startHadData = sample.dataState == "CELLULAR_VALIDATED"
                 }
+                updateRoundRecoveryTimeline(sample)
 
                 val state = BasementTestStore.state.value
                 BasementTestStore.state.value = state.copy(
@@ -220,6 +238,47 @@ class BasementTestService : Service() {
             }
             val spent = System.currentTimeMillis() - started
             delay((1000L - spent).coerceAtLeast(100L))
+        }
+    }
+
+    private fun updateRoundRecoveryTimeline(sample: BasementNetworkSample) {
+        val lteNow = sample.registered && (
+            sample.lteRsrp != "--" || sample.rat == "4G" || sample.rat == "5G" || sample.displayRat.contains("LTE", true)
+        )
+        val nrNow = sample.nrState == "CONNECTED" || sample.rat == "5G"
+        val dataNow = sample.dataState == "CELLULAR_VALIDATED"
+
+        if (startHadLte == true) {
+            if (!lteNow && lteLossStartedAt == null) {
+                lteLossStartedAt = sample.timestampMs
+                appendEvent("LTE_LOSS_START", "LTE", sample.rat, "LTE baseline lost", sample.segment)
+            } else if (lteNow && lteLossStartedAt != null) {
+                lastLteRecoveryMs = (sample.timestampMs - lteLossStartedAt!!).coerceAtLeast(0L)
+                appendEvent("LTE_RECOVERED", "", "${lastLteRecoveryMs}ms", "LTE restored after in-route loss", sample.segment)
+                lteLossStartedAt = null
+            }
+        }
+
+        if (startHadNr == true) {
+            if (!nrNow && nrLossStartedAt == null) {
+                nrLossStartedAt = sample.timestampMs
+                appendEvent("NR_LOSS_START", "NR", sample.nrState, "5G/NR baseline lost", sample.segment)
+            } else if (nrNow && nrLossStartedAt != null) {
+                lastNrRecoveryMs = (sample.timestampMs - nrLossStartedAt!!).coerceAtLeast(0L)
+                appendEvent("NR_RECOVERED", "", "${lastNrRecoveryMs}ms", "5G/NR restored after in-route loss", sample.segment)
+                nrLossStartedAt = null
+            }
+        }
+
+        if (startHadData == true) {
+            if (!dataNow && dataLossStartedAt == null) {
+                dataLossStartedAt = sample.timestampMs
+                appendEvent("DATA_LOSS_START", "CELLULAR_VALIDATED", sample.dataState, "Validated cellular data lost", sample.segment)
+            } else if (dataNow && dataLossStartedAt != null) {
+                lastDataRecoveryMs = (sample.timestampMs - dataLossStartedAt!!).coerceAtLeast(0L)
+                appendEvent("DATA_RECOVERED", "", "${lastDataRecoveryMs}ms", "Validated cellular data restored", sample.segment)
+                dataLossStartedAt = null
+            }
         }
     }
 
@@ -474,6 +533,7 @@ class BasementTestService : Service() {
             BasementTestStore.state.value = BasementTestStore.state.value.copy(
                 pingProgress = seq,
                 pingTotal = total,
+                currentPingText = "${config.host} · #$seq · ${if (rtt != null) "PASS ${String.format(Locale.US, "%.1f ms", rtt)}" else "FAIL · $message"}",
                 statusMessage = "$point Ping $seq/$total"
             )
             updateOverlay()
@@ -539,7 +599,8 @@ class BasementTestService : Service() {
         recoveryJob?.cancel()
         recoveryJob = scope.launch {
             val requireNr = startHadNr == true
-            val requireLte = startHadLte != false
+            val requireLte = startHadLte == true
+            val requireData = startHadData == true
             val arrivalSnap = lastSample
 
             fun lteAvailable(snap: BasementNetworkSample?): Boolean =
@@ -554,22 +615,30 @@ class BasementTestService : Service() {
             // misleadingly showing ~1–2 s.
             var lteRecovery: Long? = when {
                 !requireLte -> -2L
-                lteAvailable(arrivalSnap) -> 0L
+                lastLteRecoveryMs != null && lteLossStartedAt == null -> lastLteRecoveryMs
+                lteAvailable(arrivalSnap) && lteLossStartedAt == null -> 0L
                 else -> null
             }
             var nrRecovery: Long? = when {
                 !requireNr -> -2L
-                nrAvailable(arrivalSnap) -> 0L
+                lastNrRecoveryMs != null && nrLossStartedAt == null -> lastNrRecoveryMs
+                nrAvailable(arrivalSnap) && nrLossStartedAt == null -> 0L
                 else -> null
             }
-            var dataRecovery: Long? = null
+            var dataRecovery: Long? = when {
+                !requireData -> -2L
+                lastDataRecoveryMs != null && dataLossStartedAt == null -> lastDataRecoveryMs
+                arrivalSnap?.dataState == "CELLULAR_VALIDATED" && dataLossStartedAt == null -> 0L
+                else -> null
+            }
 
             BasementTestStore.state.value = BasementTestStore.state.value.copy(
                 lteRecoveryRequired = requireLte,
+                dataRecoveryRequired = requireData,
                 nrRecoveryRequired = requireNr,
                 lteRecoveryMs = lteRecovery,
                 nrRecoveryMs = nrRecovery,
-                dataRecoveryMs = null
+                dataRecoveryMs = dataRecovery
             )
 
             var lteStreak = 0
@@ -585,6 +654,9 @@ class BasementTestService : Service() {
                 val lteNow = lteAvailable(snap)
                 val nrNow = nrAvailable(snap)
 
+                if (lteRecovery == null && lastLteRecoveryMs != null && lteLossStartedAt == null) {
+                    lteRecovery = lastLteRecoveryMs
+                }
                 if (lteRecovery == null) {
                     if (lteNow) {
                         if (lteStreak == 0) lteFirstSeenMs = snap?.timestampMs ?: System.currentTimeMillis()
@@ -594,11 +666,17 @@ class BasementTestService : Service() {
                         lteFirstSeenMs = null
                     }
                     if (lteStreak >= 2) {
-                        lteRecovery = ((lteFirstSeenMs ?: System.currentTimeMillis()) - arrivalMs).coerceAtLeast(0L)
+                        val origin = lteLossStartedAt ?: arrivalMs
+                        lteRecovery = ((lteFirstSeenMs ?: System.currentTimeMillis()) - origin).coerceAtLeast(0L)
+                        lastLteRecoveryMs = lteRecovery
+                        lteLossStartedAt = null
                         appendEvent("LTE_RECOVERY", "", "${lteRecovery}ms", "LTE restored and confirmed by 2 consecutive 1Hz samples")
                     }
                 }
 
+                if (nrRecovery == null && lastNrRecoveryMs != null && nrLossStartedAt == null) {
+                    nrRecovery = lastNrRecoveryMs
+                }
                 if (nrRecovery == null) {
                     if (nrNow) {
                         if (nrStreak == 0) nrFirstSeenMs = snap?.timestampMs ?: System.currentTimeMillis()
@@ -608,13 +686,16 @@ class BasementTestService : Service() {
                         nrFirstSeenMs = null
                     }
                     if (nrStreak >= 2) {
-                        nrRecovery = ((nrFirstSeenMs ?: System.currentTimeMillis()) - arrivalMs).coerceAtLeast(0L)
+                        val origin = nrLossStartedAt ?: arrivalMs
+                        nrRecovery = ((nrFirstSeenMs ?: System.currentTimeMillis()) - origin).coerceAtLeast(0L)
+                        lastNrRecoveryMs = nrRecovery
+                        nrLossStartedAt = null
                         appendEvent("NR_RECOVERY", "", "${nrRecovery}ms", "NR restored and confirmed by 2 consecutive 1Hz samples")
                     }
                 }
 
-                // Data Recovery is based on real data-plane availability. The first successful
-                // recovery Ping is T_data; no icon-only inference is used.
+                // Recovery Ping remains a diagnostic only. It must not decide whether
+                // mobile data is recovered because the configured host can be wrong or ICMP-blocked.
                 val (rtt, recoveryMessage) = runSinglePing(config.host, 850L)
                 val recoverySnap = lastSample
                 pingSamples += BasementPingSample(
@@ -632,18 +713,29 @@ class BasementTestService : Service() {
                         else -> recoverySnap.lteRsrp
                     }
                 )
-                if (dataRecovery == null && rtt != null) {
-                    dataRecovery = (System.currentTimeMillis() - arrivalMs).coerceAtLeast(0L)
-                    appendEvent("DATA_RECOVERY", "", "${dataRecovery}ms", "First successful recovery Ping")
+                BasementTestStore.state.value = BasementTestStore.state.value.copy(
+                    currentPingText = "${config.host} · recovery #$sec · ${if (rtt != null) "PASS ${String.format(Locale.US, "%.1f ms", rtt)}" else "FAIL · $recoveryMessage"}"
+                )
+
+                if (dataRecovery == null && lastDataRecoveryMs != null && dataLossStartedAt == null) {
+                    dataRecovery = lastDataRecoveryMs
+                }
+                if (dataRecovery == null && requireData && recoverySnap?.dataState == "CELLULAR_VALIDATED") {
+                    val origin = dataLossStartedAt ?: arrivalMs
+                    dataRecovery = (System.currentTimeMillis() - origin).coerceAtLeast(0L)
+                    lastDataRecoveryMs = dataRecovery
+                    dataLossStartedAt = null
+                    appendEvent("DATA_RECOVERY", "", "${dataRecovery}ms", "Validated cellular data restored")
                 }
 
                 val doneLte = !requireLte || lteRecovery != null
                 val doneNr = !requireNr || nrRecovery != null
-                val doneData = dataRecovery != null
+                val doneData = !requireData || dataRecovery != null
                 BasementTestStore.state.value = BasementTestStore.state.value.copy(
                     lteRecoveryMs = lteRecovery,
                     nrRecoveryMs = nrRecovery,
                     dataRecoveryMs = dataRecovery,
+                    dataRecoveryRequired = requireData,
                     countdownSeconds = maxSeconds - sec,
                     statusMessage = "Recovery ${sec}s / ${maxSeconds}s"
                 )
@@ -707,6 +799,11 @@ class BasementTestService : Service() {
         }
         appendEvent("TEST_END", BasementTestStore.state.value.stage.name, status, "Basement test finished")
         val endedAt = System.currentTimeMillis()
+        if (status != "COMPLETED" &&
+            BasementTestStore.state.value.stage != BasementStage.PREPARED &&
+            roundSummaries.none { it.round == currentRound }) {
+            snapshotCurrentRound(BasementTestStore.state.value.recoveryTimedOut, completed = false)
+        }
 
         scope.launch {
             val reportPath = exportReports(endedAt, status)
@@ -795,9 +892,9 @@ class BasementTestService : Service() {
     }
 
     private fun buildPingCsv(): String = buildString {
-        appendLine("round,point,timestamp_ms,timestamp,sequence,result,rtt_ms,rat,rsrp,message")
+        appendLine("round,point,target,timestamp_ms,timestamp,sequence,result,rtt_ms,rat,rsrp,message")
         pingSamples.forEach { p ->
-            appendLine(listOf(p.round, p.point, p.timestampMs, timeText(p.timestampMs), p.sequence, if (p.success) "PASS" else "FAIL",
+            appendLine(listOf(p.round, p.point, config.host, p.timestampMs, timeText(p.timestampMs), p.sequence, if (p.success) "PASS" else "FAIL",
                 p.rttMs?.let { String.format(Locale.US, "%.2f", it) } ?: "", p.rat, p.rsrp, p.message)
                 .joinToString(",") { csv(it.toString()) })
         }
@@ -808,10 +905,12 @@ class BasementTestService : Service() {
         fun row(section: String, item: String, value: String) =
             appendLine("${csv(section)},${csv(item)},${csv(value)}")
 
-        val completed = roundSummaries.sortedBy { it.round }
+        val allRounds = roundSummaries.sortedBy { it.round }
+        val completed = allRounds.filter { it.completed }
         row("Session", "Status", status)
         row("Session", "Route Name", config.routeName)
         row("Session", "Route", config.routePoints.joinToString(" → ") { it.name })
+        row("Session", "Ping Target", config.host)
         row("Session", "Configured Rounds", config.rounds.toString())
         row("Session", "Completed Rounds", completed.size.toString())
         row("Session", "Started", timeText(sessionStartedAt))
@@ -824,7 +923,7 @@ class BasementTestService : Service() {
         }
 
         row("Average", "LTE Recovery", avgRecovery({ it.lteRecoveryMs }, { it.lteRecoveryRequired }))
-        row("Average", "Data Recovery", avgRecovery({ it.dataRecoveryMs }, { true }))
+        row("Average", "Data Recovery", avgRecovery({ it.dataRecoveryMs }, { it.dataRecoveryRequired }))
         row("Average", "5G Recovery", avgRecovery({ it.nrRecoveryMs }, { it.nrRecoveryRequired }))
         if (completed.isNotEmpty()) {
             row("Average", "No Service Count", String.format(Locale.US, "%.2f", completed.map { it.noServiceCount }.average()))
@@ -862,13 +961,15 @@ class BasementTestService : Service() {
             }
         }
 
-        completed.forEach { r ->
-            row("Round ${r.round}", "Recovery LTE", recoveryText(r.lteRecoveryMs, r.lteRecoveryRequired))
-            row("Round ${r.round}", "Recovery Data", recoveryText(r.dataRecoveryMs, true))
-            row("Round ${r.round}", "Recovery 5G", recoveryText(r.nrRecoveryMs, r.nrRecoveryRequired))
+        allRounds.forEach { r ->
+            row("Round ${r.round}", "Round Status", if (r.completed) "COMPLETED" else "PARTIAL / ABORTED")
+            row("Round ${r.round}", "Recovery LTE", roundRecoveryText(r, r.lteRecoveryMs, r.lteRecoveryRequired))
+            row("Round ${r.round}", "Recovery Data", roundRecoveryText(r, r.dataRecoveryMs, r.dataRecoveryRequired))
+            row("Round ${r.round}", "Recovery 5G", roundRecoveryText(r, r.nrRecoveryMs, r.nrRecoveryRequired))
             row("Round ${r.round}", "No Service Count", r.noServiceCount.toString())
             row("Round ${r.round}", "Total No Service", formatDuration(r.noServiceTotalMs))
             r.points.forEach { p ->
+                row("Round ${r.round} · ${p.point}", "Ping Target", config.host)
                 row("Round ${r.round} · ${p.point}", "Success Rate", String.format(Locale.US, "%.1f%%", p.successPct))
                 row("Round ${r.round} · ${p.point}", "Avg RTT", p.avgRttMs?.let { String.format(Locale.US, "%.1f ms", it) } ?: "--")
                 row("Round ${r.round} · ${p.point}", "Result", p.result)
@@ -935,7 +1036,8 @@ class BasementTestService : Service() {
     }
 
     private fun buildSummaryHtml(endedAt: Long, status: String): String {
-        val completed = roundSummaries.sortedBy { it.round }
+        val allRounds = roundSummaries.sortedBy { it.round }
+        val completed = allRounds.filter { it.completed }
 
         fun avgRecovery(selector: (RoundSummary) -> Long?, required: (RoundSummary) -> Boolean): String {
             val values = completed.filter(required).mapNotNull(selector).filter { it >= 0L }
@@ -948,9 +1050,9 @@ class BasementTestService : Service() {
                 val success = rows.map { it.successPct }.average()
                 val rtts = rows.mapNotNull { it.avgRttMs }
                 val avgRtt = if (rtts.isEmpty()) "--" else String.format(Locale.US, "%.1f ms", rtts.average())
-                "<tr><td>${html(point.name)}</td><td>${String.format(Locale.US, "%.1f%%", success)}</td><td>$avgRtt</td><td>${rows.count { it.result == "PASS" }} / ${rows.size}</td></tr>"
+                "<tr><td>${html(point.name)}</td><td>${html(config.host)}</td><td>${String.format(Locale.US, "%.1f%%", success)}</td><td>$avgRtt</td><td>${rows.count { it.result == "PASS" }} / ${rows.size}</td></tr>"
             }
-        }.ifBlank { "<tr><td colspan='4'>No fixed-point Ping results</td></tr>" }
+        }.ifBlank { "<tr><td colspan='5'>No fixed-point Ping results</td></tr>" }
 
         val segmentAverageRows = routeSegments().joinToString("") { seg ->
             val metrics = completed.mapNotNull { r -> r.segments.firstOrNull { it.segment == seg } }
@@ -962,10 +1064,10 @@ class BasementTestService : Service() {
             }
         }.ifBlank { "<tr><td colspan='9'>No completed segment data</td></tr>" }
 
-        val roundSections = completed.joinToString("") { r ->
+        val roundSections = allRounds.joinToString("") { r ->
             val pointRows = r.points.joinToString("") { p ->
-                "<tr><td>${html(p.point)}</td><td>${String.format(Locale.US, "%.1f%%", p.successPct)}</td><td>${p.avgRttMs?.let { String.format(Locale.US, "%.1f ms", it) } ?: "--"}</td><td>${html(p.result)}</td></tr>"
-            }.ifBlank { "<tr><td colspan='4'>No Ping points</td></tr>" }
+                "<tr><td>${html(p.point)}</td><td>${html(config.host)}</td><td>${String.format(Locale.US, "%.1f%%", p.successPct)}</td><td>${p.avgRttMs?.let { String.format(Locale.US, "%.1f ms", it) } ?: "--"}</td><td>${html(p.result)}</td></tr>"
+            }.ifBlank { "<tr><td colspan='5'>No Ping points</td></tr>" }
 
             val segmentRows = r.segments.joinToString("") { seg ->
                 fun share(rat: String) = String.format(Locale.US, "%.1f%%", seg.ratShare[rat] ?: 0.0)
@@ -982,15 +1084,15 @@ class BasementTestService : Service() {
 
             """
             <section class="segment-block">
-              <h2>Round ${r.round}</h2>
+              <h2>Round ${r.round}${if (r.completed) "" else " · PARTIAL / ABORTED"}</h2>
               <div class="mini-grid">
-                <div><b>LTE Recovery</b><br>${recoveryText(r.lteRecoveryMs, r.lteRecoveryRequired)}</div>
-                <div><b>Data Recovery</b><br>${recoveryText(r.dataRecoveryMs, true)}</div>
-                <div><b>5G Recovery</b><br>${recoveryText(r.nrRecoveryMs, r.nrRecoveryRequired)}</div>
+                <div><b>LTE Recovery</b><br>${roundRecoveryText(r, r.lteRecoveryMs, r.lteRecoveryRequired)}</div>
+                <div><b>Data Recovery</b><br>${roundRecoveryText(r, r.dataRecoveryMs, r.dataRecoveryRequired)}</div>
+                <div><b>5G Recovery</b><br>${roundRecoveryText(r, r.nrRecoveryMs, r.nrRecoveryRequired)}</div>
                 <div><b>Total No Service</b><br>${formatDuration(r.noServiceTotalMs)}</div>
               </div>
               <h3>Fixed Points</h3>
-              <table><tr><th>Point</th><th>Success Rate</th><th>Avg RTT</th><th>Result</th></tr>$pointRows</table>
+              <table><tr><th>Point</th><th>Target</th><th>Success Rate</th><th>Avg RTT</th><th>Result</th></tr>$pointRows</table>
               <h3>Route Segments</h3>
               <table><tr><th>Segment</th><th>Duration</th><th>5G</th><th>4G</th><th>3G</th><th>2G</th><th>No Service</th></tr>$segmentRows</table>
               <h3>Network Events</h3>
@@ -1015,17 +1117,18 @@ th{background:#f6f6f6}.note{background:#f6f7fb;border-radius:10px;padding:10px;f
 </style></head><body>
 <h1>Weak Coverage Route Summary</h1>
 <p><b>Route:</b> ${html(config.routeName)} · ${html(config.routePoints.joinToString(" → ") { it.name })}</p>
-<p><b>Rounds:</b> ${completed.size} completed / ${config.rounds} configured</p>
+<p><b>Rounds:</b> ${completed.size} completed / ${config.rounds} configured${if (allRounds.any { !it.completed }) " · partial round retained" else ""}</p>
+<p><b>Ping target:</b> ${html(config.host)}</p>
 <div class="grid">
 <div class="card"><div class="k">Status</div><div class="v">${html(status)}</div></div>
 <div class="card"><div class="k">Avg LTE Recovery</div><div class="v">${avgRecovery({ it.lteRecoveryMs }, { it.lteRecoveryRequired })}</div></div>
-<div class="card"><div class="k">Avg Data Recovery</div><div class="v">${avgRecovery({ it.dataRecoveryMs }, { true })}</div></div>
+<div class="card"><div class="k">Avg Data Recovery</div><div class="v">${avgRecovery({ it.dataRecoveryMs }, { it.dataRecoveryRequired })}</div></div>
 <div class="card"><div class="k">Avg 5G Recovery</div><div class="v">${avgRecovery({ it.nrRecoveryMs }, { it.nrRecoveryRequired })}</div></div>
 <div class="card"><div class="k">Avg No Service</div><div class="v">$avgNoService</div></div>
 </div>
-<div class="note"><b>Average rule:</b> each completed route round has equal weight. Fixed-point Success Rate / RTT, Recovery and Route Segment statistics are averaged across completed rounds.</div>
+<div class="note"><b>Average rule:</b> only completed rounds are averaged. If the test is aborted, the current partial round is retained in Round Details but excluded from averages. Recovery follows actual in-route loss → restore events. Data Recovery uses Android validated cellular data state; the configured Ping target remains a separate diagnostic.</div>
 <h2>Average Fixed Points</h2>
-<table><tr><th>Point</th><th>Avg Success Rate</th><th>Avg RTT</th><th>PASS Rounds</th></tr>$pointAverageRows</table>
+<table><tr><th>Point</th><th>Target</th><th>Avg Success Rate</th><th>Avg RTT</th><th>PASS Rounds</th></tr>$pointAverageRows</table>
 <h2>Average Route Segments</h2>
 <table><tr><th>Segment</th><th>Avg Duration</th><th>5G</th><th>4G</th><th>3G</th><th>2G</th><th>No Service</th><th>LTE Avg RSRP</th><th>NR Avg SS-RSRP</th></tr>$segmentAverageRows</table>
 <h2>Round Details</h2>
@@ -1131,7 +1234,13 @@ $roundSections
         return value?.let { String.format(Locale.US, "%.1fs", it / 1000.0) } ?: "FAIL >${config.recoverySeconds}s"
     }
 
-    private fun snapshotCurrentRound(recoveryTimedOut: Boolean) {
+    private fun roundRecoveryText(round: RoundSummary, value: Long?, required: Boolean): String {
+        if (!required || value == -2L) return "N/A"
+        if (!round.completed && value == null) return "PARTIAL / not measured"
+        return recoveryText(value, required)
+    }
+
+    private fun snapshotCurrentRound(recoveryTimedOut: Boolean, completed: Boolean = true) {
         val live = BasementTestStore.state.value
         val segments = routeSegments().mapNotNull { seg ->
             val key = segmentKey(currentRound, seg)
@@ -1167,12 +1276,14 @@ $roundSections
             round = currentRound,
             segments = segments,
             points = points,
-            lteRecoveryMs = live.lteRecoveryMs,
-            dataRecoveryMs = live.dataRecoveryMs,
-            nrRecoveryMs = live.nrRecoveryMs,
+            lteRecoveryMs = live.lteRecoveryMs ?: lastLteRecoveryMs,
+            dataRecoveryMs = live.dataRecoveryMs ?: lastDataRecoveryMs,
+            nrRecoveryMs = live.nrRecoveryMs ?: lastNrRecoveryMs,
             lteRecoveryRequired = live.lteRecoveryRequired,
+            dataRecoveryRequired = live.dataRecoveryRequired,
             nrRecoveryRequired = live.nrRecoveryRequired,
             recoveryTimedOut = recoveryTimedOut,
+            completed = completed,
             noServiceCount = ns.first,
             noServiceTotalMs = ns.second,
             noServiceLongestMs = ns.third
@@ -1201,6 +1312,13 @@ $roundSections
         activeSegmentIndex = 0
         startHadNr = null
         startHadLte = null
+        startHadData = null
+        lteLossStartedAt = null
+        nrLossStartedAt = null
+        dataLossStartedAt = null
+        lastLteRecoveryMs = null
+        lastNrRecoveryMs = null
+        lastDataRecoveryMs = null
         noServiceStartedAt = null
         pointResults.entries.removeAll { it.value.round == currentRound }
         val now = System.currentTimeMillis()
@@ -1221,10 +1339,12 @@ $roundSections
             countdownSeconds = null,
             pingProgress = 0,
             pingTotal = 0,
+            currentPingText = "",
             lastPointResult = null,
             lteRecoveryMs = null,
             dataRecoveryMs = null,
             nrRecoveryMs = null,
+            dataRecoveryRequired = true,
             recoveryTimedOut = false,
             statusMessage = "Round $currentRound/${config.rounds} · Walking: $from → $to"
         )

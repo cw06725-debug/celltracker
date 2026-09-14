@@ -1,5 +1,16 @@
 # CellTracker Changelog
 
+## v0.9.3.0.56
+
+- Weak Coverage recovery metrics now follow actual in-route loss → restore events instead of reporting `0.0s` simply because LTE/5G had already recovered before the final-point arrival button was pressed.
+- LTE/5G recovery keeps the most recent real loss/recovery duration for each completed round; an active unresolved loss continues into the final recovery window.
+- Data Recovery is no longer gated by the user-configured Ping host. It uses Android `NET_CAPABILITY_VALIDATED` on the cellular active network, so an ICMP-blocked or mistyped Ping target no longer causes a false Data Recovery failure.
+- Recovery Ping is retained as a separate diagnostic sample and does not determine Data Recovery PASS/FAIL.
+- Ping target/domain/IP is now written into `ping.csv`, `summary.csv`, HTML session info, average fixed-point table, and per-round fixed-point tables for troubleshooting all-Ping-fail cases.
+- The Weak Coverage live Test page now shows `Current Ping` (target, sequence, PASS/FAIL and RTT/error) in addition to the existing aggregate `Last Ping`.
+- Aborting a test now requires a confirmation dialog to reduce accidental aborts.
+- Aborted tests retain the current partial round in report details and summary CSV, clearly marked `PARTIAL / ABORTED`; partial data is excluded from completed-round averages.
+
 ## v0.9.3.0.55
 
 - Improve NR NSA fallback for OEMs that expose NR measurements but do not mark a `CellInfoNr` as `SECONDARY_SERVING`.

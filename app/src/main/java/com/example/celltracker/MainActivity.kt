@@ -3245,6 +3245,7 @@ private fun BasementTestScreen(selectedSim: SimCellState?, onBack: () -> Unit) {
     var pingSeconds by rememberSaveable { mutableStateOf("60") }
     var recovery by rememberSaveable { mutableStateOf("60") }
     var rounds by rememberSaveable { mutableStateOf("1") }
+    var showAbortConfirm by rememberSaveable { mutableStateOf(false) }
 
     val routePoints = remember {
         mutableStateListOf(
@@ -3498,6 +3499,7 @@ private fun BasementTestScreen(selectedSim: SimCellState?, onBack: () -> Unit) {
                         Field("Operator", live.operator)
                         live.countdownSeconds?.let { Field("Countdown", "${it}s") }
                         if (live.pingTotal > 0) Field("Ping", "${live.pingProgress} / ${live.pingTotal}")
+                        if (live.currentPingText.isNotBlank()) Field("Current Ping", live.currentPingText)
                         live.lastPointResult?.let {
                             val success = if (it.sent > 0) it.received * 100.0 / it.sent else 0.0
                             Field(
@@ -3513,7 +3515,7 @@ private fun BasementTestScreen(selectedSim: SimCellState?, onBack: () -> Unit) {
                                 else -> "Waiting"
                             }
                             Field("LTE Recovery", rec(live.lteRecoveryMs, live.lteRecoveryRequired))
-                            Field("Data Recovery", rec(live.dataRecoveryMs, true))
+                            Field("Data Recovery", rec(live.dataRecoveryMs, live.dataRecoveryRequired))
                             Field("5G Recovery", rec(live.nrRecoveryMs, live.nrRecoveryRequired))
                         }
                         Text(live.statusMessage, style = MaterialTheme.typography.bodySmall)
@@ -3549,15 +3551,28 @@ private fun BasementTestScreen(selectedSim: SimCellState?, onBack: () -> Unit) {
                         ) { Text(actionText) }
                     }
                     OutlinedButton(
-                        onClick = {
-                            context.startService(
-                                Intent(context, BasementTestService::class.java).apply {
-                                    action = BasementTestService.ACTION_ABORT
-                                }
-                            )
-                        },
+                        onClick = { showAbortConfirm = true },
                         modifier = Modifier.fillMaxWidth()
                     ) { Text("Abort Test") }
+
+                    if (showAbortConfirm) {
+                        AlertDialog(
+                            onDismissRequest = { showAbortConfirm = false },
+                            title = { Text("Abort current test?") },
+                            text = { Text("Recorded data will be kept and a partial-round report will be generated. This action cannot be undone.") },
+                            confirmButton = {
+                                TextButton(onClick = {
+                                    showAbortConfirm = false
+                                    context.startService(
+                                        Intent(context, BasementTestService::class.java).apply {
+                                            action = BasementTestService.ACTION_ABORT
+                                        }
+                                    )
+                                }) { Text("ABORT") }
+                            },
+                            dismissButton = { TextButton(onClick = { showAbortConfirm = false }) { Text("CANCEL") } }
+                        )
+                    }
                 } else {
                     if (live.reportPath.isNotBlank()) {
                         Text("Report saved:", style = MaterialTheme.typography.labelLarge)
