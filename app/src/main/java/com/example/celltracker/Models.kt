@@ -7,6 +7,12 @@ data class CellData(
     val rat: String = "--",
     val displayRat: String = "--",
     val operator: String = "--",
+    // PLMN values are kept separate so SIM identity, registered network and
+    // serving-cell broadcast identity are never conflated.
+    val simMcc: String = "--",
+    val simMnc: String = "--",
+    val registeredMcc: String = "--",
+    val registeredMnc: String = "--",
     val mcc: String = "--",
     val mnc: String = "--",
     val tac: String = "--",
@@ -30,7 +36,24 @@ data class CellData(
     val dataRat: String = "--",
     val voiceRat: String = "--",
     val roaming: String = "--",
-    val registered: Boolean = false
+    val registered: Boolean = false,
+    val connectionStatus: String = "UNKNOWN",
+    val bandSource: String = "--",
+    val arfcnSource: String = "--"
+)
+
+data class NrConnectionData(
+    val state: String = "NOT_ACTIVE",
+    val band: String = "--",
+    val arfcn: String = "--",
+    val pci: String = "--",
+    val tac: String = "--",
+    val cellId: String = "--",
+    val ssRsrp: String = "--",
+    val ssRsrq: String = "--",
+    val ssSinr: String = "--",
+    val identitySource: String = "--",
+    val bandSource: String = "--"
 )
 
 data class SimCellState(
@@ -38,7 +61,8 @@ data class SimCellState(
     val simSlotIndex: Int,
     val simLabel: String,
     val servingCell: CellData = CellData(),
-    val neighbors: List<CellData> = emptyList()
+    val neighbors: List<CellData> = emptyList(),
+    val nrConnection: NrConnectionData = NrConnectionData()
 )
 
 data class LocationData(

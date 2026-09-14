@@ -1095,6 +1095,9 @@ private fun MainScreen(
             InfoCard("Network") {
                 Field("Operator", c.operator)
                 Field("RAT", c.displayRat.ifBlank { c.rat })
+                fun plmn(mcc: String, mnc: String): String = if (mcc == "--" || mnc == "--") "--" else "$mcc / $mnc"
+                Field("SIM Home PLMN", plmn(c.simMcc, c.simMnc))
+                Field("Registered PLMN", plmn(c.registeredMcc, c.registeredMnc))
                 val dataSim = state.sims.firstOrNull { it.subscriptionId == state.dataSimSubscriptionId }
                 Field("Data SIM", dataSim?.let { sim ->
                     val slot = "SIM ${sim.simSlotIndex + 1}"
@@ -1108,7 +1111,7 @@ private fun MainScreen(
                 Field("Registered", if (c.registered) "Yes" else "No")
             }
             InfoCard("Serving Cell") {
-                Field("MCC / MNC", "${c.mcc} / ${c.mnc}")
+                Field("Serving Cell PLMN", if (c.mcc == "--" || c.mnc == "--") "--" else "${c.mcc} / ${c.mnc}")
                 Field("TAC", c.tac)
                 Field(if (c.rat == "NR") "NCI" else "Cell ID", c.cellId)
                 Field("PCI", c.pci)
@@ -1116,6 +1119,32 @@ private fun MainScreen(
                 Field(if (c.rat == "NR") "NR-ARFCN" else "EARFCN", c.arfcn)
                 if (c.bandwidth != "--") Field("Bandwidth", c.bandwidth)
                 Field("CA / EN-DC", c.carrierAggregation)
+            }
+            val nrInfo = pageSelected?.nrConnection ?: NrConnectionData()
+            if (nrInfo.state != "NOT_ACTIVE" || c.displayRat.contains("5G", ignoreCase = true)) {
+                InfoCard("NR / EN-DC Details") {
+                    Field("NR State", when (nrInfo.state) {
+                        "NSA_CONNECTED" -> "NSA Connected"
+                        "SA_CONNECTED" -> "SA Connected"
+                        "OBSERVED_NOT_SERVING" -> "Observed, not confirmed serving"
+                        else -> "Not active"
+                    })
+                    Field("NR Band", nrInfo.band.takeIf { it != "--" } ?: "Unavailable")
+                    Field("NR-ARFCN", nrInfo.arfcn.takeIf { it != "--" } ?: "Unavailable")
+                    Field("NR PCI", nrInfo.pci.takeIf { it != "--" } ?: "Unavailable")
+                    if (nrInfo.ssRsrp != "--") Field("NR SS-RSRP", valueWithUnit(nrInfo.ssRsrp, "dBm"))
+                    if (nrInfo.ssRsrq != "--") Field("NR SS-RSRQ", valueWithUnit(nrInfo.ssRsrq, "dB"))
+                    if (nrInfo.ssSinr != "--") Field("NR SS-SINR", valueWithUnit(nrInfo.ssSinr, "dB"))
+                    Field("NR Identity Source", nrInfo.identitySource.takeIf { it != "--" } ?: "Unavailable via public Android API")
+                    if (nrInfo.bandSource != "--") Field("NR Band Source", nrInfo.bandSource)
+                    if (nrInfo.state == "NSA_CONNECTED" && nrInfo.arfcn == "--") {
+                        Text(
+                            "NSA is confirmed, but Android did not expose the NR serving-cell identity. CellTracker will not guess NR Band / ARFCN.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
             InfoCard("Signal") {
                 Field(if (c.rat == "NR") "SS-RSRP" else "RSRP", valueWithUnit(c.rsrp, "dBm"))

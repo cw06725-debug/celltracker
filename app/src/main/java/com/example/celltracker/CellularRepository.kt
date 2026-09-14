@@ -15,6 +15,8 @@ import android.telephony.CellSignalStrengthLte
 import android.telephony.SubscriptionInfo
 import android.telephony.SubscriptionManager
 import android.telephony.TelephonyManager
+import android.telephony.TelephonyCallback
+import android.telephony.TelephonyDisplayInfo
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.async
@@ -74,25 +76,47 @@ class CellularRepository(private val context: Context) {
         // the framework's cached allCellInfo snapshot after a short timeout.
         val cells = withTimeoutOrNull(900L) { requestFreshCells(tm) }
             ?: runCatching { tm.allCellInfo ?: emptyList() }.getOrDefault(emptyList())
-        val parsed = cells.mapNotNull { parseCell(it, tm, subscriptionId, simSlotIndex, simLabel) }
+        val parsedMutable = cells.mapNotNull { parseCell(it, tm, subscriptionId, simSlotIndex, simLabel) }.toMutableList()
+        val displayInfo = withTimeoutOrNull(450L) { readDisplayInfo(tm) }
+        val nrOverrideActive = isNrNsaOverride(displayInfo)
+        val nrSignal = readNrSignalFallback(tm)
+
+        // IMPORTANT: do not fabricate a CellInfoNr identity from SignalStrength alone.
+        // SignalStrength can prove that NR signal metrics are exposed, but it does not
+        // provide NR-ARFCN / PCI / NCI / Band. Keep those fields unavailable unless a
+        // public identity source actually reports them.
+        val parsed = parsedMutable.toList()
         val registered = parsed.filter { it.registered }
-        val nrVisible = parsed.any { it.rat == "NR" }
+        val nrDirectServing = parsed.firstOrNull {
+            it.rat == "NR" && (it.registered || it.connectionStatus == "SECONDARY_SERVING")
+        }
         val servingRaw = registered.firstOrNull { it.rat == "NR" }
             ?: registered.firstOrNull { it.rat == "LTE" }
             ?: registered.firstOrNull()
+            ?: parsed.firstOrNull { it.connectionStatus == "PRIMARY_SERVING" }
             ?: parsed.firstOrNull()
             ?: CellData(subscriptionId = subscriptionId, simSlotIndex = simSlotIndex, simLabel = simLabel)
 
+        // For NSA, a visible NR neighbor is NOT enough to claim an active 5G bearer.
+        // We only mark NSA active when TelephonyDisplayInfo says NR_NSA/NR_ADVANCED or
+        // when CellInfo reports an NR secondary-serving cell.
+        val nrNsaActive = servingRaw.rat == "LTE" && (nrOverrideActive || nrDirectServing != null)
         val displayRat = when {
             servingRaw.rat == "NR" -> "5G NR (SA/NR)"
-            servingRaw.rat == "LTE" && nrVisible -> "5G NSA (LTE anchor)"
+            nrNsaActive -> "5G NSA (LTE anchor)"
             servingRaw.rat == "LTE" -> "LTE"
             else -> servingRaw.rat
         }
-        val caInfo = carrierAggregationInfo(tm, parsed, servingRaw)
+        val simPlmn = splitPlmn(runCatching { tm.simOperator }.getOrDefault(""))
+        val registeredPlmn = splitPlmn(runCatching { tm.networkOperator }.getOrDefault(""))
+        val caInfo = carrierAggregationInfo(tm, parsed, servingRaw, nrNsaActive)
         val common = servingRaw.copy(
             displayRat = displayRat,
             carrierAggregation = caInfo,
+            simMcc = simPlmn.first,
+            simMnc = simPlmn.second,
+            registeredMcc = registeredPlmn.first,
+            registeredMnc = registeredPlmn.second,
             dataRat = networkTypeName(runCatching { tm.dataNetworkType }.getOrDefault(TelephonyManager.NETWORK_TYPE_UNKNOWN)),
             voiceRat = networkTypeName(runCatching { tm.voiceNetworkType }.getOrDefault(TelephonyManager.NETWORK_TYPE_UNKNOWN)),
             roaming = runCatching { if (tm.isNetworkRoaming) "Yes" else "No" }.getOrDefault("--")
@@ -100,10 +124,47 @@ class CellularRepository(private val context: Context) {
         val serving = if (common.rat == "LTE" && common.sinr == "--") {
             common.copy(sinr = readLteSinrFallback(tm))
         } else common
-        val neighbors = parsed.filterNot { it.registered }.map { neighbor ->
+
+        val nrState = when {
+            servingRaw.rat == "NR" -> "SA_CONNECTED"
+            nrNsaActive -> "NSA_CONNECTED"
+            parsed.any { it.rat == "NR" } -> "OBSERVED_NOT_SERVING"
+            else -> "NOT_ACTIVE"
+        }
+        val nrConnection = if (nrDirectServing != null) {
+            NrConnectionData(
+                state = nrState,
+                band = nrDirectServing.band,
+                arfcn = nrDirectServing.arfcn,
+                pci = nrDirectServing.pci,
+                tac = nrDirectServing.tac,
+                cellId = nrDirectServing.cellId,
+                ssRsrp = nrDirectServing.rsrp.takeIf { it != "--" } ?: nrSignal?.first ?: "--",
+                ssRsrq = nrDirectServing.rsrq.takeIf { it != "--" } ?: nrSignal?.second ?: "--",
+                ssSinr = nrDirectServing.sinr.takeIf { it != "--" } ?: nrSignal?.third ?: "--",
+                identitySource = if (nrDirectServing.registered) "CellInfoNr primary serving" else "CellInfoNr secondary serving",
+                bandSource = nrDirectServing.bandSource
+            )
+        } else {
+            NrConnectionData(
+                state = nrState,
+                ssRsrp = nrSignal?.first ?: "--",
+                ssRsrq = nrSignal?.second ?: "--",
+                ssSinr = nrSignal?.third ?: "--",
+                identitySource = when {
+                    nrNsaActive && nrSignal != null -> "TelephonyDisplayInfo + NR SignalStrength; identity unavailable"
+                    nrNsaActive -> "TelephonyDisplayInfo; NR identity unavailable"
+                    else -> "--"
+                },
+                bandSource = "--"
+            )
+        }
+
+        // Secondary-serving NR is part of the active EN-DC connection, not a neighbor.
+        val neighbors = parsed.filter { !it.registered && it.connectionStatus != "SECONDARY_SERVING" }.map { neighbor ->
             neighbor.copy(displayRat = if (neighbor.rat == "NR") "NR" else neighbor.rat)
         }
-        return SimCellState(subscriptionId, simSlotIndex, simLabel, serving, neighbors)
+        return SimCellState(subscriptionId, simSlotIndex, simLabel, serving, neighbors, nrConnection)
     }
 
 
@@ -206,12 +267,16 @@ class CellularRepository(private val context: Context) {
                 cqi = intValue(s.cqi),
                 level = intValue(s.level),
                 asuLevel = intValue(s.asuLevel),
-                registered = cell.isRegistered
+                registered = cell.isRegistered,
+                connectionStatus = connectionStatusName(cell.cellConnectionStatus),
+                bandSource = if (android.os.Build.VERSION.SDK_INT >= 30 && id.bands.isNotEmpty()) "CellIdentityLte.bands" else if (id.earfcn != CellInfo.UNAVAILABLE) "EARFCN mapping" else "--",
+                arfcnSource = if (id.earfcn != CellInfo.UNAVAILABLE) "CellIdentityLte.earfcn" else "--"
             )
         }
         is CellInfoNr -> {
             val id = cell.cellIdentity as CellIdentityNr
             val s = cell.cellSignalStrength as CellSignalStrengthNr
+            val verifiedBand = nrBandVerified(id.nrarfcn, if (android.os.Build.VERSION.SDK_INT >= 30) id.bands else intArrayOf())
             CellData(
                 subscriptionId = subscriptionId,
                 simSlotIndex = simSlotIndex,
@@ -228,13 +293,16 @@ class CellularRepository(private val context: Context) {
                 rsrp = intDbValue(s.ssRsrp),
                 rsrq = intDbValue(s.ssRsrq),
                 sinr = intDbValue(s.ssSinr).takeIf { it != "--" } ?: intDbValue(s.csiSinr),
-                band = if (android.os.Build.VERSION.SDK_INT >= 30) bandValue(id.bands, true) else nrBandFromArfcn(id.nrarfcn),
+                band = verifiedBand.first,
                 csiRsrp = intDbValue(s.csiRsrp),
                 csiRsrq = intDbValue(s.csiRsrq),
                 csiSinr = intDbValue(s.csiSinr),
                 level = intValue(s.level),
                 asuLevel = intValue(s.asuLevel),
-                registered = cell.isRegistered
+                registered = cell.isRegistered,
+                connectionStatus = connectionStatusName(cell.cellConnectionStatus),
+                bandSource = verifiedBand.second,
+                arfcnSource = if (id.nrarfcn != CellInfo.UNAVAILABLE) "CellIdentityNr.nrarfcn" else "--"
             )
         }
         is CellInfoWcdma -> {
@@ -256,7 +324,9 @@ class CellularRepository(private val context: Context) {
                 rssi = intDbValue(ss.dbm),
                 level = intValue(ss.level),
                 asuLevel = intValue(ss.asuLevel),
-                registered = cell.isRegistered
+                registered = cell.isRegistered,
+                connectionStatus = connectionStatusName(cell.cellConnectionStatus),
+                arfcnSource = if (id.uarfcn != CellInfo.UNAVAILABLE) "CellIdentityWcdma.uarfcn" else "--"
             )
         }
         is CellInfoGsm -> {
@@ -278,7 +348,9 @@ class CellularRepository(private val context: Context) {
                 rssi = intDbValue(ss.dbm),
                 level = intValue(ss.level),
                 asuLevel = intValue(ss.asuLevel),
-                registered = cell.isRegistered
+                registered = cell.isRegistered,
+                connectionStatus = connectionStatusName(cell.cellConnectionStatus),
+                arfcnSource = if (id.arfcn != CellInfo.UNAVAILABLE) "CellIdentityGsm.arfcn" else "--"
             )
         }
         else -> null
@@ -312,20 +384,135 @@ class CellularRepository(private val context: Context) {
         return "--"
     }
 
-    private fun carrierAggregationInfo(tm: TelephonyManager, parsed: List<CellData>, serving: CellData): String {
+    private fun carrierAggregationInfo(
+        tm: TelephonyManager,
+        parsed: List<CellData>,
+        serving: CellData,
+        nrNsaActive: Boolean
+    ): String {
         val registeredLteBands = parsed.filter { it.registered && it.rat == "LTE" }.map { it.band }.filter { it != "--" }.distinct()
-        val visibleNrBands = parsed.filter { it.rat == "NR" }.map { it.band }.filter { it != "--" }.distinct()
+        val activeNrBands = parsed.filter {
+            it.rat == "NR" && (it.registered || it.connectionStatus == "SECONDARY_SERVING")
+        }.map { it.band }.filter { it != "--" }.distinct()
         val type = runCatching { tm.dataNetworkType }.getOrDefault(TelephonyManager.NETWORK_TYPE_UNKNOWN)
         val lteCa = type == NETWORK_TYPE_LTE_CA_COMPAT || registeredLteBands.size > 1
         return when {
+            serving.rat == "LTE" && nrNsaActive -> {
+                val anchor = serving.band.takeIf { it != "--" } ?: "LTE"
+                if (activeNrBands.isNotEmpty()) "EN-DC: $anchor + ${activeNrBands.joinToString(" + ")}"
+                else "EN-DC: $anchor + NR (band unavailable)"
+            }
             lteCa && registeredLteBands.isNotEmpty() -> "LTE CA: ${registeredLteBands.joinToString(" + ")}"
             lteCa -> "LTE CA: Active"
-            serving.rat == "LTE" && visibleNrBands.isNotEmpty() -> {
-                val anchor = serving.band.takeIf { it != "--" } ?: "LTE"
-                "EN-DC: $anchor + ${visibleNrBands.joinToString(" + ")}"
-            }
             else -> "--"
         }
+    }
+
+    private suspend fun readDisplayInfo(tm: TelephonyManager): TelephonyDisplayInfo? {
+        if (android.os.Build.VERSION.SDK_INT < 31) return null
+        return suspendCancellableCoroutine { cont ->
+            val callback = object : TelephonyCallback(), TelephonyCallback.DisplayInfoListener {
+                override fun onDisplayInfoChanged(info: TelephonyDisplayInfo) {
+                    runCatching { tm.unregisterTelephonyCallback(this) }
+                    if (cont.isActive) cont.resume(info)
+                }
+            }
+            try {
+                tm.registerTelephonyCallback(context.mainExecutor, callback)
+                cont.invokeOnCancellation { runCatching { tm.unregisterTelephonyCallback(callback) } }
+            } catch (_: Exception) {
+                if (cont.isActive) cont.resume(null)
+            }
+        }
+    }
+
+    private fun isNrNsaOverride(info: TelephonyDisplayInfo?): Boolean {
+        if (info == null) return false
+        return when (info.overrideNetworkType) {
+            TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_NSA,
+            TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_ADVANCED -> true
+            else -> false
+        }
+    }
+
+    private fun readNrSignalFallback(tm: TelephonyManager): Triple<String, String, String>? {
+        val latest = runCatching { tm.signalStrength }.getOrNull() ?: return null
+        val nr = runCatching { latest.getCellSignalStrengths(CellSignalStrengthNr::class.java).firstOrNull() }.getOrNull() ?: return null
+        val rsrp = intDbValue(nr.ssRsrp)
+        val rsrq = intDbValue(nr.ssRsrq)
+        val sinr = intDbValue(nr.ssSinr).takeIf { it != "--" } ?: intDbValue(nr.csiSinr)
+        return if (rsrp == "--" && rsrq == "--" && sinr == "--") null else Triple(rsrp, rsrq, sinr)
+    }
+
+    private fun splitPlmn(raw: String?): Pair<String, String> {
+        val digits = raw.orEmpty().filter { it.isDigit() }
+        if (digits.length !in 5..6) return "--" to "--"
+        return digits.take(3) to digits.drop(3)
+    }
+
+    /**
+     * Return a validated NR band value plus its source.
+     *
+     * Policy: never force a single band from ARFCN when the same frequency belongs
+     * to overlapping NR operating bands. If Android reports id.bands, intersect it
+     * with the ARFCN-compatible set when we have a verified overlap table. If the
+     * framework-reported band conflicts with a physically incompatible ARFCN, reject
+     * that reported value instead of displaying a wrong band.
+     */
+    private fun nrBandVerified(arfcn: Int, reportedBands: IntArray): Pair<String, String> {
+        val reported = reportedBands.filter { it > 0 }.distinct().sorted()
+        val candidates = nrBandsFromArfcn(arfcn)
+
+        if (arfcn == CellInfo.UNAVAILABLE) {
+            return if (reported.isNotEmpty()) {
+                reported.joinToString("/") { "n$it" } to "CellIdentityNr.bands"
+            } else "--" to "--"
+        }
+
+        if (candidates.isNotEmpty()) {
+            val intersection = reported.filter { it in candidates }
+            return when {
+                intersection.isNotEmpty() -> intersection.joinToString("/") { "n$it" } to "CellIdentityNr.bands validated by NR-ARFCN"
+                reported.isNotEmpty() -> candidates.joinToString("/") { "n$it" } to "NR-ARFCN compatible bands; conflicting reported band rejected"
+                else -> candidates.joinToString("/") { "n$it" } to "NR-ARFCN compatible bands"
+            }
+        }
+
+        // Outside the ranges we have explicitly validated, a direct Android band
+        // report is still better than inventing a mapping. Otherwise stay unknown.
+        return if (reported.isNotEmpty()) {
+            reported.joinToString("/") { "n$it" } to "CellIdentityNr.bands"
+        } else "--" to "--"
+    }
+
+    /**
+     * Conservative downlink/TDD overlap table for the ranges currently needed by
+     * CellTracker. Multiple entries are intentionally preserved instead of guessed.
+     * Examples: 509070 -> n41/n90; 640000 -> n48/n77/n78.
+     */
+    private fun nrBandsFromArfcn(a: Int): List<Int> {
+        if (a == CellInfo.UNAVAILABLE) return emptyList()
+        val out = linkedSetOf<Int>()
+        // 2496-2690 MHz TDD family. n38 and n7 overlap only in their own subranges.
+        if (a in 499200..538000) { out += 41; out += 90 }
+        if (a in 514000..524000) out += 38
+        if (a in 524000..538000) out += 7
+
+        // 3300-4200 MHz family. n48 overlaps n77/n78 in 3550-3700 MHz.
+        if (a in 620000..680000) out += 77
+        if (a in 620000..653333) out += 78
+        if (a in 636667..646666) out += 48
+
+        // 4400-5000 MHz.
+        if (a in 693334..733333) out += 79
+        return out.toList().sorted()
+    }
+
+    private fun connectionStatusName(status: Int): String = when (status) {
+        CellInfo.CONNECTION_PRIMARY_SERVING -> "PRIMARY_SERVING"
+        CellInfo.CONNECTION_SECONDARY_SERVING -> "SECONDARY_SERVING"
+        CellInfo.CONNECTION_NONE -> "NONE"
+        else -> "UNKNOWN"
     }
 
     private fun networkTypeName(type: Int): String = when (type) {
@@ -356,9 +543,6 @@ class CellularRepository(private val context: Context) {
         in 2400..2649 -> "B5"; in 2750..3449 -> "B7"; in 3450..3799 -> "B8"; in 6150..6449 -> "B20"
         in 9210..9659 -> "B28"; in 37750..38249 -> "B38"; in 38250..38649 -> "B39"; in 38650..39649 -> "B40"
         in 39650..41589 -> "B41"; else -> "--"
-    }
-    private fun nrBandFromArfcn(a: Int): String = when (a) {
-        in 620000..653333 -> "n78"; in 499200..537999 -> "n41"; in 422000..434000 -> "n1"; else -> "--"
     }
     private fun bandwidthValue(khz: Int): String = if (khz == CellInfo.UNAVAILABLE || khz <= 0) "--" else String.format(java.util.Locale.US, "%.1f MHz", khz / 1000.0)
 }

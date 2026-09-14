@@ -55,6 +55,7 @@ class FloatingOverlayService : Service() {
     private var clockJob: Job? = null
     private var compact = false
     private var lastTargetSimNo: Int? = null
+    private var lastRenderedSim: SimCellState? = null
 
     private lateinit var headerText: TextView
     private lateinit var clockText: TextView
@@ -183,9 +184,20 @@ class FloatingOverlayService : Service() {
     private fun startClockLoop() {
         clockJob?.cancel()
         clockJob = CoroutineScope(SupervisorJob() + Dispatchers.Main).launch {
+            var lastRecordingSecond = Long.MIN_VALUE
             while (isActive) {
-                val now = java.util.Date()
-                clockText.text = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US).format(now)
+                val nowMs = System.currentTimeMillis()
+                clockText.text = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US).format(java.util.Date(nowMs))
+
+                // REC elapsed time must not depend on cellular refreshes. Update the
+                // already-rendered SIM once per second from RecordingState only.
+                val status = RecordingState.status.value
+                val second = if (status.isRecording && status.startedAt > 0L) ((nowMs - status.startedAt).coerceAtLeast(0L) / 1000L) else -1L
+                if (second != lastRecordingSecond) {
+                    lastRecordingSecond = second
+                    lastRenderedSim?.let { updateTexts(it, status) }
+                    updateControls(status.isRecording)
+                }
                 delay(50L)
             }
         }
@@ -253,7 +265,6 @@ class FloatingOverlayService : Service() {
 
     private fun startRefreshLoop() {
         refreshJob?.cancel()
-        clockJob?.cancel()
         refreshJob = scope.launch {
             while (isActive) {
                 val status = RecordingState.status.value
@@ -271,7 +282,10 @@ class FloatingOverlayService : Service() {
                 withContext(Dispatchers.Main) {
                     overlayView?.background = roundedBackground(settings.floatingOpacity)
                     updateControls(status.isRecording)
-                    if (sim != null) updateTexts(sim, status)
+                    if (sim != null) {
+                        lastRenderedSim = sim
+                        updateTexts(sim, status)
+                    }
                     else headerText.text = if (status.isRecording) "Recording · No SIM" else "Ready · No SIM"
                 }
                 delay(settings.uiRefreshMs.coerceIn(500L, 2000L))

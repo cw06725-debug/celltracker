@@ -1,5 +1,18 @@
 # CellTracker Changelog
 
+## v0.9.3.0.54
+
+- Cell Info accuracy pass: never guess an NR Band / ARFCN when Android does not expose an NR cell identity.
+- NR NSA detection no longer treats a merely visible NR neighbor as proof of active 5G. Active NSA now requires TelephonyDisplayInfo NR_NSA/NR_ADVANCED or an NR secondary-serving CellInfo.
+- Use CellInfo connection status to distinguish primary/secondary serving cells from neighbors.
+- EN-DC now uses only active NR serving information. If NSA is confirmed but NR identity is unavailable, it shows `LTE anchor + NR (band unavailable)` instead of inventing a band.
+- NR band verification cross-checks CellIdentityNr.bands against NR-ARFCN-compatible bands. Conflicting impossible band values are rejected.
+- Overlapping NR bands are preserved instead of guessed. Example: NR-ARFCN 509070 is represented as n41/n90 unless Android explicitly reports a compatible single band.
+- Cell Info now separates `SIM Home PLMN`, `Registered PLMN`, and `Serving Cell PLMN` so SIM identity (for example 410/01) is not confused with the currently serving cell PLMN (for example 410/07).
+- Added NR / EN-DC Details with state, band, NR-ARFCN, PCI, signal values, identity source and band source where available.
+- Recording CSV keeps the existing serving MCC/MNC columns and appends SIM/registered PLMN plus cell connection/band/ARFCN source columns for traceability.
+- Fixed Floating Overlay clocks: the wall clock is no longer cancelled by the network refresh loop, and `REC` elapsed time refreshes independently once per second instead of waiting for cellular data updates.
+
 ## v0.9.3.0.53
 
 - Restores the Reports navigation workflow: Reports home now shows test types only.
