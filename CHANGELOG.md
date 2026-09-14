@@ -1,5 +1,15 @@
 # CellTracker Changelog
 
+## v0.9.3.0.55
+
+- Improve NR NSA fallback for OEMs that expose NR measurements but do not mark a `CellInfoNr` as `SECONDARY_SERVING`.
+- When NSA is independently confirmed and every exposed NR measurement reports the same NR-ARFCN, CellTracker now shows that ARFCN as an **observed** value instead of `Unavailable`.
+- The corresponding NR band is derived conservatively from the observed NR-ARFCN; overlapping bands are preserved (for example `509070 -> n41/n90`) rather than guessed.
+- EN-DC summary distinguishes a confirmed secondary-serving band from an observed NR band: e.g. `EN-DC: B3 + n41/n90 (observed)`.
+- PCI/NCI/TAC are still withheld unless Android identifies the active NR serving/secondary-serving cell, preventing a neighbor PCI from being misreported as serving NR.
+- Added expandable `NR Raw Observations` to Cell Info showing every `CellInfoNr` measurement, connection status, Band, NR-ARFCN, PCI, signal metrics and data source.
+- This makes OEM differences (vivo/Infinix/etc.) directly visible and gives us the same class of raw NR measurement evidence that tools such as Cellular-Z can expose without fabricating unavailable serving-cell identity.
+
 ## v0.9.3.0.54
 
 - Cell Info accuracy pass: never guess an NR Band / ARFCN when Android does not expose an NR cell identity.

@@ -1086,6 +1086,7 @@ private fun MainScreen(
             ) { page ->
                 val pageSelected = state.sims.getOrNull(page) ?: selected
                 val c = pageSelected?.servingCell ?: CellData()
+                var nrDebugExpanded by remember(pageSelected?.subscriptionId) { mutableStateOf(false) }
                 val sortedNeighbors = pageSelected?.neighbors.orEmpty().sortedByDescending { it.rsrp.toIntOrNull() ?: Int.MIN_VALUE }
                 val strongestNeighbor = sortedNeighbors.firstOrNull()
                 Column(
@@ -1143,6 +1144,48 @@ private fun MainScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                    }
+                }
+            }
+            if (pageSelected?.nrObservations?.isNotEmpty() == true) {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().clickable { nrDebugExpanded = !nrDebugExpanded },
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text("NR Raw Observations", style = MaterialTheme.typography.titleMedium)
+                                Text("${pageSelected.nrObservations.size} CellInfoNr measurements · tap for source details", style = MaterialTheme.typography.bodySmall)
+                            }
+                            Text(if (nrDebugExpanded) "▲" else "▼", style = MaterialTheme.typography.titleMedium)
+                        }
+                        AnimatedVisibility(nrDebugExpanded) {
+                            Column(modifier = Modifier.padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                HorizontalDivider()
+                                pageSelected.nrObservations.forEachIndexed { index, n ->
+                                    Text("NR #${index + 1}", style = MaterialTheme.typography.labelLarge)
+                                    Field("Connection", if (n.registered) "REGISTERED / ${n.connectionStatus}" else n.connectionStatus)
+                                    Field("Band", n.band)
+                                    Field("NR-ARFCN", n.arfcn)
+                                    Field("PCI", n.pci)
+                                    if (n.tac != "--") Field("TAC", n.tac)
+                                    if (n.cellId != "--") Field("NCI", n.cellId)
+                                    if (n.ssRsrp != "--") Field("SS-RSRP", valueWithUnit(n.ssRsrp, "dBm"))
+                                    if (n.ssRsrq != "--") Field("SS-RSRQ", valueWithUnit(n.ssRsrq, "dB"))
+                                    if (n.ssSinr != "--") Field("SS-SINR", valueWithUnit(n.ssSinr, "dB"))
+                                    Field("ARFCN Source", n.arfcnSource)
+                                    Field("Band Source", n.bandSource)
+                                    if (index != pageSelected.nrObservations.lastIndex) HorizontalDivider()
+                                }
+                                Text(
+                                    "Raw observations are values directly exposed by Android CellInfoNr. They are not automatically treated as the active NR serving cell unless Android marks them registered/secondary-serving.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
                     }
                 }
             }

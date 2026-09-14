@@ -109,10 +109,8 @@ class CellularRepository(private val context: Context) {
         }
         val simPlmn = splitPlmn(runCatching { tm.simOperator }.getOrDefault(""))
         val registeredPlmn = splitPlmn(runCatching { tm.networkOperator }.getOrDefault(""))
-        val caInfo = carrierAggregationInfo(tm, parsed, servingRaw, nrNsaActive)
-        val common = servingRaw.copy(
+        val commonBase = servingRaw.copy(
             displayRat = displayRat,
-            carrierAggregation = caInfo,
             simMcc = simPlmn.first,
             simMnc = simPlmn.second,
             registeredMcc = registeredPlmn.first,
@@ -121,9 +119,6 @@ class CellularRepository(private val context: Context) {
             voiceRat = networkTypeName(runCatching { tm.voiceNetworkType }.getOrDefault(TelephonyManager.NETWORK_TYPE_UNKNOWN)),
             roaming = runCatching { if (tm.isNetworkRoaming) "Yes" else "No" }.getOrDefault("--")
         )
-        val serving = if (common.rat == "LTE" && common.sinr == "--") {
-            common.copy(sinr = readLteSinrFallback(tm))
-        } else common
 
         val nrState = when {
             servingRaw.rat == "NR" -> "SA_CONNECTED"
@@ -131,6 +126,15 @@ class CellularRepository(private val context: Context) {
             parsed.any { it.rat == "NR" } -> "OBSERVED_NOT_SERVING"
             else -> "NOT_ACTIVE"
         }
+        val nrObservedCells = parsed.filter { it.rat == "NR" }
+        val observedArfcns = nrObservedCells.map { it.arfcn }.filter { it != "--" }.distinct()
+        val observedBands = nrObservedCells.map { it.band }.filter { it != "--" }.distinct()
+        val observedSingleArfcn = observedArfcns.singleOrNull()
+        val observedBandForSingleArfcn = if (observedSingleArfcn != null) {
+            val arfcnInt = observedSingleArfcn.toIntOrNull() ?: CellInfo.UNAVAILABLE
+            nrBandVerified(arfcnInt, intArrayOf()).first
+        } else "--"
+
         val nrConnection = if (nrDirectServing != null) {
             NrConnectionData(
                 state = nrState,
@@ -145,6 +149,22 @@ class CellularRepository(private val context: Context) {
                 identitySource = if (nrDirectServing.registered) "CellInfoNr primary serving" else "CellInfoNr secondary serving",
                 bandSource = nrDirectServing.bandSource
             )
+        } else if (nrNsaActive && observedSingleArfcn != null) {
+            // Some OEMs expose NR measurements in CellInfoNr but do not mark the
+            // active NR leg as SECONDARY_SERVING. The common observed NR-ARFCN is
+            // still a directly reported measurement, so it is safe to expose it
+            // as OBSERVED data. Do not copy a PCI/NCI/TAC because we cannot prove
+            // which observed NR cell is the active secondary-serving cell.
+            NrConnectionData(
+                state = nrState,
+                band = observedBandForSingleArfcn,
+                arfcn = observedSingleArfcn,
+                ssRsrp = nrSignal?.first ?: "--",
+                ssRsrq = nrSignal?.second ?: "--",
+                ssSinr = nrSignal?.third ?: "--",
+                identitySource = "NSA connected + common observed CellInfoNr NR-ARFCN; serving NR cell not identified",
+                bandSource = if (observedBandForSingleArfcn != "--") "Observed NR-ARFCN compatible bands" else "--"
+            )
         } else {
             NrConnectionData(
                 state = nrState,
@@ -152,6 +172,7 @@ class CellularRepository(private val context: Context) {
                 ssRsrq = nrSignal?.second ?: "--",
                 ssSinr = nrSignal?.third ?: "--",
                 identitySource = when {
+                    nrNsaActive && nrObservedCells.isNotEmpty() -> "NSA connected; multiple/insufficient observed NR identities"
                     nrNsaActive && nrSignal != null -> "TelephonyDisplayInfo + NR SignalStrength; identity unavailable"
                     nrNsaActive -> "TelephonyDisplayInfo; NR identity unavailable"
                     else -> "--"
@@ -160,11 +181,24 @@ class CellularRepository(private val context: Context) {
             )
         }
 
+        val caInfo = carrierAggregationInfo(tm, parsed, commonBase, nrNsaActive, nrConnection)
+        val common = commonBase.copy(carrierAggregation = caInfo)
+        val serving = if (common.rat == "LTE" && common.sinr == "--") {
+            common.copy(sinr = readLteSinrFallback(tm))
+        } else common
+
         // Secondary-serving NR is part of the active EN-DC connection, not a neighbor.
         val neighbors = parsed.filter { !it.registered && it.connectionStatus != "SECONDARY_SERVING" }.map { neighbor ->
             neighbor.copy(displayRat = if (neighbor.rat == "NR") "NR" else neighbor.rat)
         }
-        return SimCellState(subscriptionId, simSlotIndex, simLabel, serving, neighbors, nrConnection)
+        val nrObservations = nrObservedCells.map { n ->
+            NrObservation(
+                connectionStatus = n.connectionStatus, registered = n.registered, band = n.band, arfcn = n.arfcn,
+                pci = n.pci, tac = n.tac, cellId = n.cellId, ssRsrp = n.rsrp, ssRsrq = n.rsrq, ssSinr = n.sinr,
+                bandSource = n.bandSource, arfcnSource = n.arfcnSource
+            )
+        }
+        return SimCellState(subscriptionId, simSlotIndex, simLabel, serving, neighbors, nrConnection, nrObservations)
     }
 
 
@@ -388,7 +422,8 @@ class CellularRepository(private val context: Context) {
         tm: TelephonyManager,
         parsed: List<CellData>,
         serving: CellData,
-        nrNsaActive: Boolean
+        nrNsaActive: Boolean,
+        nrConnection: NrConnectionData
     ): String {
         val registeredLteBands = parsed.filter { it.registered && it.rat == "LTE" }.map { it.band }.filter { it != "--" }.distinct()
         val activeNrBands = parsed.filter {
@@ -399,8 +434,11 @@ class CellularRepository(private val context: Context) {
         return when {
             serving.rat == "LTE" && nrNsaActive -> {
                 val anchor = serving.band.takeIf { it != "--" } ?: "LTE"
-                if (activeNrBands.isNotEmpty()) "EN-DC: $anchor + ${activeNrBands.joinToString(" + ")}"
-                else "EN-DC: $anchor + NR (band unavailable)"
+                when {
+                    activeNrBands.isNotEmpty() -> "EN-DC: $anchor + ${activeNrBands.joinToString(" + ")}"
+                    nrConnection.band != "--" -> "EN-DC: $anchor + ${nrConnection.band} (observed)"
+                    else -> "EN-DC: $anchor + NR (band unavailable)"
+                }
             }
             lteCa && registeredLteBands.isNotEmpty() -> "LTE CA: ${registeredLteBands.joinToString(" + ")}"
             lteCa -> "LTE CA: Active"

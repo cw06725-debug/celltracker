@@ -56,13 +56,29 @@ data class NrConnectionData(
     val bandSource: String = "--"
 )
 
+data class NrObservation(
+    val connectionStatus: String = "UNKNOWN",
+    val registered: Boolean = false,
+    val band: String = "--",
+    val arfcn: String = "--",
+    val pci: String = "--",
+    val tac: String = "--",
+    val cellId: String = "--",
+    val ssRsrp: String = "--",
+    val ssRsrq: String = "--",
+    val ssSinr: String = "--",
+    val bandSource: String = "--",
+    val arfcnSource: String = "--"
+)
+
 data class SimCellState(
     val subscriptionId: Int,
     val simSlotIndex: Int,
     val simLabel: String,
     val servingCell: CellData = CellData(),
     val neighbors: List<CellData> = emptyList(),
-    val nrConnection: NrConnectionData = NrConnectionData()
+    val nrConnection: NrConnectionData = NrConnectionData(),
+    val nrObservations: List<NrObservation> = emptyList()
 )
 
 data class LocationData(
