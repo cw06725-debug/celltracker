@@ -44,32 +44,96 @@ object CellTrackerAdbEngine {
         val nsd=context.getSystemService(NsdManager::class.java)?:return
         runCatching { nsd.discoverServices(type,NsdManager.PROTOCOL_DNS_SD,object:NsdManager.DiscoveryListener{
             override fun onDiscoveryStarted(s:String){}; override fun onDiscoveryStopped(s:String){}
-            override fun onStartDiscoveryFailed(s:String,e:Int){}; override fun onStopDiscoveryFailed(s:String,e:Int){}
+            override fun onStartDiscoveryFailed(s:String,e:Int){ AdbToolStore.state.value=AdbToolStore.state.value.copy(message="ADB discovery failed: $e") }; override fun onStopDiscoveryFailed(s:String,e:Int){}
             override fun onServiceLost(s:NsdServiceInfo){}
             override fun onServiceFound(s:NsdServiceInfo){ runCatching { nsd.resolveService(s,object:NsdManager.ResolveListener{
-                override fun onResolveFailed(si:NsdServiceInfo,e:Int){}
+                override fun onResolveFailed(si:NsdServiceInfo,e:Int){ AdbToolStore.state.value=AdbToolStore.state.value.copy(message="ADB service resolve failed: $e") }
                 override fun onServiceResolved(si:NsdServiceInfo){ val h=si.host?.hostAddress?:return; val p=si.port; onFound(if(type.contains("pairing")) AdbEndpoint(h,p,0) else AdbEndpoint(h,0,p)) }
             }) } }
         }) }
     }
-    fun showPairingNotification(context:Context) {
-        startDiscovery(context)
+    private fun pairingNotification(context:Context, title:String, text:String, allowInput:Boolean) {
         val nm=context.getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(NotificationChannel("adb_pair","ADB pairing",NotificationManager.IMPORTANCE_HIGH))
-        val ri=RemoteInput.Builder("pair_code").setLabel("6-digit pairing code").build()
-        val pi=PendingIntent.getBroadcast(context,8801,Intent(context,AdbPairCodeReceiver::class.java).setAction("PAIR_CODE"),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
-        val action=NotificationCompat.Action.Builder(android.R.drawable.ic_menu_send,"ENTER PAIRING CODE",pi).addRemoteInput(ri).build()
-        nm.notify(8801,NotificationCompat.Builder(context,"adb_pair").setSmallIcon(android.R.drawable.stat_sys_upload).setContentTitle("CellTracker ADB pairing").setContentText("Open Wireless debugging → Pair device with pairing code, then enter the code here.").setOngoing(true).setPriority(NotificationCompat.PRIORITY_HIGH).addAction(action).build())
+        val b=NotificationCompat.Builder(context,"adb_pair")
+            .setSmallIcon(android.R.drawable.stat_sys_upload)
+            .setContentTitle(title).setContentText(text)
+            .setOngoing(allowInput).setOnlyAlertOnce(true)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+        if(allowInput){
+            val ri=RemoteInput.Builder("pair_code").setLabel("6-digit pairing code").build()
+            val pi=PendingIntent.getBroadcast(context,8801,Intent(context,AdbPairCodeReceiver::class.java).setAction("PAIR_CODE"),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
+            b.addAction(NotificationCompat.Action.Builder(android.R.drawable.ic_menu_send,"ENTER PAIRING CODE",pi).addRemoteInput(ri).build())
+        }
+        nm.notify(8801,b.build())
     }
+
+    fun showPairingNotification(context:Context) {
+        // Start discovery before the user opens the system pairing-code dialog.
+        discoveredPair=null
+        startDiscovery(context)
+        pairingNotification(context,"CellTracker ADB pairing","Open Wireless debugging → Pair device with pairing code, then enter the code here.",true)
+    }
+
+    private suspend fun waitForPairEndpoint(context:Context, timeoutMs:Long=10_000):AdbEndpoint {
+        // The pairing port is intentionally ephemeral. Never fall back to a stale saved port.
+        val deadline=System.currentTimeMillis()+timeoutMs
+        while(System.currentTimeMillis()<deadline){
+            discoveredPair?.takeIf{it.pairingPort>0}?.let{return it}
+            delay(150)
+        }
+        error("Pairing service not found. Keep the system pairing-code dialog open, then retry.")
+    }
+
+    private suspend fun waitForConnectEndpoint(timeoutMs:Long=10_000):AdbEndpoint? {
+        val deadline=System.currentTimeMillis()+timeoutMs
+        while(System.currentTimeMillis()<deadline){
+            discoveredConnect?.takeIf{it.connectPort>0}?.let{return it}
+            delay(150)
+        }
+        return null
+    }
+
     suspend fun pairLocal(context:Context,code:String):Result<String> = withContext(Dispatchers.IO) { runCatching {
-        val pref=context.getSharedPreferences("adb_tools",Context.MODE_PRIVATE)
-        val ep=discoveredPair ?: AdbEndpoint(pref.getString("pair_host","127.0.0.1")?:"127.0.0.1",pref.getInt("pair_port",0),0)
-        require(ep.pairingPort>0){"Pairing service not discovered yet. Keep the pairing-code dialog open for a few seconds."}
+        require(code.trim().matches(Regex("\\d{6}"))){"Pairing code must be 6 digits"}
+        pairingNotification(context,"CellTracker ADB pairing","Code received · discovering pairing service…",false)
+        val ep=waitForPairEndpoint(context)
+        AdbToolStore.state.value=AdbToolStore.state.value.copy(message="Pairing ${ep.host}:${ep.pairingPort}…")
+        pairingNotification(context,"CellTracker ADB pairing","Pairing with ${ep.host}:${ep.pairingPort}…",false)
+
         val mgr=CellTrackerAdbConnectionManager.getInstance(context)
-        check(mgr.pair(ep.host,ep.pairingPort,code.trim())){"ADB pairing rejected"}
+        val paired=withTimeout(15_000){ mgr.pair(ep.host,ep.pairingPort,code.trim()) }
+        check(paired){"ADB pairing rejected"}
+
+        pairingNotification(context,"CellTracker ADB paired","Pairing succeeded · discovering ADB connection…",false)
+        AdbToolStore.state.value=AdbToolStore.state.value.copy(message="Paired · discovering ADB connection…")
+        discoveredConnect=null
+        startDiscovery(context)
+        val connectEp=waitForConnectEndpoint(10_000)
+        val ok=withTimeout(12_000){
+            if(connectEp!=null) mgr.connect(connectEp.host,connectEp.connectPort)
+            else mgr.connectTls(context,8_000)
+        }
+        check(ok){"Paired, but ADB TLS connection failed"}
+
+        val id=withTimeout(8_000){ command(context,"id").getOrThrow().trim() }
+        check(id.contains("uid=2000")){"Connected, but identity is not shell: $id"}
+        AdbToolStore.state.value=AdbToolStore.state.value.copy(
+            localStatus="Connected", localIdentity=id, message="Local ADB ready"
+        )
+        pairingNotification(context,"CellTracker Local ADB connected","Connected as uid=2000(shell)",false)
+        delay(1800)
         context.getSystemService(NotificationManager::class.java).cancel(8801)
-        delay(700); connectLocal(context).getOrThrow(); "Pairing successful"
+        "Connected as shell"
+    }.onFailure { e ->
+        val msg=when(e){
+            is TimeoutCancellationException -> "Pairing timed out. Reopen the pairing-code dialog and retry."
+            else -> e.message ?: e.javaClass.simpleName
+        }
+        AdbToolStore.state.value=AdbToolStore.state.value.copy(localStatus="Not connected",message="Pair failed: $msg")
+        pairingNotification(context,"CellTracker ADB pairing failed",msg,false)
     } }
+
     suspend fun connectLocal(context:Context):Result<String> = withContext(Dispatchers.IO){ runCatching {
         val mgr=CellTrackerAdbConnectionManager.getInstance(context)
         val ep=discoveredConnect
@@ -110,4 +174,15 @@ object CellTrackerAdbEngine {
     fun stopLogcat(){logcatJob?.cancel();logcatJob=null;AdbToolStore.state.value=AdbToolStore.state.value.copy(logcatRunning=false,message="AP log stopped")}
 }
 
-class AdbPairCodeReceiver:BroadcastReceiver(){ override fun onReceive(context:Context,intent:Intent){ val code=RemoteInput.getResultsFromIntent(intent)?.getCharSequence("pair_code")?.toString().orEmpty(); if(code.isBlank())return; val pending=goAsync(); CoroutineScope(Dispatchers.IO).launch{ val r=CellTrackerAdbEngine.pairLocal(context,code); AdbToolStore.state.value=AdbToolStore.state.value.copy(message=r.fold({it},{"Pair failed: ${it.message}"})); pending.finish()} } }
+class AdbPairCodeReceiver:BroadcastReceiver(){
+    override fun onReceive(context:Context,intent:Intent){
+        val code=RemoteInput.getResultsFromIntent(intent)?.getCharSequence("pair_code")?.toString().orEmpty().trim()
+        if(code.isBlank()) return
+        AdbToolStore.state.value=AdbToolStore.state.value.copy(localStatus="Pairing…",message="Pairing code received")
+        val pending=goAsync()
+        CoroutineScope(SupervisorJob()+Dispatchers.IO).launch {
+            try { CellTrackerAdbEngine.pairLocal(context.applicationContext,code) }
+            finally { pending.finish() }
+        }
+    }
+}
