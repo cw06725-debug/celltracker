@@ -59,7 +59,7 @@ object CellTrackerAdbEngine {
         val ri=RemoteInput.Builder("pair_code").setLabel("6-digit pairing code").build()
         val pi=PendingIntent.getBroadcast(context,8801,Intent(context,AdbPairCodeReceiver::class.java).setAction("PAIR_CODE"),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
         val action=NotificationCompat.Action.Builder(android.R.drawable.ic_menu_send,"ENTER PAIRING CODE",pi).addRemoteInput(ri).build()
-        nm.notify(8801,NotificationCompat.Builder(context,"adb_pair").setSmallIcon(android.R.drawable.stat_sys_data_usb).setContentTitle("CellTracker ADB pairing").setContentText("Open Wireless debugging → Pair device with pairing code, then enter the code here.").setOngoing(true).setPriority(NotificationCompat.PRIORITY_HIGH).addAction(action).build())
+        nm.notify(8801,NotificationCompat.Builder(context,"adb_pair").setSmallIcon(android.R.drawable.stat_sys_upload).setContentTitle("CellTracker ADB pairing").setContentText("Open Wireless debugging → Pair device with pairing code, then enter the code here.").setOngoing(true).setPriority(NotificationCompat.PRIORITY_HIGH).addAction(action).build())
     }
     suspend fun pairLocal(context:Context,code:String):Result<String> = withContext(Dispatchers.IO) { runCatching {
         val pref=context.getSharedPreferences("adb_tools",Context.MODE_PRIVATE)
