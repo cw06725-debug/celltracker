@@ -13,7 +13,7 @@ import java.util.zip.ZipOutputStream
 
 data class SyncPullProgress(val found:Long,val filesDone:Long,val skipped:Long,val bytesDone:Long,val current:String,val phase:String="Pulling files…")
 data class SyncPulledFile(val uri:Uri,val relative:String)
-data class SyncPullResult(val found:Long,val pulled:Long,val skipped:Long,val bytes:Long,val files:List<SyncPulledFile>)
+data class SyncPullResult(val found:Long,val pulled:Long,val skipped:Long,val bytes:Long,val files:List<SyncPulledFile>,val symlinks:Long=0,val listFailed:Long=0)
 class AdbSyncPuller(private val context:Context){
  data class Entry(val name:String,val mode:Int,val size:Long){val type get()=mode and 0xF000;val isDir get()=type==0x4000;val isFile get()=type==0x8000;val isLink get()=type==0xA000}
  private fun le(v:Int)=ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(v).array()
@@ -28,6 +28,22 @@ class AdbSyncPuller(private val context:Context){
   val uri=r.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI,v)?:error("Cannot create $name")
   try{r.openOutputStream(uri,"w")!!.use{local->session{i,o->request(o,"RECV",remote);while(true){when(String(exact(i,4),Charsets.US_ASCII)){"DONE"->{int(i);return@session};"FAIL"->fail(i);"DATA"->{var left=int(i);val b=ByteArray(65536);while(left>0){val n=i.read(b,0,minOf(left,b.size));if(n<0)throw EOFException("ADB Sync ended during $remote");local.write(b,0,n);left-=n;onBytes(n)}};else->error("Unexpected ADB Sync RECV response for $remote")}}}};v.clear();v.put(MediaStore.Downloads.IS_PENDING,0);r.update(uri,v,null,null);return uri}catch(e:Throwable){r.delete(uri,null,null);throw e}
  }
+ private fun resolveLink(remote:String):String? {
+  return try {
+   val manager=CellTrackerAdbConnectionManager.getInstance(context)
+   val stream=manager.openStream("shell:readlink -f '${remote.replace("'", "'\\''")}'")
+   val input=stream.openInputStream()
+   val out=ByteArrayOutputStream()
+   val buf=ByteArray(4096)
+   val deadline=System.currentTimeMillis()+3000
+   while(System.currentTimeMillis()<deadline){
+    if(input.available()>0){val n=input.read(buf);if(n<0)break;out.write(buf,0,n)}
+    else Thread.sleep(20)
+   }
+   runCatching{stream.close()}
+   out.toString(Charsets.UTF_8.name()).trim().lineSequence().firstOrNull()?.takeIf{it.startsWith("/")}
+  } catch(_:Throwable){ null }
+ }
  fun pullTree(
   root: String,
   sessionDir: String,
@@ -41,6 +57,8 @@ class AdbSyncPuller(private val context:Context){
   var found = 0L
   var pulled = 0L
   var skipped = 0L
+  var symlinks = 0L
+  var listFailed = 0L
   var bytes = 0L
   val files = ArrayList<SyncPulledFile>()
   val visited = HashSet<String>()
@@ -53,7 +71,8 @@ class AdbSyncPuller(private val context:Context){
     list(node.remote)
    } catch (e: Throwable) {
     skipped++
-    onProgress(SyncPullProgress(found, pulled, skipped, bytes, node.remote))
+    listFailed++
+    onProgress(SyncPullProgress(found, pulled, skipped, bytes, node.remote, "LIST failed"))
     continue
    }
 
@@ -100,9 +119,15 @@ class AdbSyncPuller(private val context:Context){
      }
 
      entry.isLink -> {
-      // Vendor debug trees may expose useful folders through symlinks.
-      // Queue it once and let LIST determine whether the target is traversable.
-      q.add(Node(remote, rel))
+      symlinks++
+      val target = resolveLink(remote)
+      if (target != null) {
+       // Preserve the link's visible relative name while traversing its resolved target.
+       q.add(Node(target, rel))
+      } else {
+       skipped++
+       onProgress(SyncPullProgress(found, pulled, skipped, bytes, remote, "Symlink unresolved"))
+      }
      }
 
      else -> {
@@ -113,10 +138,41 @@ class AdbSyncPuller(private val context:Context){
    }
   }
 
-  return SyncPullResult(found, pulled, skipped, bytes, files)
+  return SyncPullResult(found, pulled, skipped, bytes, files, symlinks, listFailed)
  }
- fun compress(sessionName:String,result:SyncPullResult,deleteSource:Boolean,onProgress:(String)->Unit):String{
-  val resolver=context.contentResolver;val zipName="$sessionName.zip";val v=ContentValues().apply{put(MediaStore.Downloads.DISPLAY_NAME,zipName);put(MediaStore.Downloads.MIME_TYPE,"application/zip");put(MediaStore.Downloads.RELATIVE_PATH,"${Environment.DIRECTORY_DOWNLOADS}/CellTracker/Logs/DUT");put(MediaStore.Downloads.IS_PENDING,1)};val zipUri=resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI,v)?:error("Cannot create ZIP")
-  try{resolver.openOutputStream(zipUri,"w")!!.use{raw->ZipOutputStream(BufferedOutputStream(raw)).use{zip->result.files.forEachIndexed{idx,f->onProgress("Compressing ${idx+1}/${result.files.size}: ${f.relative}");zip.putNextEntry(ZipEntry(f.relative));resolver.openInputStream(f.uri)!!.use{it.copyTo(zip,65536)};zip.closeEntry()}}};v.clear();v.put(MediaStore.Downloads.IS_PENDING,0);resolver.update(zipUri,v,null,null);if(deleteSource)result.files.forEach{resolver.delete(it.uri,null,null)};return "Download/CellTracker/Logs/DUT/$zipName"}catch(e:Throwable){resolver.delete(zipUri,null,null);throw e}
+ data class ZipResult(val path:String,val deleted:Int,val deleteFailed:Int,val zipBytes:Long)
+ fun compress(sessionName:String,result:SyncPullResult,deleteSource:Boolean,onProgress:(String)->Unit):ZipResult{
+  val resolver=context.contentResolver
+  val zipName="$sessionName.zip"
+  val values=ContentValues().apply{
+   put(MediaStore.Downloads.DISPLAY_NAME,zipName)
+   put(MediaStore.Downloads.MIME_TYPE,"application/zip")
+   put(MediaStore.Downloads.RELATIVE_PATH,"${Environment.DIRECTORY_DOWNLOADS}/CellTracker/Logs/DUT")
+   put(MediaStore.Downloads.IS_PENDING,1)
+  }
+  val zipUri=resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI,values)?:error("Cannot create ZIP")
+  try{
+   resolver.openOutputStream(zipUri,"w")!!.use{raw->
+    ZipOutputStream(BufferedOutputStream(raw)).use{zip->
+     result.files.forEachIndexed{idx,f->
+      onProgress("Compressing ${idx+1}/${result.files.size}: ${f.relative}")
+      zip.putNextEntry(ZipEntry(f.relative))
+      resolver.openInputStream(f.uri)!!.use{it.copyTo(zip,65536)}
+      zip.closeEntry()
+     }
+    }
+   }
+   values.clear();values.put(MediaStore.Downloads.IS_PENDING,0);resolver.update(zipUri,values,null,null)
+   var deleted=0;var failed=0
+   if(deleteSource){
+    result.files.forEachIndexed{idx,f->
+     onProgress("Deleting source ${idx+1}/${result.files.size}")
+     try{if(resolver.delete(f.uri,null,null)>0)deleted++ else failed++}catch(_:Throwable){failed++}
+    }
+   }
+   val zipBytes=resolver.openFileDescriptor(zipUri,"r")?.use{it.statSize}?:0L
+   return ZipResult("Download/CellTracker/Logs/DUT/$zipName",deleted,failed,zipBytes)
+  }catch(e:Throwable){resolver.delete(zipUri,null,null);throw e}
  }
+
 }

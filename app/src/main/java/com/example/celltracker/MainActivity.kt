@@ -4129,14 +4129,20 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
                     if(adb.exportRunning && adb.message.startsWith("Pulling ")) Field("Current",adb.message.removePrefix("Pulling "))
                     if(adb.exportRunning) LinearProgressIndicator(modifier=Modifier.fillMaxWidth())
                     if(adb.exportBytes>0){
-                        val seconds=((System.currentTimeMillis()-adb.exportStartedMs)/1000.0).coerceAtLeast(0.1)
                         Field("Transferred",String.format(java.util.Locale.US,"%.1f MB",adb.exportBytes/1048576.0))
-                        Field("Average speed",String.format(java.util.Locale.US,"%.1f MB/s",(adb.exportBytes/1048576.0)/seconds))
+                        val speedSeconds=(if(adb.exportPullMs>0) adb.exportPullMs else (System.currentTimeMillis()-adb.exportStartedMs)).coerceAtLeast(100L)/1000.0
+                        Field(if(adb.exportRunning)"Current pull speed" else "Pull avg speed",String.format(java.util.Locale.US,"%.1f MB/s",(adb.exportBytes/1048576.0)/speedSeconds))
                     }
+                    if(adb.exportSymlinks>0) Field("Symlinks","${adb.exportSymlinks}")
+                    if(adb.exportListFailed>0) Field("LIST failed","${adb.exportListFailed}")
+                    if(adb.exportDeleted>0 || adb.exportDeleteFailed>0) Field("Source cleanup","Deleted ${adb.exportDeleted} · Failed ${adb.exportDeleteFailed}")
                     if(adb.exportRunning) OutlinedButton(onClick={CellTrackerAdbEngine.cancelExport()},modifier=Modifier.fillMaxWidth()){Text("CANCEL EXPORT")}
+                    if(adb.exportPullMs>0) Field("Pull time",String.format(java.util.Locale.US,"%02d:%02d",(adb.exportPullMs/1000)/60,(adb.exportPullMs/1000)%60))
+                    if(adb.exportZipMs>0) Field("ZIP time",String.format(java.util.Locale.US,"%02d:%02d",(adb.exportZipMs/1000)/60,(adb.exportZipMs/1000)%60))
                     if(adb.exportStartedMs>0){
-                        val elapsed=((System.currentTimeMillis()-adb.exportStartedMs)/1000).coerceAtLeast(0)
-                        Field("Elapsed",String.format(java.util.Locale.US,"%02d:%02d",elapsed/60,elapsed%60))
+                        val elapsedMs=if(adb.exportTotalMs>0)adb.exportTotalMs else System.currentTimeMillis()-adb.exportStartedMs
+                        val elapsed=(elapsedMs/1000).coerceAtLeast(0)
+                        Field(if(adb.exportRunning)"Elapsed" else "Total time",String.format(java.util.Locale.US,"%02d:%02d",elapsed/60,elapsed%60))
                     }
                     if(adb.exportResult.isNotBlank()) Field("Result",adb.exportResult)
                     if(adb.exportError.isNotBlank()) Field("Reason",adb.exportError)
@@ -4165,7 +4171,9 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
                 }
                 Field("REF ADB",adb.remoteStatus); Field("REF identity",adb.remoteIdentity)
             }
-            GlassSection("3 · REF AP Log") {
+            GlassSection("3 · $refType REF AP Log") {
+                Field("REF device",if(refType=="Custom") customRefName.ifBlank{"Custom"} else refType)
+                Field("Log folder","Download/CellTracker/Logs/$refLabel")
                 OutlinedTextField(logcatCommand,{logcatCommand=it},label={Text("Logcat command")},modifier=Modifier.fillMaxWidth())
                 Field("Status",if(adb.logcatRunning)"RECORDING" else "Stopped"); Field("Size",String.format(java.util.Locale.US,"%.1f MB",adb.logcatBytes/1048576.0)); if(adb.logcatPath.isNotBlank())Field("File",adb.logcatPath)
                 Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){

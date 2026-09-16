@@ -21,7 +21,10 @@ data class AdbUiState(
     val remoteEndpoint:AdbEndpoint=AdbEndpoint(), val remoteStatus:String="Not connected", val remoteIdentity:String="--",
     val logcatRunning:Boolean=false, val logcatBytes:Long=0, val logcatPath:String="",
     val exportRunning:Boolean=false, val exportPhase:String="", val exportBytes:Long=0, val exportTotalBytes:Long=0,
-    val exportFiles:Long=0, val exportFound:Long=0, val exportSkipped:Long=0, val exportStartedMs:Long=0, val exportPath:String="", val exportResult:String="", val exportError:String="",
+    val exportFiles:Long=0, val exportFound:Long=0, val exportSkipped:Long=0, val exportStartedMs:Long=0,
+    val exportPullMs:Long=0, val exportTotalMs:Long=0, val exportZipMs:Long=0, val exportPullBytes:Long=0,
+    val exportDeleted:Long=0, val exportDeleteFailed:Long=0, val exportSymlinks:Long=0, val exportListFailed:Long=0,
+    val exportPath:String="", val exportResult:String="", val exportError:String="",
     val refLabel:String="vivo_REF",
     val message:String=""
 )
@@ -187,11 +190,18 @@ object CellTrackerAdbEngine {
         check(exportJob?.isActive!=true){"An export is already running"}
         val source=path.trim().ifBlank{"/data/debuglogger"};val started=System.currentTimeMillis();val stamp=SimpleDateFormat("yyyyMMdd_HHmmss",Locale.US).format(Date())
         val safe=logName.trim().replace(Regex("[^A-Za-z0-9._-]+"),"_").trim('_').ifBlank{"DUT_debuglogger"};val session="${safe}_$stamp";val folderPath="Download/CellTracker/Logs/DUT/$session/"
-        AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=true,exportPhase="Starting ADB Sync pull…",exportBytes=0,exportFiles=0,exportFound=0,exportSkipped=0,exportStartedMs=started,exportPath="",exportResult="",exportError="")
+        AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=true,exportPhase="Starting ADB Sync pull…",exportBytes=0,exportFiles=0,exportFound=0,exportSkipped=0,exportStartedMs=started,exportPullMs=0,exportTotalMs=0,exportZipMs=0,exportPullBytes=0,exportDeleted=0,exportDeleteFailed=0,exportSymlinks=0,exportListFailed=0,exportPath="",exportResult="",exportError="")
         exportJob=scope.launch{try{val puller=AdbSyncPuller(context);val result=puller.pullTree(source,session){pr->AdbToolStore.state.value=AdbToolStore.state.value.copy(exportPhase=pr.phase,exportBytes=pr.bytesDone,exportFiles=pr.filesDone,exportFound=pr.found,exportSkipped=pr.skipped,message="Pulling ${pr.current}")}
-            check(result.pulled>0){"No files were pulled from $source"};var finalPath=folderPath
-            if(compress){AdbToolStore.state.value=AdbToolStore.state.value.copy(exportPhase="Compressing…",message="Preparing ZIP");finalPath=puller.compress(session,result,deleteAfterZip){msg->AdbToolStore.state.value=AdbToolStore.state.value.copy(exportPhase="Compressing…",message=msg)}}
-            AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=false,exportPhase="Completed",exportFiles=result.pulled,exportFound=result.found,exportSkipped=result.skipped,exportBytes=result.bytes,exportPath=finalPath,exportResult="SUCCESS",exportError="",message="Export completed")
+            check(result.pulled>0){"No files were pulled from $source"}
+            val pullDone=System.currentTimeMillis();val pullMs=pullDone-started;var finalPath=folderPath;var zipMs=0L;var deleted=0L;var deleteFailed=0L
+            if(compress){
+                AdbToolStore.state.value=AdbToolStore.state.value.copy(exportPhase="Compressing…",exportPullMs=pullMs,exportPullBytes=result.bytes,message="Preparing ZIP")
+                val zipStart=System.currentTimeMillis()
+                val zr=puller.compress(session,result,deleteAfterZip){msg->AdbToolStore.state.value=AdbToolStore.state.value.copy(exportPhase=if(msg.startsWith("Deleting"))"Cleaning source…" else "Compressing…",message=msg)}
+                zipMs=System.currentTimeMillis()-zipStart;finalPath=zr.path;deleted=zr.deleted.toLong();deleteFailed=zr.deleteFailed.toLong()
+            }
+            val totalMs=System.currentTimeMillis()-started
+            AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=false,exportPhase="Completed",exportFiles=result.pulled,exportFound=result.found,exportSkipped=result.skipped,exportBytes=result.bytes,exportPullBytes=result.bytes,exportPullMs=pullMs,exportZipMs=zipMs,exportTotalMs=totalMs,exportDeleted=deleted,exportDeleteFailed=deleteFailed,exportSymlinks=result.symlinks,exportListFailed=result.listFailed,exportPath=finalPath,exportResult=if(deleteFailed>0)"SUCCESS · CLEANUP PARTIAL" else "SUCCESS",exportError="",message="Export completed")
         }catch(e:CancellationException){AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=false,exportPhase="Cancelled",exportResult="CANCELLED",exportPath="")}catch(e:Throwable){AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=false,exportPhase="Failed",exportResult="FAILED",exportPath="",exportError=e.message?:e.javaClass.simpleName)}};"Export started"
     }.onFailure{e->AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=false,exportPhase="Failed",exportResult="FAILED",exportPath="",exportError=e.message?:e.javaClass.simpleName)} }
     fun cancelExport(){ exportJob?.cancel(); exportJob=null }
