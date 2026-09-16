@@ -4101,7 +4101,7 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
     Scaffold(topBar={TopAppBar(title={Text("Device Logs / ADB Tools")},navigationIcon={TextButton(onClick=onBack){Text("Back")}})},contentWindowInsets=WindowInsets(0,0,0,0)){pad->
         Column(Modifier.fillMaxSize().padding(pad).padding(16.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)){
             GlassSection("1 · Local ADB / DUT") {
-                Text("Open Wireless debugging and choose Pair device with pairing code. CellTracker will detect the temporary pairing service and show a pairing-code dialog.",style=MaterialTheme.typography.bodySmall)
+                Text("Open Wireless debugging and choose Pair device with pairing code. CellTracker detects the temporary pairing service. Keep the system pairing dialog open, pull down notifications, expand CellTracker, and enter the 6-digit code there.",style=MaterialTheme.typography.bodySmall)
                 Field("Status",adb.localStatus); Field("Identity",adb.localIdentity)
                 if(adb.localEndpoint.pairingPort>0) Field("Pairing service","${adb.localEndpoint.host}:${adb.localEndpoint.pairingPort}")
                 if(adb.localEndpoint.pairingPort>0 && adb.localStatus!="Connected"){

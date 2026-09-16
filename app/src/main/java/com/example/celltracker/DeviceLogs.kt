@@ -40,7 +40,7 @@ object CellTrackerAdbEngine {
             AdbToolStore.state.value=old.copy(localEndpoint=old.localEndpoint.copy(host=ep.host,pairingPort=ep.pairingPort), message="Pairing device found: ${ep.host}:${ep.pairingPort}")
             // Shizuku-style UX: as soon as Android exposes the temporary pairing service,
             // show a heads-up notification with inline RemoteInput while Settings stays open.
-            pairingNotification(context,"CellTracker · Pairing device found","${ep.host}:${ep.pairingPort} · Tap to enter the 6-digit code in CellTracker",true)
+            pairingNotification(context,"CellTracker · Pairing device found","${ep.host}:${ep.pairingPort} · Expand notification and enter the 6-digit pairing code",true)
         }
         discover(context,"_adb-tls-connect._tcp") { ep ->
             discoveredConnect=ep; val old=AdbToolStore.state.value
@@ -59,19 +59,25 @@ object CellTrackerAdbEngine {
             }) } }
         }) }
     }
-    private fun pairingNotification(context:Context, title:String, text:String, allowInput:Boolean) {
+    private fun pairingNotification(context:Context,title:String,text:String,allowInput:Boolean) {
         val nm=context.getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(NotificationChannel("adb_pair","ADB pairing",NotificationManager.IMPORTANCE_HIGH))
         val launch=context.packageManager.getLaunchIntentForPackage(context.packageName)
         val contentPi=launch?.let{PendingIntent.getActivity(context,8802,it,PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)}
-        val b=NotificationCompat.Builder(context,"adb_pair")
-            .setSmallIcon(android.R.drawable.stat_sys_upload)
-            .setContentTitle(title).setContentText(text)
-            .setAutoCancel(!allowInput).setOnlyAlertOnce(false)
-            .setCategory(NotificationCompat.CATEGORY_SERVICE).setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-        if(contentPi!=null) b.setContentIntent(contentPi)
-        nm.notify(8801,b.build())
+        val builder=NotificationCompat.Builder(context,"adb_pair")
+            .setSmallIcon(android.R.drawable.stat_sys_upload).setContentTitle(title).setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text)).setAutoCancel(!allowInput).setOngoing(allowInput)
+            .setOnlyAlertOnce(false).setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC).setPriority(NotificationCompat.PRIORITY_MAX)
+        if(contentPi!=null) builder.setContentIntent(contentPi)
+        if(allowInput){
+            val remoteInput=RemoteInput.Builder("pair_code").setLabel("6-digit pairing code").setAllowFreeFormInput(true).build()
+            val replyIntent=Intent(context,AdbPairCodeReceiver::class.java).apply{action="com.example.celltracker.ADB_PAIR_CODE"}
+            val replyPi=PendingIntent.getBroadcast(context,8803,replyIntent,PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
+            builder.addAction(NotificationCompat.Action.Builder(android.R.drawable.ic_menu_send,"ENTER PAIRING CODE",replyPi)
+                .addRemoteInput(remoteInput).setAllowGeneratedReplies(false).build())
+        }
+        nm.notify(8801,builder.build())
     }
 
     fun showPairingNotification(context:Context) {
