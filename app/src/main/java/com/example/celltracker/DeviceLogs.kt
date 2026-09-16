@@ -21,7 +21,7 @@ data class AdbUiState(
     val remoteEndpoint:AdbEndpoint=AdbEndpoint(), val remoteStatus:String="Not connected", val remoteIdentity:String="--",
     val logcatRunning:Boolean=false, val logcatBytes:Long=0, val logcatPath:String="",
     val exportRunning:Boolean=false, val exportPhase:String="", val exportBytes:Long=0, val exportTotalBytes:Long=0,
-    val exportFiles:Long=0, val exportStartedMs:Long=0, val exportPath:String="", val exportResult:String="", val exportError:String="",
+    val exportFiles:Long=0, val exportFound:Long=0, val exportSkipped:Long=0, val exportStartedMs:Long=0, val exportPath:String="", val exportResult:String="", val exportError:String="",
     val refLabel:String="vivo_REF",
     val message:String=""
 )
@@ -183,29 +183,17 @@ object CellTrackerAdbEngine {
         out.toString(Charsets.UTF_8.name()).substringBefore(marker).trimEnd()
     } }
 
-    suspend fun exportDebuglogger(context:Context,path:String="/data/debuglogger"):Result<String> = withContext(Dispatchers.IO){ runCatching {
+    suspend fun exportDebuglogger(context:Context,path:String="/data/debuglogger",logName:String="",compress:Boolean=false,deleteAfterZip:Boolean=false):Result<String> = withContext(Dispatchers.IO){ runCatching {
         check(exportJob?.isActive!=true){"An export is already running"}
-        val source=path.trim().ifBlank{"/data/debuglogger"}
-        val started=System.currentTimeMillis()
-        val stamp=SimpleDateFormat("yyyyMMdd_HHmmss",Locale.US).format(Date())
-        val session="debuglogger_$stamp"
-        val publicPath="Download/CellTracker/Logs/DUT/$session/"
-        AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=true,exportPhase="Starting ADB Sync pull…",exportBytes=0,exportFiles=0,exportStartedMs=started,exportPath="",exportResult="",exportError="",message="Opening sync: service")
-        exportJob=scope.launch{
-            try{
-                val result=AdbSyncPuller(context).pullTree(source,session){pr->
-                    AdbToolStore.state.value=AdbToolStore.state.value.copy(exportPhase="Pulling files…",exportBytes=pr.bytesDone,exportFiles=pr.filesDone,message="Pulling ${pr.current}")
-                }
-                check(result.first>0){"No files were pulled from $source"}
-                AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=false,exportPhase="Completed",exportFiles=result.first,exportBytes=result.second,exportPath=publicPath,exportResult="SUCCESS",exportError="",message="ADB Sync pull completed")
-            }catch(e:CancellationException){
-                AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=false,exportPhase="Cancelled",exportPath="",exportResult="CANCELLED",exportError="",message="Export cancelled")
-            }catch(e:Throwable){
-                AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=false,exportPhase="Failed",exportPath="",exportResult="FAILED",exportError=e.message?:e.javaClass.simpleName,message="ADB Sync pull failed")
-            }
-        }
-        "ADB Sync pull started"
-    }.onFailure{e->AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=false,exportPhase="Failed",exportPath="",exportResult="FAILED",exportError=e.message?:e.javaClass.simpleName,message="Export failed")} }
+        val source=path.trim().ifBlank{"/data/debuglogger"};val started=System.currentTimeMillis();val stamp=SimpleDateFormat("yyyyMMdd_HHmmss",Locale.US).format(Date())
+        val safe=logName.trim().replace(Regex("[^A-Za-z0-9._-]+"),"_").trim('_').ifBlank{"DUT_debuglogger"};val session="${safe}_$stamp";val folderPath="Download/CellTracker/Logs/DUT/$session/"
+        AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=true,exportPhase="Starting ADB Sync pull…",exportBytes=0,exportFiles=0,exportFound=0,exportSkipped=0,exportStartedMs=started,exportPath="",exportResult="",exportError="")
+        exportJob=scope.launch{try{val puller=AdbSyncPuller(context);val result=puller.pullTree(source,session){pr->AdbToolStore.state.value=AdbToolStore.state.value.copy(exportPhase=pr.phase,exportBytes=pr.bytesDone,exportFiles=pr.filesDone,exportFound=pr.found,exportSkipped=pr.skipped,message="Pulling ${pr.current}")}
+            check(result.pulled>0){"No files were pulled from $source"};var finalPath=folderPath
+            if(compress){AdbToolStore.state.value=AdbToolStore.state.value.copy(exportPhase="Compressing…",message="Preparing ZIP");finalPath=puller.compress(session,result,deleteAfterZip){msg->AdbToolStore.state.value=AdbToolStore.state.value.copy(exportPhase="Compressing…",message=msg)}}
+            AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=false,exportPhase="Completed",exportFiles=result.pulled,exportFound=result.found,exportSkipped=result.skipped,exportBytes=result.bytes,exportPath=finalPath,exportResult="SUCCESS",exportError="",message="Export completed")
+        }catch(e:CancellationException){AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=false,exportPhase="Cancelled",exportResult="CANCELLED",exportPath="")}catch(e:Throwable){AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=false,exportPhase="Failed",exportResult="FAILED",exportPath="",exportError=e.message?:e.javaClass.simpleName)}};"Export started"
+    }.onFailure{e->AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=false,exportPhase="Failed",exportResult="FAILED",exportPath="",exportError=e.message?:e.javaClass.simpleName)} }
     fun cancelExport(){ exportJob?.cancel(); exportJob=null }
 
     fun startLogcat(context:Context,command:String="logcat -v threadtime",refLabel:String="vivo_REF") {

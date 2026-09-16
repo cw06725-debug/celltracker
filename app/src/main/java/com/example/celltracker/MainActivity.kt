@@ -4084,6 +4084,9 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
     val adb by AdbToolStore.state.collectAsStateWithLifecycle()
     var dutPath by rememberSaveable { mutableStateOf("/data/debuglogger") }
+    var dutLogName by rememberSaveable { mutableStateOf("") }
+    var compressDutLog by rememberSaveable { mutableStateOf(false) }
+    var deleteAfterZip by rememberSaveable { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var remoteHost by rememberSaveable { mutableStateOf("") }
     var remotePairPort by rememberSaveable { mutableStateOf("") }
@@ -4114,10 +4117,15 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
                     OutlinedButton(onClick={scope.launch{busy=true;val r=CellTrackerAdbEngine.connectLocal(context);AdbToolStore.state.value=AdbToolStore.state.value.copy(message=r.fold({"Connected: $it"},{"Connect failed: ${it.message}"}));busy=false}}){Text("RECONNECT")}
                 }
                 OutlinedTextField(dutPath,{dutPath=it},label={Text("DUT log path")},singleLine=true,modifier=Modifier.fillMaxWidth())
-                Button(enabled=!busy && !adb.exportRunning && adb.localStatus=="Connected",onClick={scope.launch{busy=true;CellTrackerAdbEngine.exportDebuglogger(context,dutPath);busy=false}},modifier=Modifier.fillMaxWidth()){Text(if(adb.exportRunning)"EXPORTING…" else "EXPORT DUT DEBUGLOGGER")}
+                OutlinedTextField(dutLogName,{dutLogName=it},label={Text("Log name / remark")},supportingText={Text("Example: B1_Zong_5G · timestamp is added automatically")},singleLine=true,modifier=Modifier.fillMaxWidth())
+                Row(verticalAlignment=Alignment.CenterVertically){Checkbox(compressDutLog,{compressDutLog=it});Text("Compress to ZIP after export")}
+                if(compressDutLog) Row(verticalAlignment=Alignment.CenterVertically){Checkbox(deleteAfterZip,{deleteAfterZip=it});Text("Delete source files after ZIP succeeds")}
+                Button(enabled=!busy && !adb.exportRunning && adb.localStatus=="Connected",onClick={scope.launch{busy=true;CellTrackerAdbEngine.exportDebuglogger(context,dutPath,dutLogName,compressDutLog,deleteAfterZip);busy=false}},modifier=Modifier.fillMaxWidth()){Text(if(adb.exportRunning)"EXPORTING…" else "EXPORT DUT DEBUGLOGGER")}
                 if(adb.exportPhase.isNotBlank()){
                     Field("Export status",adb.exportPhase)
-                    if(adb.exportFiles>0) Field("Files pulled","${adb.exportFiles}")
+                    if(adb.exportFound>0) Field("Found","${adb.exportFound}")
+                    if(adb.exportFiles>0) Field("Pulled","${adb.exportFiles}")
+                    Field("Skipped","${adb.exportSkipped}")
                     if(adb.exportRunning && adb.message.startsWith("Pulling ")) Field("Current",adb.message.removePrefix("Pulling "))
                     if(adb.exportRunning) LinearProgressIndicator(modifier=Modifier.fillMaxWidth())
                     if(adb.exportBytes>0){
