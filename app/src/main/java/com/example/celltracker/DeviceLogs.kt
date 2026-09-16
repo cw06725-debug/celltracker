@@ -109,54 +109,130 @@ object CellTrackerAdbEngine {
         return null
     }
 
-    suspend fun pairLocal(context:Context,code:String):Result<String> = withContext(Dispatchers.IO) { runCatching {
-        require(code.trim().matches(Regex("\\d{6}"))){"Pairing code must be 6 digits"}
-        pairingNotification(context,"CellTracker ADB pairing","Code received · discovering pairing service…",false)
-        val ep=waitForPairEndpoint(context)
-        AdbToolStore.state.value=AdbToolStore.state.value.copy(message="Pairing ${ep.host}:${ep.pairingPort}…")
-        pairingNotification(context,"CellTracker ADB pairing","Pairing with ${ep.host}:${ep.pairingPort}…",false)
-
+    private suspend fun discoverAndConnectLocal(context:Context, timeoutMs:Long=15_000):String {
         val mgr=CellTrackerAdbConnectionManager.getInstance(context)
-        val paired=withTimeout(15_000){ mgr.pair(ep.host,ep.pairingPort,code.trim()) }
-        check(paired){"ADB pairing rejected"}
-
-        pairingNotification(context,"CellTracker ADB paired","Pairing succeeded · discovering ADB connection…",false)
-        AdbToolStore.state.value=AdbToolStore.state.value.copy(message="Paired · discovering ADB connection…")
         discoveredConnect=null
-        startDiscovery(context)
-        val connectEp=waitForConnectEndpoint(10_000)
-        val ok=withTimeout(12_000){
-            if(connectEp!=null) mgr.connect(connectEp.host,connectEp.connectPort)
-            else mgr.connectTls(context,8_000)
-        }
-        check(ok){"Paired, but ADB TLS connection failed"}
-
-        val id=withTimeout(8_000){ command(context,"id").getOrThrow().trim() }
-        check(id.contains("uid=2000")){"Connected, but identity is not shell: $id"}
-        AdbToolStore.state.value=AdbToolStore.state.value.copy(
-            localStatus="Connected", localIdentity=id, message="Local ADB ready"
+        val old=AdbToolStore.state.value
+        AdbToolStore.state.value=old.copy(
+            localEndpoint=old.localEndpoint.copy(connectPort=0),
+            message="Discovering current ADB TLS service…"
         )
-        pairingNotification(context,"CellTracker Local ADB connected","Connected as uid=2000(shell)",false)
-        delay(1800)
-        context.getSystemService(NotificationManager::class.java).cancel(8801)
-        "Connected as shell"
-    }.onFailure { e ->
-        val msg=when(e){
-            is TimeoutCancellationException -> "Pairing timed out. Reopen the pairing-code dialog and retry."
-            else -> e.message ?: e.javaClass.simpleName
-        }
-        AdbToolStore.state.value=AdbToolStore.state.value.copy(localStatus="Not connected",message="Pair failed: $msg")
-        pairingNotification(context,"CellTracker ADB pairing failed",msg,false)
-    } }
+        startDiscovery(context)
 
-    suspend fun connectLocal(context:Context):Result<String> = withContext(Dispatchers.IO){ runCatching {
-        val mgr=CellTrackerAdbConnectionManager.getInstance(context)
-        val ep=discoveredConnect
-        val ok= if(ep!=null && ep.connectPort>0) mgr.connect(ep.host,ep.connectPort) else mgr.connectTls(context,5000)
-        check(ok){"ADB TLS connection failed"}; val id=command(context,"id").getOrThrow().trim(); check(id.contains("uid=2000")){"Connected, but shell identity is not uid=2000: $id"}
-        AdbToolStore.state.value=AdbToolStore.state.value.copy(localStatus="Connected",localIdentity=id,message="Local ADB ready")
-        id
-    } }
+        val deadline=System.currentTimeMillis()+timeoutMs
+        var lastError="ADB TLS service not discovered"
+        while(System.currentTimeMillis()<deadline){
+            val ep=discoveredConnect
+            if(ep!=null && ep.connectPort>0){
+                AdbToolStore.state.value=AdbToolStore.state.value.copy(
+                    message="Connecting ${ep.host}:${ep.connectPort}…"
+                )
+                val connected=runCatching{
+                    withTimeout(5_000){mgr.connect(ep.host,ep.connectPort)}
+                }.getOrElse{
+                    lastError=it.message ?: it.javaClass.simpleName
+                    false
+                }
+                if(connected){
+                    val id=runCatching{
+                        withTimeout(5_000){command(context,"id",5_000).getOrThrow().trim()}
+                    }.getOrElse{
+                        lastError=it.message ?: it.javaClass.simpleName
+                        ""
+                    }
+                    if(id.contains("uid=2000")) return id
+                    if(id.isNotBlank()) lastError="Identity is not shell: $id"
+                } else {
+                    lastError="Connect failed at ${ep.host}:${ep.connectPort}: $lastError"
+                }
+                // HiOS may rotate the connect service/port after pairing.
+                discoveredConnect=null
+                startDiscovery(context)
+            }
+            delay(250)
+        }
+        // Keep the existing manager fallback for ROMs where mDNS connect discovery is unavailable.
+        val fallback=runCatching{withTimeout(5_000){mgr.connectTls(context,5_000)}}.getOrDefault(false)
+        if(fallback){
+            val id=command(context,"id",5_000).getOrThrow().trim()
+            if(id.contains("uid=2000")) return id
+        }
+        error(lastError)
+    }
+
+    suspend fun pairLocal(context:Context,code:String):Result<String> = withContext(Dispatchers.IO) {
+        runCatching {
+            require(code.trim().matches(Regex("\\d{6}"))){"Pairing code must be 6 digits"}
+            pairingNotification(context,"CellTracker ADB pairing","Code received · discovering pairing service…",false)
+            val ep=waitForPairEndpoint(context)
+            val mgr=CellTrackerAdbConnectionManager.getInstance(context)
+            AdbToolStore.state.value=AdbToolStore.state.value.copy(message="Pairing ${ep.host}:${ep.pairingPort}…")
+            pairingNotification(context,"CellTracker ADB pairing","Pairing with ${ep.host}:${ep.pairingPort}…",false)
+
+            var pairWarning:String?=null
+            val paired=try{
+                withTimeout(15_000){mgr.pair(ep.host,ep.pairingPort,code.trim())}
+            }catch(e:Throwable){
+                // HiOS can accept the host key and then close the pairing socket with IOException.
+                pairWarning=e.message ?: e.javaClass.simpleName
+                false
+            }
+
+            if(paired){
+                pairingNotification(context,"CellTracker ADB paired","Pairing accepted · discovering ADB TLS service…",false)
+                AdbToolStore.state.value=AdbToolStore.state.value.copy(message="Paired · discovering ADB connection…")
+            }else{
+                val note=pairWarning ?: "Pairing response was not confirmed"
+                pairingNotification(context,"CellTracker ADB pairing","$note · checking whether the key was accepted…",false)
+                AdbToolStore.state.value=AdbToolStore.state.value.copy(
+                    localStatus="Verifying pairing",
+                    message="$note · discovering ADB TLS service…"
+                )
+            }
+
+            // Final truth is a working shell, not the pairing socket's final response.
+            val id=discoverAndConnectLocal(context,18_000)
+            AdbToolStore.state.value=AdbToolStore.state.value.copy(
+                localStatus="Connected",localIdentity=id,message="Local ADB ready"
+            )
+            pairingNotification(
+                context,
+                "CellTracker Local ADB connected",
+                if(pairWarning!=null)"Pairing accepted by device · connected as uid=2000(shell)"
+                else "Connected as uid=2000(shell)",
+                false
+            )
+            delay(1800)
+            context.getSystemService(NotificationManager::class.java).cancel(8801)
+            "Connected as shell"
+        }.onFailure { e ->
+            val msg=when(e){
+                is TimeoutCancellationException -> "Pair/connect timed out. Reopen Wireless debugging and retry."
+                else -> e.message ?: e.javaClass.simpleName
+            }
+            AdbToolStore.state.value=AdbToolStore.state.value.copy(
+                localStatus="Not connected",message="Pair/connect failed: $msg"
+            )
+            pairingNotification(context,"CellTracker ADB connection failed",msg,false)
+        }
+    }
+
+    suspend fun connectLocal(context:Context):Result<String> = withContext(Dispatchers.IO){
+        runCatching {
+            // Never trust the previous port: Wireless debugging ports can rotate after pairing,
+            // especially on HiOS. Rediscover the current _adb-tls-connect._tcp endpoint.
+            val id=discoverAndConnectLocal(context,15_000)
+            AdbToolStore.state.value=AdbToolStore.state.value.copy(
+                localStatus="Connected",localIdentity=id,message="Local ADB ready"
+            )
+            id
+        }.onFailure { e ->
+            AdbToolStore.state.value=AdbToolStore.state.value.copy(
+                localStatus="Not connected",
+                message="Reconnect failed: ${e.message ?: e.javaClass.simpleName}"
+            )
+        }
+    }
     suspend fun connectRemote(context:Context,host:String,port:Int):Result<String> = withContext(Dispatchers.IO){ runCatching {
         val mgr=CellTrackerAdbConnectionManager.getInstance(context); check(mgr.connect(host,port)){"Remote ADB connection failed"}; val id=command(context,"id").getOrThrow().trim()
         AdbToolStore.state.value=AdbToolStore.state.value.copy(remoteEndpoint=AdbEndpoint(host,0,port),remoteStatus="Connected",remoteIdentity=id,message="REF connected")
