@@ -4097,21 +4097,6 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
     var refType by rememberSaveable { mutableStateOf("vivo") }
     var customRefName by rememberSaveable { mutableStateOf("") }
     val refLabel = when(refType){"Samsung"->"Samsung_REF";"vivo"->"vivo_REF";else->customRefName.trim().ifBlank{"Custom_REF"}}
-    if(adb.localEndpoint.pairingPort>0 && adb.localStatus!="Connected" && pairDialogDismissedPort!=adb.localEndpoint.pairingPort){
-        AlertDialog(
-            onDismissRequest={pairDialogDismissedPort=adb.localEndpoint.pairingPort},
-            title={Text("ADB pairing device found")},
-            text={Column(verticalArrangement=Arrangement.spacedBy(8.dp)){
-                Text("${adb.localEndpoint.host}:${adb.localEndpoint.pairingPort}")
-                OutlinedTextField(localPairCode,{localPairCode=it.filter(Char::isDigit).take(6)},label={Text("6-digit pairing code")},singleLine=true)
-            }},
-            confirmButton={TextButton(enabled=localPairCode.length==6,onClick={
-                val code=localPairCode; pairDialogDismissedPort=adb.localEndpoint.pairingPort
-                scope.launch{busy=true;CellTrackerAdbEngine.pairLocal(context,code);busy=false}
-            }){Text("PAIR")}},
-            dismissButton={TextButton(onClick={pairDialogDismissedPort=adb.localEndpoint.pairingPort}){Text("CANCEL")}}
-        )
-    }
     LaunchedEffect(Unit) { CellTrackerAdbEngine.startDiscovery(context) }
     Scaffold(topBar={TopAppBar(title={Text("Device Logs / ADB Tools")},navigationIcon={TextButton(onClick=onBack){Text("Back")}})},contentWindowInsets=WindowInsets(0,0,0,0)){pad->
         Column(Modifier.fillMaxSize().padding(pad).padding(16.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)){
@@ -4119,6 +4104,10 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
                 Text("Open Wireless debugging and choose Pair device with pairing code. CellTracker will detect the temporary pairing service and show a pairing-code dialog.",style=MaterialTheme.typography.bodySmall)
                 Field("Status",adb.localStatus); Field("Identity",adb.localIdentity)
                 if(adb.localEndpoint.pairingPort>0) Field("Pairing service","${adb.localEndpoint.host}:${adb.localEndpoint.pairingPort}")
+                if(adb.localEndpoint.pairingPort>0 && adb.localStatus!="Connected"){
+                    OutlinedTextField(localPairCode,{localPairCode=it.filter(Char::isDigit).take(6)},label={Text("6-digit pairing code")},supportingText={Text("Pairing device found · enter the code shown by Wireless debugging")},singleLine=true,modifier=Modifier.fillMaxWidth())
+                    Button(enabled=localPairCode.length==6 && !busy,onClick={val code=localPairCode;scope.launch{busy=true;CellTrackerAdbEngine.pairLocal(context,code);busy=false}},modifier=Modifier.fillMaxWidth()){Text("PAIR DISCOVERED DEVICE")}
+                }
                 if(adb.localEndpoint.connectPort>0) Field("ADB TLS service","${adb.localEndpoint.host}:${adb.localEndpoint.connectPort}")
                 Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
                     Button(onClick={ CellTrackerAdbEngine.showPairingNotification(context); runCatching{context.startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS))} }){Text("PAIR LOCAL ADB")}
@@ -4128,7 +4117,8 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
                 Button(enabled=!busy && !adb.exportRunning && adb.localStatus=="Connected",onClick={scope.launch{busy=true;CellTrackerAdbEngine.exportDebuglogger(context,dutPath);busy=false}},modifier=Modifier.fillMaxWidth()){Text(if(adb.exportRunning)"EXPORTING…" else "EXPORT DUT DEBUGLOGGER")}
                 if(adb.exportPhase.isNotBlank()){
                     Field("Export status",adb.exportPhase)
-                    if(adb.exportFiles>0) Field("Files","${adb.exportFiles}")
+                    if(adb.exportFiles>0) Field("Files pulled","${adb.exportFiles}")
+                    if(adb.exportRunning && adb.message.startsWith("Pulling ")) Field("Current",adb.message.removePrefix("Pulling "))
                     if(adb.exportRunning) LinearProgressIndicator(modifier=Modifier.fillMaxWidth())
                     if(adb.exportBytes>0){
                         val seconds=((System.currentTimeMillis()-adb.exportStartedMs)/1000.0).coerceAtLeast(0.1)

@@ -180,56 +180,26 @@ object CellTrackerAdbEngine {
     suspend fun exportDebuglogger(context:Context,path:String="/data/debuglogger"):Result<String> = withContext(Dispatchers.IO){ runCatching {
         check(exportJob?.isActive!=true){"An export is already running"}
         val source=path.trim().ifBlank{"/data/debuglogger"}
-        val q=source.replace("'","'\\''")
-        val access=command(context,"if [ -r '$q' ]; then echo READABLE; elif [ ! -e '$q' ]; then echo NOT_FOUND; else echo DENIED; fi",5_000).getOrThrow()
-        check(access.contains("READABLE")){when{access.contains("NOT_FOUND")->"Source does not exist: $source";access.contains("DENIED")->"Permission denied: shell cannot read $source";else->"Source check failed: $access"}}
-
         val started=System.currentTimeMillis()
         val stamp=SimpleDateFormat("yyyyMMdd_HHmmss",Locale.US).format(Date())
-        val name="DUT_debuglogger_$stamp.tar"
-        val publicPath="Download/CellTracker/Logs/DUT/$name"
-        AdbToolStore.state.value=AdbToolStore.state.value.copy(
-            exportRunning=true,exportPhase="Starting transfer…",exportBytes=0,exportTotalBytes=0,exportFiles=0,
-            exportStartedMs=started,exportPath=publicPath,exportResult="",exportError="",message="Starting DUT log export"
-        )
-        exportJob=scope.launch {
-            val values=android.content.ContentValues().apply{
-                put(MediaStore.Downloads.DISPLAY_NAME,name);put(MediaStore.Downloads.MIME_TYPE,"application/x-tar")
-                put(MediaStore.Downloads.RELATIVE_PATH,"${Environment.DIRECTORY_DOWNLOADS}/CellTracker/Logs/DUT");put(MediaStore.Downloads.IS_PENDING,1)
-            }
-            val resolver=context.contentResolver
-            var uri:android.net.Uri?=null
+        val session="debuglogger_$stamp"
+        val publicPath="Download/CellTracker/Logs/DUT/$session/"
+        AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=true,exportPhase="Starting ADB Sync pull…",exportBytes=0,exportFiles=0,exportStartedMs=started,exportPath="",exportResult="",exportError="",message="Opening sync: service")
+        exportJob=scope.launch{
             try{
-                uri=resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI,values)?:error("Cannot create $publicPath")
-                var written=0L
-                val stream=CellTrackerAdbConnectionManager.getInstance(context).openStream("shell:toybox tar -cf - '$q'")
-                resolver.openOutputStream(uri,"w")!!.use{out->
-                    stream.openInputStream().use{input->
-                        val b=ByteArray(64*1024)
-                        while(isActive){
-                            val n=input.read(b); if(n<0)break
-                            if(n>0){out.write(b,0,n);written+=n
-                                AdbToolStore.state.value=AdbToolStore.state.value.copy(exportPhase="Exporting…",exportBytes=written)
-                            }
-                        }
-                        out.flush()
-                    }
+                val result=AdbSyncPuller(context).pullTree(source,session){pr->
+                    AdbToolStore.state.value=AdbToolStore.state.value.copy(exportPhase="Pulling files…",exportBytes=pr.bytesDone,exportFiles=pr.filesDone,message="Pulling ${pr.current}")
                 }
-                check(written>=1024){"ADB transfer returned only $written bytes; debuglogger was not transferred"}
-                values.clear();values.put(MediaStore.Downloads.IS_PENDING,0);resolver.update(uri,values,null,null)
-                AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=false,exportPhase="Completed",exportResult="SUCCESS",exportError="",message="Export successful: $publicPath")
+                check(result.first>0){"No files were pulled from $source"}
+                AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=false,exportPhase="Completed",exportFiles=result.first,exportBytes=result.second,exportPath=publicPath,exportResult="SUCCESS",exportError="",message="ADB Sync pull completed")
             }catch(e:CancellationException){
-                uri?.let{resolver.delete(it,null,null)}
-                AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=false,exportPhase="Cancelled",exportResult="CANCELLED",exportError="",message="Export cancelled")
+                AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=false,exportPhase="Cancelled",exportPath="",exportResult="CANCELLED",exportError="",message="Export cancelled")
             }catch(e:Throwable){
-                uri?.let{resolver.delete(it,null,null)}
-                AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=false,exportPhase="Failed",exportResult="FAILED",exportError=e.message?:e.javaClass.simpleName,message="Export failed: ${e.message}")
+                AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=false,exportPhase="Failed",exportPath="",exportResult="FAILED",exportError=e.message?:e.javaClass.simpleName,message="ADB Sync pull failed")
             }
         }
-        "Export started"
-    }.onFailure{e->
-        AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=false,exportPhase="Failed",exportResult="FAILED",exportError=e.message?:e.javaClass.simpleName,message="Export failed: ${e.message}")
-    } }
+        "ADB Sync pull started"
+    }.onFailure{e->AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=false,exportPhase="Failed",exportPath="",exportResult="FAILED",exportError=e.message?:e.javaClass.simpleName,message="Export failed")} }
     fun cancelExport(){ exportJob?.cancel(); exportJob=null }
 
     fun startLogcat(context:Context,command:String="logcat -v threadtime",refLabel:String="vivo_REF") {
