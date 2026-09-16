@@ -802,3 +802,13 @@ Build note: local assembleDebug could not run because this environment cannot re
 - Added phone-side ZIP export to `Download/CellTracker/Logs/DUT` when the source is genuinely readable.
 - Added Local ADB and Samsung REF sections as explicit connection states; no guessed/fake ADB success is shown.
 - Added shortcut to Developer options for Local ADB preparation.
+
+## v0.9.3.0.58
+- Device Logs: added real ADB host backend using Android Wireless Debugging pairing/TLS.
+- Added Shizuku-style notification pairing-code input and mDNS discovery for local ADB pairing/connect services.
+- Local ADB validates uid=2000(shell) before privileged DUT operations.
+- DUT `/data/debuglogger` export now streams through authenticated ADB shell into a `.tar.gz` under CellTracker logs.
+- Added Samsung/vivo REF wireless pairing/connect controls.
+- Added continuous REF AP logcat capture and custom logcat command.
+- Added arbitrary ADB shell command console plus radio/getprop/telephony presets.
+- Added explicit no-Wi-Fi/legacy TCP experiment guidance; USB-OTG transport is not falsely reported as implemented until hardware validation.

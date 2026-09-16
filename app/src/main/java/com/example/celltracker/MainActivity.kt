@@ -47,6 +47,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -4081,36 +4082,69 @@ private fun VideoLoadingMap(
 private fun DeviceLogsScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var source by rememberSaveable { mutableStateOf(DeviceLogManager.DEFAULT_DUT_PATH) }
-    var check by remember { mutableStateOf(DeviceLogCheck()) }
+    val adb by AdbToolStore.state.collectAsStateWithLifecycle()
+    var dutPath by rememberSaveable { mutableStateOf("/data/debuglogger") }
     var busy by remember { mutableStateOf(false) }
-    var message by remember { mutableStateOf("") }
-    Scaffold(
-        topBar = { TopAppBar(title = { Text("Device Logs / ADB Tools") }, navigationIcon = { TextButton(onClick = onBack) { Text("Back") } }) },
-        contentWindowInsets = WindowInsets(0,0,0,0)
-    ) { pad ->
-        Column(Modifier.fillMaxSize().padding(pad).padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            GlassSection("DUT Log") {
-                Text("Runs entirely on the phone. No PC or Termux is required for the module.", style = MaterialTheme.typography.bodySmall)
-                OutlinedTextField(value = source, onValueChange = { source = it }, label = { Text("Source path") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                Field("App shell identity", check.shellUid)
-                Field("Access", if (check.readable) "Accessible" else check.detail)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(enabled = !busy, onClick = { scope.launch { busy=true; check=DeviceLogManager.check(source); message=if(check.readable) "Source is readable by CellTracker." else "Direct app access is blocked. Local ADB shell backend is required."; busy=false } }) { Text("CHECK ACCESS") }
-                    Button(enabled = !busy && check.readable, onClick = { scope.launch { busy=true; val r=DeviceLogManager.export(context,source); message=r.fold({"Exported: $it"},{"Export failed: ${it.message}"}); busy=false } }) { Text("EXPORT") }
+    var remoteHost by rememberSaveable { mutableStateOf("") }
+    var remotePairPort by rememberSaveable { mutableStateOf("") }
+    var remoteConnectPort by rememberSaveable { mutableStateOf("") }
+    var remoteCode by rememberSaveable { mutableStateOf("") }
+    var shellCommand by rememberSaveable { mutableStateOf("dumpsys telephony.registry") }
+    var shellOutput by remember { mutableStateOf("") }
+    var logcatCommand by rememberSaveable { mutableStateOf("logcat -v threadtime") }
+    LaunchedEffect(Unit) { CellTrackerAdbEngine.startDiscovery(context) }
+    Scaffold(topBar={TopAppBar(title={Text("Device Logs / ADB Tools")},navigationIcon={TextButton(onClick=onBack){Text("Back")}})},contentWindowInsets=WindowInsets(0,0,0,0)){pad->
+        Column(Modifier.fillMaxSize().padding(pad).padding(16.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)){
+            GlassSection("1 · Local ADB / DUT") {
+                Text("Shizuku-style flow: open Wireless debugging, choose Pair device with pairing code, then enter the 6-digit code directly from the CellTracker notification.",style=MaterialTheme.typography.bodySmall)
+                Field("Status",adb.localStatus); Field("Identity",adb.localIdentity)
+                if(adb.localEndpoint.pairingPort>0) Field("Pairing service","${adb.localEndpoint.host}:${adb.localEndpoint.pairingPort}")
+                if(adb.localEndpoint.connectPort>0) Field("ADB TLS service","${adb.localEndpoint.host}:${adb.localEndpoint.connectPort}")
+                Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                    Button(onClick={ CellTrackerAdbEngine.showPairingNotification(context); runCatching{context.startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS))} }){Text("PAIR LOCAL ADB")}
+                    OutlinedButton(onClick={scope.launch{busy=true;val r=CellTrackerAdbEngine.connectLocal(context);AdbToolStore.state.value=AdbToolStore.state.value.copy(message=r.fold({"Connected: $it"},{"Connect failed: ${it.message}"}));busy=false}}){Text("RECONNECT")}
                 }
-                if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-                if (message.isNotBlank()) Text(message, style = MaterialTheme.typography.bodySmall)
+                OutlinedTextField(dutPath,{dutPath=it},label={Text("DUT log path")},singleLine=true,modifier=Modifier.fillMaxWidth())
+                Button(enabled=!busy && adb.localStatus=="Connected",onClick={scope.launch{busy=true;val r=CellTrackerAdbEngine.exportDebuglogger(context,dutPath);AdbToolStore.state.value=AdbToolStore.state.value.copy(message=r.fold({"Exported: $it"},{"Export failed: ${it.message}"}));busy=false}},modifier=Modifier.fillMaxWidth()){Text("EXPORT DUT DEBUGLOGGER")}
             }
-            GlassSection("Local ADB") {
-                Text("Local ADB shell is the next permission backend for paths that the normal app UID cannot read. This page intentionally does not report ADB connected until an authenticated shell session exists.", style = MaterialTheme.typography.bodySmall)
-                Field("Status", "Not connected")
-                Button(onClick = { runCatching { context.startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }.onFailure { Toast.makeText(context,"Developer options unavailable",Toast.LENGTH_SHORT).show() } }, modifier = Modifier.fillMaxWidth()) { Text("OPEN DEVELOPER OPTIONS") }
+            GlassSection("2 · Samsung / vivo REF Wireless ADB") {
+                Text("Pair any REF through Android Wireless debugging. Pairing and connection ports are different; enter the values shown by the REF.",style=MaterialTheme.typography.bodySmall)
+                OutlinedTextField(remoteHost,{remoteHost=it},label={Text("REF IP")},singleLine=true,modifier=Modifier.fillMaxWidth())
+                Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                    OutlinedTextField(remotePairPort,{remotePairPort=it.filter(Char::isDigit)},label={Text("Pair port")},singleLine=true,modifier=Modifier.weight(1f))
+                    OutlinedTextField(remoteCode,{remoteCode=it.filter(Char::isDigit).take(6)},label={Text("6-digit code")},singleLine=true,modifier=Modifier.weight(1f))
+                }
+                Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                    Button(onClick={scope.launch{busy=true;val r=CellTrackerAdbEngine.pairRemote(context,remoteHost,remotePairPort.toIntOrNull()?:0,remoteCode);AdbToolStore.state.value=AdbToolStore.state.value.copy(message=r.fold({it},{"REF pair failed: ${it.message}"}));busy=false}}){Text("PAIR REF")}
+                    OutlinedTextField(remoteConnectPort,{remoteConnectPort=it.filter(Char::isDigit)},label={Text("Connect port")},singleLine=true,modifier=Modifier.weight(1f))
+                    Button(onClick={scope.launch{busy=true;val r=CellTrackerAdbEngine.connectRemote(context,remoteHost,remoteConnectPort.toIntOrNull()?:0);AdbToolStore.state.value=AdbToolStore.state.value.copy(message=r.fold({"REF connected: $it"},{"REF connect failed: ${it.message}"}));busy=false}}){Text("CONNECT")}
+                }
+                Field("REF ADB",adb.remoteStatus); Field("REF identity",adb.remoteIdentity)
             }
-            GlassSection("Samsung REF") {
-                Field("ADB", "Not connected")
-                Text("Remote Samsung logcat will use the same ADB engine after Local ADB authentication is completed.", style = MaterialTheme.typography.bodySmall)
+            GlassSection("3 · REF AP Log") {
+                OutlinedTextField(logcatCommand,{logcatCommand=it},label={Text("Logcat command")},modifier=Modifier.fillMaxWidth())
+                Field("Status",if(adb.logcatRunning)"RECORDING" else "Stopped"); Field("Size",String.format(java.util.Locale.US,"%.1f MB",adb.logcatBytes/1048576.0)); if(adb.logcatPath.isNotBlank())Field("File",adb.logcatPath)
+                Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                    Button(enabled=!adb.logcatRunning,onClick={CellTrackerAdbEngine.startLogcat(context,logcatCommand)}){Text("START AP LOG")}
+                    OutlinedButton(enabled=adb.logcatRunning,onClick={CellTrackerAdbEngine.stopLogcat()}){Text("STOP")}
+                }
+                Text("Presets: AP = logcat -v threadtime · Radio = logcat -b radio -v threadtime",style=MaterialTheme.typography.bodySmall)
             }
+            GlassSection("4 · ADB Shell / Custom Command") {
+                OutlinedTextField(shellCommand,{shellCommand=it},label={Text("Command (without 'adb shell')")},modifier=Modifier.fillMaxWidth())
+                Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                    AssistChip(onClick={shellCommand="logcat -b radio -d -v threadtime"},label={Text("Radio")}); AssistChip(onClick={shellCommand="getprop"},label={Text("Getprop")}); AssistChip(onClick={shellCommand="dumpsys telephony.registry"},label={Text("Telephony")})
+                }
+                Button(onClick={scope.launch{busy=true;val r=CellTrackerAdbEngine.command(context,shellCommand);shellOutput=r.fold({it},{"ERROR: ${it.message}"});busy=false}},modifier=Modifier.fillMaxWidth()){Text("RUN COMMAND")}
+                if(shellOutput.isNotBlank()) SelectionContainer{Text(shellOutput.take(12000),style=MaterialTheme.typography.bodySmall)}
+            }
+            GlassSection("5 · No-Wi-Fi options") {
+                Text("Wireless debugging normally requires Wi-Fi. After Local ADB connects, you can experimentally run 'tcpip 5555' from Custom Command and then test localhost:5555. Support depends on the OEM ROM. REF devices can later use USB-OTG ADB Host when Wi-Fi is unavailable.",style=MaterialTheme.typography.bodySmall)
+                Text("This build does not fake USB support: USB-OTG transport is marked as the next transport until it is validated on your DUT/REF hardware.",style=MaterialTheme.typography.bodySmall)
+            }
+            if(busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+            if(adb.message.isNotBlank()) Text(adb.message,style=MaterialTheme.typography.bodySmall)
         }
     }
 }
+

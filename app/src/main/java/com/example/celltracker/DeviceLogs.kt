@@ -1,77 +1,113 @@
 package com.example.celltracker
 
-import android.content.ContentValues
-import android.content.Context
+import android.app.*
+import android.content.*
+import android.net.nsd.NsdManager
+import android.net.nsd.NsdServiceInfo
 import android.os.Environment
 import android.provider.MediaStore
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import java.io.BufferedReader
-import java.io.File
-import java.io.InputStreamReader
+import androidx.core.app.NotificationCompat
+import androidx.core.app.RemoteInput
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.MutableStateFlow
+import java.io.*
 import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
-import java.util.zip.ZipEntry
-import java.util.zip.ZipOutputStream
+import java.util.*
 
-data class DeviceLogCheck(
-    val source: String = "/data/debuglogger",
-    val readable: Boolean = false,
-    val detail: String = "Not checked",
-    val shellUid: String = "--"
+/** Device Logs / ADB Tools. All privileged operations go through an authenticated adbd session. */
+data class AdbEndpoint(val host:String="", val pairingPort:Int=0, val connectPort:Int=0)
+data class AdbUiState(
+    val localEndpoint:AdbEndpoint=AdbEndpoint(), val localStatus:String="Not connected", val localIdentity:String="--",
+    val remoteEndpoint:AdbEndpoint=AdbEndpoint(), val remoteStatus:String="Not connected", val remoteIdentity:String="--",
+    val logcatRunning:Boolean=false, val logcatBytes:Long=0, val logcatPath:String="", val message:String=""
 )
+object AdbToolStore { val state=MutableStateFlow(AdbUiState()) }
 
-object DeviceLogManager {
-    const val DEFAULT_DUT_PATH = "/data/debuglogger"
+object CellTrackerAdbEngine {
+    private val scope=CoroutineScope(SupervisorJob()+Dispatchers.IO)
+    private var logcatJob:Job?=null
+    private var discoveredPair:AdbEndpoint?=null
+    private var discoveredConnect:AdbEndpoint?=null
 
-    suspend fun check(path: String = DEFAULT_DUT_PATH): DeviceLogCheck = withContext(Dispatchers.IO) {
-        val uid = shell("id").trim().ifBlank { "Unavailable" }
-        val result = shellWithCode("ls -ld ${quote(path)}")
-        DeviceLogCheck(path, result.first == 0, result.second.trim().ifBlank { if (result.first == 0) "Accessible" else "No output" }, uid)
-    }
-
-    suspend fun export(context: Context, path: String = DEFAULT_DUT_PATH): Result<String> = withContext(Dispatchers.IO) {
-        runCatching {
-            val src = File(path)
-            if (!src.exists() || !src.canRead()) error("CellTracker app UID cannot read $path. Use Local ADB shell mode when available.")
-            val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-            val name = "DUT_debuglogger_$stamp.zip"
-            val values = ContentValues().apply {
-                put(MediaStore.Downloads.DISPLAY_NAME, name)
-                put(MediaStore.Downloads.MIME_TYPE, "application/zip")
-                put(MediaStore.Downloads.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/CellTracker/Logs/DUT")
-                put(MediaStore.Downloads.IS_PENDING, 1)
-            }
-            val resolver = context.contentResolver
-            val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: error("Cannot create export file")
-            try {
-                resolver.openOutputStream(uri)?.use { out ->
-                    ZipOutputStream(out.buffered()).use { zip -> addTree(zip, src, src.name) }
-                } ?: error("Cannot open export stream")
-                values.clear(); values.put(MediaStore.Downloads.IS_PENDING, 0); resolver.update(uri, values, null, null)
-                "Download/CellTracker/Logs/DUT/$name"
-            } catch (t: Throwable) {
-                resolver.delete(uri, null, null); throw t
-            }
+    fun startDiscovery(context:Context) {
+        discover(context,"_adb-tls-pairing._tcp") { ep ->
+            discoveredPair=ep; val old=AdbToolStore.state.value
+            AdbToolStore.state.value=old.copy(localEndpoint=old.localEndpoint.copy(host=ep.host,pairingPort=ep.pairingPort), message="ADB pairing service discovered: ${ep.host}:${ep.pairingPort}")
+            context.getSharedPreferences("adb_tools",Context.MODE_PRIVATE).edit().putString("pair_host",ep.host).putInt("pair_port",ep.pairingPort).apply()
+        }
+        discover(context,"_adb-tls-connect._tcp") { ep ->
+            discoveredConnect=ep; val old=AdbToolStore.state.value
+            AdbToolStore.state.value=old.copy(localEndpoint=old.localEndpoint.copy(host=ep.host,connectPort=ep.connectPort))
         }
     }
-
-    private fun addTree(zip: ZipOutputStream, file: File, entryName: String) {
-        if (file.isDirectory) {
-            val children = file.listFiles() ?: error("Permission denied while reading ${file.absolutePath}")
-            if (children.isEmpty()) { zip.putNextEntry(ZipEntry("$entryName/")); zip.closeEntry() }
-            children.forEach { addTree(zip, it, "$entryName/${it.name}") }
-        } else {
-            zip.putNextEntry(ZipEntry(entryName)); file.inputStream().buffered().use { it.copyTo(zip) }; zip.closeEntry()
-        }
+    private fun discover(context:Context,type:String,onFound:(AdbEndpoint)->Unit) {
+        val nsd=context.getSystemService(NsdManager::class.java)?:return
+        runCatching { nsd.discoverServices(type,NsdManager.PROTOCOL_DNS_SD,object:NsdManager.DiscoveryListener{
+            override fun onDiscoveryStarted(s:String){}; override fun onDiscoveryStopped(s:String){}
+            override fun onStartDiscoveryFailed(s:String,e:Int){}; override fun onStopDiscoveryFailed(s:String,e:Int){}
+            override fun onServiceLost(s:NsdServiceInfo){}
+            override fun onServiceFound(s:NsdServiceInfo){ runCatching { nsd.resolveService(s,object:NsdManager.ResolveListener{
+                override fun onResolveFailed(si:NsdServiceInfo,e:Int){}
+                override fun onServiceResolved(si:NsdServiceInfo){ val h=si.host?.hostAddress?:return; val p=si.port; onFound(if(type.contains("pairing")) AdbEndpoint(h,p,0) else AdbEndpoint(h,0,p)) }
+            }) } }
+        }) }
     }
-
-    private fun shell(command: String): String = shellWithCode(command).second
-    private fun shellWithCode(command: String): Pair<Int,String> = try {
-        val p = Runtime.getRuntime().exec(arrayOf("sh", "-c", "$command 2>&1"))
-        val text = BufferedReader(InputStreamReader(p.inputStream)).use { it.readText() }
-        p.waitFor() to text
-    } catch (t: Throwable) { -1 to (t.message ?: t.javaClass.simpleName) }
-    private fun quote(v: String) = "'" + v.replace("'", "'\\''") + "'"
+    fun showPairingNotification(context:Context) {
+        startDiscovery(context)
+        val nm=context.getSystemService(NotificationManager::class.java)
+        nm.createNotificationChannel(NotificationChannel("adb_pair","ADB pairing",NotificationManager.IMPORTANCE_HIGH))
+        val ri=RemoteInput.Builder("pair_code").setLabel("6-digit pairing code").build()
+        val pi=PendingIntent.getBroadcast(context,8801,Intent(context,AdbPairCodeReceiver::class.java).setAction("PAIR_CODE"),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
+        val action=NotificationCompat.Action.Builder(android.R.drawable.ic_menu_send,"ENTER PAIRING CODE",pi).addRemoteInput(ri).build()
+        nm.notify(8801,NotificationCompat.Builder(context,"adb_pair").setSmallIcon(android.R.drawable.stat_sys_data_usb).setContentTitle("CellTracker ADB pairing").setContentText("Open Wireless debugging → Pair device with pairing code, then enter the code here.").setOngoing(true).setPriority(NotificationCompat.PRIORITY_HIGH).addAction(action).build())
+    }
+    suspend fun pairLocal(context:Context,code:String):Result<String> = withContext(Dispatchers.IO) { runCatching {
+        val pref=context.getSharedPreferences("adb_tools",Context.MODE_PRIVATE)
+        val ep=discoveredPair ?: AdbEndpoint(pref.getString("pair_host","127.0.0.1")?:"127.0.0.1",pref.getInt("pair_port",0),0)
+        require(ep.pairingPort>0){"Pairing service not discovered yet. Keep the pairing-code dialog open for a few seconds."}
+        val mgr=CellTrackerAdbConnectionManager.getInstance(context)
+        check(mgr.pair(ep.host,ep.pairingPort,code.trim())){"ADB pairing rejected"}
+        context.getSystemService(NotificationManager::class.java).cancel(8801)
+        delay(700); connectLocal(context).getOrThrow(); "Pairing successful"
+    } }
+    suspend fun connectLocal(context:Context):Result<String> = withContext(Dispatchers.IO){ runCatching {
+        val mgr=CellTrackerAdbConnectionManager.getInstance(context)
+        val ep=discoveredConnect
+        val ok= if(ep!=null && ep.connectPort>0) mgr.connect(ep.host,ep.connectPort) else mgr.connectTls(context,5000)
+        check(ok){"ADB TLS connection failed"}; val id=command(context,"id").getOrThrow().trim(); check(id.contains("uid=2000")){"Connected, but shell identity is not uid=2000: $id"}
+        AdbToolStore.state.value=AdbToolStore.state.value.copy(localStatus="Connected",localIdentity=id,message="Local ADB ready")
+        id
+    } }
+    suspend fun connectRemote(context:Context,host:String,port:Int):Result<String> = withContext(Dispatchers.IO){ runCatching {
+        val mgr=CellTrackerAdbConnectionManager.getInstance(context); check(mgr.connect(host,port)){"Remote ADB connection failed"}; val id=command(context,"id").getOrThrow().trim()
+        AdbToolStore.state.value=AdbToolStore.state.value.copy(remoteEndpoint=AdbEndpoint(host,0,port),remoteStatus="Connected",remoteIdentity=id,message="REF connected")
+        id
+    } }
+    suspend fun pairRemote(context:Context,host:String,port:Int,code:String):Result<String> = withContext(Dispatchers.IO){ runCatching {
+        val mgr=CellTrackerAdbConnectionManager.getInstance(context); check(mgr.pair(host,port,code)){"Remote pairing rejected"}; "REF paired. Enter its Wireless debugging connect port and press CONNECT."
+    } }
+    suspend fun command(context:Context,cmd:String):Result<String> = withContext(Dispatchers.IO){ runCatching {
+        val stream=CellTrackerAdbConnectionManager.getInstance(context).openStream("shell:${cmd.trim()}")
+        stream.openInputStream().bufferedReader().use{it.readText()}
+    } }
+    suspend fun exportDebuglogger(context:Context,path:String="/data/debuglogger"):Result<String> = withContext(Dispatchers.IO){ runCatching {
+        command(context,"test -r '$path' && echo READABLE || echo DENIED").getOrThrow().also{check(it.contains("READABLE")){"ADB shell cannot read $path"}}
+        val stamp=SimpleDateFormat("yyyyMMdd_HHmmss",Locale.US).format(Date()); val name="DUT_debuglogger_$stamp.tar.gz"
+        val values=android.content.ContentValues().apply{put(MediaStore.Downloads.DISPLAY_NAME,name);put(MediaStore.Downloads.MIME_TYPE,"application/gzip");put(MediaStore.Downloads.RELATIVE_PATH,"${Environment.DIRECTORY_DOWNLOADS}/CellTracker/Logs/DUT");put(MediaStore.Downloads.IS_PENDING,1)}
+        val r=context.contentResolver; val uri=r.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI,values)?:error("Cannot create output")
+        try { r.openOutputStream(uri)?.use{out-> val s=CellTrackerAdbConnectionManager.getInstance(context).openStream("shell:toybox tar -czf - '$path'"); s.openInputStream().use{it.copyTo(out)}}?:error("Cannot open output"); values.clear();values.put(MediaStore.Downloads.IS_PENDING,0);r.update(uri,values,null,null) } catch(t:Throwable){r.delete(uri,null,null);throw t}
+        "Download/CellTracker/Logs/DUT/$name"
+    } }
+    fun startLogcat(context:Context,command:String="logcat -v threadtime") {
+        if(logcatJob?.isActive==true)return
+        logcatJob=scope.launch { runCatching {
+            val dir=File(context.getExternalFilesDir(null),"adb_logs").apply{mkdirs()}; val stamp=SimpleDateFormat("yyyyMMdd_HHmmss",Locale.US).format(Date()); val f=File(dir,"REF_AP_log_$stamp.txt")
+            AdbToolStore.state.value=AdbToolStore.state.value.copy(logcatRunning=true,logcatBytes=0,logcatPath=f.absolutePath,message="AP log recording")
+            val s=CellTrackerAdbConnectionManager.getInstance(context).openStream("shell:$command")
+            s.openInputStream().use{input->FileOutputStream(f).use{out->val b=ByteArray(32768);while(isActive){val n=input.read(b);if(n<0)break;out.write(b,0,n);AdbToolStore.state.value=AdbToolStore.state.value.copy(logcatBytes=f.length())}}}
+        }.onFailure{AdbToolStore.state.value=AdbToolStore.state.value.copy(message="Logcat failed: ${it.message}")}; AdbToolStore.state.value=AdbToolStore.state.value.copy(logcatRunning=false) }
+    }
+    fun stopLogcat(){logcatJob?.cancel();logcatJob=null;AdbToolStore.state.value=AdbToolStore.state.value.copy(logcatRunning=false,message="AP log stopped")}
 }
+
+class AdbPairCodeReceiver:BroadcastReceiver(){ override fun onReceive(context:Context,intent:Intent){ val code=RemoteInput.getResultsFromIntent(intent)?.getCharSequence("pair_code")?.toString().orEmpty(); if(code.isBlank())return; val pending=goAsync(); CoroutineScope(Dispatchers.IO).launch{ val r=CellTrackerAdbEngine.pairLocal(context,code); AdbToolStore.state.value=AdbToolStore.state.value.copy(message=r.fold({it},{"Pair failed: ${it.message}"})); pending.finish()} } }

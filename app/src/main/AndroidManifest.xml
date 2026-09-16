@@ -42,6 +42,7 @@
         android:label="CellTracker"
         android:supportsRtl="true"
         android:theme="@style/Theme.CellTracker">
+        <receiver android:name=".AdbPairCodeReceiver" android:exported="false" />
         <activity
             android:name=".MainActivity"
             android:exported="true">

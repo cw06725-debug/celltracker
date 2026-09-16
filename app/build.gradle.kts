@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.celltracker"
         minSdk = 29
         targetSdk = 34
-        versionCode = 131
-        versionName = "0.9.3.0.57"
+        versionCode = 132
+        versionName = "0.9.3.0.58"
     }
 
     buildFeatures {
@@ -49,5 +49,7 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
     implementation("org.osmdroid:osmdroid-android:6.1.20")
+    implementation("com.github.MuntashirAkon:libadb-android:3.1.1")
+    implementation("org.conscrypt:conscrypt-android:2.5.3")
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
