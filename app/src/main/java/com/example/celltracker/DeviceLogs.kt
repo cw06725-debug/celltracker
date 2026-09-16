@@ -32,8 +32,10 @@ object CellTrackerAdbEngine {
     fun startDiscovery(context:Context) {
         discover(context,"_adb-tls-pairing._tcp") { ep ->
             discoveredPair=ep; val old=AdbToolStore.state.value
-            AdbToolStore.state.value=old.copy(localEndpoint=old.localEndpoint.copy(host=ep.host,pairingPort=ep.pairingPort), message="ADB pairing service discovered: ${ep.host}:${ep.pairingPort}")
-            context.getSharedPreferences("adb_tools",Context.MODE_PRIVATE).edit().putString("pair_host",ep.host).putInt("pair_port",ep.pairingPort).apply()
+            AdbToolStore.state.value=old.copy(localEndpoint=old.localEndpoint.copy(host=ep.host,pairingPort=ep.pairingPort), message="Pairing device found: ${ep.host}:${ep.pairingPort}")
+            // Shizuku-style UX: as soon as Android exposes the temporary pairing service,
+            // show a heads-up notification with inline RemoteInput while Settings stays open.
+            pairingNotification(context,"CellTracker · Pairing device found","${ep.host}:${ep.pairingPort} · Enter the 6-digit pairing code",true)
         }
         discover(context,"_adb-tls-connect._tcp") { ep ->
             discoveredConnect=ep; val old=AdbToolStore.state.value
@@ -58,7 +60,7 @@ object CellTrackerAdbEngine {
         val b=NotificationCompat.Builder(context,"adb_pair")
             .setSmallIcon(android.R.drawable.stat_sys_upload)
             .setContentTitle(title).setContentText(text)
-            .setOngoing(allowInput).setOnlyAlertOnce(true)
+            .setOngoing(allowInput).setOnlyAlertOnce(false).setCategory(NotificationCompat.CATEGORY_SERVICE).setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
         if(allowInput){
             val ri=RemoteInput.Builder("pair_code").setLabel("6-digit pairing code").build()
@@ -72,7 +74,7 @@ object CellTrackerAdbEngine {
         // Start discovery before the user opens the system pairing-code dialog.
         discoveredPair=null
         startDiscovery(context)
-        pairingNotification(context,"CellTracker ADB pairing","Open Wireless debugging → Pair device with pairing code, then enter the code here.",true)
+        pairingNotification(context,"CellTracker ADB pairing","Waiting for Pair device with pairing code…",false)
     }
 
     private suspend fun waitForPairEndpoint(context:Context, timeoutMs:Long=10_000):AdbEndpoint {
