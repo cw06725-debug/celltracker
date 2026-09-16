@@ -795,3 +795,10 @@ Changes:
 - Long Call behavior from v0.9.0.9.1 is unchanged for tomorrow's field validation.
 
 Build note: local assembleDebug could not run because this environment cannot resolve services.gradle.org for Gradle 8.7. Use GitHub Actions for full build verification.
+
+## v0.9.3.0.57
+- Added isolated Device Logs / ADB Tools module under Tests.
+- Added DUT `/data/debuglogger` access check with actual app shell identity/result.
+- Added phone-side ZIP export to `Download/CellTracker/Logs/DUT` when the source is genuinely readable.
+- Added Local ADB and Samsung REF sections as explicit connection states; no guessed/fake ADB success is shown.
+- Added shortcut to Developer options for Local ADB preparation.

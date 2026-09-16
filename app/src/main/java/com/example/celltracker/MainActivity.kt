@@ -156,6 +156,7 @@ class MainActivity : ComponentActivity() {
                 var showVisualAiCollector by remember { mutableStateOf(false) }
                 var showBasementTest by remember { mutableStateOf(false) }
                 var showWhatsAppSend by remember { mutableStateOf(false) }
+                var showDeviceLogs by remember { mutableStateOf(false) }
                 val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { vm.start() }
                 var overlayPermissionRequestedForRecording by remember { mutableStateOf(false) }
                 val overlayPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
@@ -222,7 +223,7 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                BackHandler(enabled = showSettings || detailPath != null || showPingTest || showCallSetup || showVideoLoading || showVisualAiCollector || showBasementTest || showWhatsAppSend) {
+                BackHandler(enabled = showSettings || detailPath != null || showPingTest || showCallSetup || showVideoLoading || showVisualAiCollector || showBasementTest || showWhatsAppSend || showDeviceLogs) {
                     when {
                         detailPath != null -> detailPath = null
                         showCallSetup -> showCallSetup = false
@@ -230,6 +231,7 @@ class MainActivity : ComponentActivity() {
                         showVisualAiCollector -> showVisualAiCollector = false
                         showBasementTest -> showBasementTest = false
                         showWhatsAppSend -> showWhatsAppSend = false
+                        showDeviceLogs -> showDeviceLogs = false
                         showPingTest -> showPingTest = false
                         showSettings -> showSettings = false
                     }
@@ -247,6 +249,7 @@ class MainActivity : ComponentActivity() {
                     showBasementTest -> RootDestination.BasementTest
                     showWhatsAppSend -> RootDestination.WhatsAppSend
                     showPingTest -> RootDestination.PingTest
+                    showDeviceLogs -> RootDestination.DeviceLogs
                     showSettings -> RootDestination.Settings
                     else -> RootDestination.Main
                 }
@@ -284,6 +287,7 @@ class MainActivity : ComponentActivity() {
                         onBack = { showBasementTest = false }
                     )
                     RootDestination.WhatsAppSend -> WhatsAppSendScreen(onBack = { showWhatsAppSend = false })
+                    RootDestination.DeviceLogs -> DeviceLogsScreen(onBack = { showDeviceLogs = false })
                     RootDestination.PingTest -> PingTestScreen(
                         state = state.pingTest,
                         history = state.pingHistory,
@@ -344,6 +348,7 @@ class MainActivity : ComponentActivity() {
                         onBasementTest = { showBasementTest = true },
                         onWhatsAppSend = { showWhatsAppSend = true },
                         onCallSetup = { showCallSetup = true },
+                        onDeviceLogs = { showDeviceLogs = true },
                         onDismissMessage = vm::clearMessage
                     )
                 }
@@ -880,6 +885,7 @@ private sealed interface RootDestination {
     data object WhatsAppSend : RootDestination
     data object PingTest : RootDestination
     data object CallSetup : RootDestination
+    data object DeviceLogs : RootDestination
     data class Detail(val path: String) : RootDestination
 }
 
@@ -907,6 +913,7 @@ private fun MainScreen(
     onBasementTest: () -> Unit,
     onWhatsAppSend: () -> Unit,
     onCallSetup: () -> Unit,
+    onDeviceLogs: () -> Unit,
     onDismissMessage: () -> Unit
 ) {
     var neighborsExpanded by remember { mutableStateOf(false) }
@@ -1015,6 +1022,10 @@ private fun MainScreen(
                         HorizontalDivider(Modifier.padding(vertical = 6.dp))
                         Text("Dual-DUT Call Setup", style = MaterialTheme.typography.titleSmall)
                         Button(onClick = onCallSetup, modifier = Modifier.fillMaxWidth()) { Text(if (state.callSetup.isRunning) "Open Call Setup" else "Configure Call Setup") }
+                        HorizontalDivider(Modifier.padding(vertical = 6.dp))
+                        Text("Device Logs / ADB Tools", style = MaterialTheme.typography.titleSmall)
+                        Text("Phone-side DUT log export. Local ADB and Samsung REF logcat are isolated in this module.", style = MaterialTheme.typography.bodySmall)
+                        Button(onClick = onDeviceLogs, modifier = Modifier.fillMaxWidth()) { Text("Open Device Logs") }
                     }
                     GlassSection("Network Recording") {
                         Field("Status", if (state.isRecording) "Recording" else "Stopped")
@@ -4062,4 +4073,44 @@ private fun VideoLoadingMap(
         drawTrack = route.isNotEmpty(),
         showEndpoints = route.isNotEmpty()
     )
+}
+
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DeviceLogsScreen(onBack: () -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var source by rememberSaveable { mutableStateOf(DeviceLogManager.DEFAULT_DUT_PATH) }
+    var check by remember { mutableStateOf(DeviceLogCheck()) }
+    var busy by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf("") }
+    Scaffold(
+        topBar = { TopAppBar(title = { Text("Device Logs / ADB Tools") }, navigationIcon = { TextButton(onClick = onBack) { Text("Back") } }) },
+        contentWindowInsets = WindowInsets(0,0,0,0)
+    ) { pad ->
+        Column(Modifier.fillMaxSize().padding(pad).padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            GlassSection("DUT Log") {
+                Text("Runs entirely on the phone. No PC or Termux is required for the module.", style = MaterialTheme.typography.bodySmall)
+                OutlinedTextField(value = source, onValueChange = { source = it }, label = { Text("Source path") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                Field("App shell identity", check.shellUid)
+                Field("Access", if (check.readable) "Accessible" else check.detail)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(enabled = !busy, onClick = { scope.launch { busy=true; check=DeviceLogManager.check(source); message=if(check.readable) "Source is readable by CellTracker." else "Direct app access is blocked. Local ADB shell backend is required."; busy=false } }) { Text("CHECK ACCESS") }
+                    Button(enabled = !busy && check.readable, onClick = { scope.launch { busy=true; val r=DeviceLogManager.export(context,source); message=r.fold({"Exported: $it"},{"Export failed: ${it.message}"}); busy=false } }) { Text("EXPORT") }
+                }
+                if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+                if (message.isNotBlank()) Text(message, style = MaterialTheme.typography.bodySmall)
+            }
+            GlassSection("Local ADB") {
+                Text("Local ADB shell is the next permission backend for paths that the normal app UID cannot read. This page intentionally does not report ADB connected until an authenticated shell session exists.", style = MaterialTheme.typography.bodySmall)
+                Field("Status", "Not connected")
+                Button(onClick = { runCatching { context.startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }.onFailure { Toast.makeText(context,"Developer options unavailable",Toast.LENGTH_SHORT).show() } }, modifier = Modifier.fillMaxWidth()) { Text("OPEN DEVELOPER OPTIONS") }
+            }
+            GlassSection("Samsung REF") {
+                Field("ADB", "Not connected")
+                Text("Remote Samsung logcat will use the same ADB engine after Local ADB authentication is completed.", style = MaterialTheme.typography.bodySmall)
+            }
+        }
+    }
 }
