@@ -4092,11 +4092,31 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
     var shellCommand by rememberSaveable { mutableStateOf("dumpsys telephony.registry") }
     var shellOutput by remember { mutableStateOf("") }
     var logcatCommand by rememberSaveable { mutableStateOf("logcat -v threadtime") }
+    var localPairCode by rememberSaveable { mutableStateOf("") }
+    var pairDialogDismissedPort by rememberSaveable { mutableStateOf(0) }
+    var refType by rememberSaveable { mutableStateOf("vivo") }
+    var customRefName by rememberSaveable { mutableStateOf("") }
+    val refLabel = when(refType){"Samsung"->"Samsung_REF";"vivo"->"vivo_REF";else->customRefName.trim().ifBlank{"Custom_REF"}}
+    if(adb.localEndpoint.pairingPort>0 && adb.localStatus!="Connected" && pairDialogDismissedPort!=adb.localEndpoint.pairingPort){
+        AlertDialog(
+            onDismissRequest={pairDialogDismissedPort=adb.localEndpoint.pairingPort},
+            title={Text("ADB pairing device found")},
+            text={Column(verticalArrangement=Arrangement.spacedBy(8.dp)){
+                Text("${adb.localEndpoint.host}:${adb.localEndpoint.pairingPort}")
+                OutlinedTextField(localPairCode,{localPairCode=it.filter(Char::isDigit).take(6)},label={Text("6-digit pairing code")},singleLine=true)
+            }},
+            confirmButton={TextButton(enabled=localPairCode.length==6,onClick={
+                val code=localPairCode; pairDialogDismissedPort=adb.localEndpoint.pairingPort
+                scope.launch{busy=true;CellTrackerAdbEngine.pairLocal(context,code);busy=false}
+            }){Text("PAIR")}},
+            dismissButton={TextButton(onClick={pairDialogDismissedPort=adb.localEndpoint.pairingPort}){Text("CANCEL")}}
+        )
+    }
     LaunchedEffect(Unit) { CellTrackerAdbEngine.startDiscovery(context) }
     Scaffold(topBar={TopAppBar(title={Text("Device Logs / ADB Tools")},navigationIcon={TextButton(onClick=onBack){Text("Back")}})},contentWindowInsets=WindowInsets(0,0,0,0)){pad->
         Column(Modifier.fillMaxSize().padding(pad).padding(16.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)){
             GlassSection("1 · Local ADB / DUT") {
-                Text("Shizuku-style flow: open Wireless debugging, choose Pair device with pairing code, then enter the 6-digit code directly from the CellTracker notification.",style=MaterialTheme.typography.bodySmall)
+                Text("Open Wireless debugging and choose Pair device with pairing code. CellTracker will detect the temporary pairing service and show a pairing-code dialog.",style=MaterialTheme.typography.bodySmall)
                 Field("Status",adb.localStatus); Field("Identity",adb.localIdentity)
                 if(adb.localEndpoint.pairingPort>0) Field("Pairing service","${adb.localEndpoint.host}:${adb.localEndpoint.pairingPort}")
                 if(adb.localEndpoint.connectPort>0) Field("ADB TLS service","${adb.localEndpoint.host}:${adb.localEndpoint.connectPort}")
@@ -4109,11 +4129,13 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
                 if(adb.exportPhase.isNotBlank()){
                     Field("Export status",adb.exportPhase)
                     if(adb.exportFiles>0) Field("Files","${adb.exportFiles}")
-                    if(adb.exportTotalBytes>0){
-                        val progress=(adb.exportBytes.toFloat()/adb.exportTotalBytes.toFloat()).coerceIn(0f,1f)
-                        LinearProgressIndicator(progress={progress},modifier=Modifier.fillMaxWidth())
-                        Field("Progress",String.format(java.util.Locale.US,"%.1f%% · %.1f / %.1f MB",progress*100f,adb.exportBytes/1048576.0,adb.exportTotalBytes/1048576.0))
-                    } else if(adb.exportRunning) LinearProgressIndicator(modifier=Modifier.fillMaxWidth())
+                    if(adb.exportRunning) LinearProgressIndicator(modifier=Modifier.fillMaxWidth())
+                    if(adb.exportBytes>0){
+                        val seconds=((System.currentTimeMillis()-adb.exportStartedMs)/1000.0).coerceAtLeast(0.1)
+                        Field("Transferred",String.format(java.util.Locale.US,"%.1f MB",adb.exportBytes/1048576.0))
+                        Field("Average speed",String.format(java.util.Locale.US,"%.1f MB/s",(adb.exportBytes/1048576.0)/seconds))
+                    }
+                    if(adb.exportRunning) OutlinedButton(onClick={CellTrackerAdbEngine.cancelExport()},modifier=Modifier.fillMaxWidth()){Text("CANCEL EXPORT")}
                     if(adb.exportStartedMs>0){
                         val elapsed=((System.currentTimeMillis()-adb.exportStartedMs)/1000).coerceAtLeast(0)
                         Field("Elapsed",String.format(java.util.Locale.US,"%02d:%02d",elapsed/60,elapsed%60))
@@ -4125,6 +4147,14 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
             }
             GlassSection("2 · Samsung / vivo REF Wireless ADB") {
                 Text("Pair any REF through Android Wireless debugging. Pairing and connection ports are different; enter the values shown by the REF.",style=MaterialTheme.typography.bodySmall)
+                Text("REF device")
+                Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                    FilterChip(selected=refType=="Samsung",onClick={refType="Samsung"},label={Text("Samsung")})
+                    FilterChip(selected=refType=="vivo",onClick={refType="vivo"},label={Text("vivo")})
+                    FilterChip(selected=refType=="Custom",onClick={refType="Custom"},label={Text("Custom")})
+                }
+                if(refType=="Custom") OutlinedTextField(customRefName,{customRefName=it},label={Text("Custom REF name")},singleLine=true,modifier=Modifier.fillMaxWidth())
+                Field("Log folder","Download/CellTracker/Logs/$refLabel")
                 OutlinedTextField(remoteHost,{remoteHost=it},label={Text("REF IP")},singleLine=true,modifier=Modifier.fillMaxWidth())
                 Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
                     OutlinedTextField(remotePairPort,{remotePairPort=it.filter(Char::isDigit)},label={Text("Pair port")},singleLine=true,modifier=Modifier.weight(1f))
@@ -4141,7 +4171,7 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
                 OutlinedTextField(logcatCommand,{logcatCommand=it},label={Text("Logcat command")},modifier=Modifier.fillMaxWidth())
                 Field("Status",if(adb.logcatRunning)"RECORDING" else "Stopped"); Field("Size",String.format(java.util.Locale.US,"%.1f MB",adb.logcatBytes/1048576.0)); if(adb.logcatPath.isNotBlank())Field("File",adb.logcatPath)
                 Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
-                    Button(enabled=!adb.logcatRunning,onClick={CellTrackerAdbEngine.startLogcat(context,logcatCommand)}){Text("START AP LOG")}
+                    Button(enabled=!adb.logcatRunning,onClick={CellTrackerAdbEngine.startLogcat(context,logcatCommand,refLabel)}){Text("START AP LOG")}
                     OutlinedButton(enabled=adb.logcatRunning,onClick={CellTrackerAdbEngine.stopLogcat()}){Text("STOP")}
                 }
                 Text("Presets: AP = logcat -v threadtime · Radio = logcat -b radio -v threadtime",style=MaterialTheme.typography.bodySmall)

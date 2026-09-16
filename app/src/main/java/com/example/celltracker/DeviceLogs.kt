@@ -22,6 +22,7 @@ data class AdbUiState(
     val logcatRunning:Boolean=false, val logcatBytes:Long=0, val logcatPath:String="",
     val exportRunning:Boolean=false, val exportPhase:String="", val exportBytes:Long=0, val exportTotalBytes:Long=0,
     val exportFiles:Long=0, val exportStartedMs:Long=0, val exportPath:String="", val exportResult:String="", val exportError:String="",
+    val refLabel:String="vivo_REF",
     val message:String=""
 )
 object AdbToolStore { val state=MutableStateFlow(AdbUiState()) }
@@ -29,6 +30,7 @@ object AdbToolStore { val state=MutableStateFlow(AdbUiState()) }
 object CellTrackerAdbEngine {
     private val scope=CoroutineScope(SupervisorJob()+Dispatchers.IO)
     private var logcatJob:Job?=null
+    private var exportJob:Job?=null
     private var discoveredPair:AdbEndpoint?=null
     private var discoveredConnect:AdbEndpoint?=null
 
@@ -38,7 +40,7 @@ object CellTrackerAdbEngine {
             AdbToolStore.state.value=old.copy(localEndpoint=old.localEndpoint.copy(host=ep.host,pairingPort=ep.pairingPort), message="Pairing device found: ${ep.host}:${ep.pairingPort}")
             // Shizuku-style UX: as soon as Android exposes the temporary pairing service,
             // show a heads-up notification with inline RemoteInput while Settings stays open.
-            pairingNotification(context,"CellTracker · Pairing device found","${ep.host}:${ep.pairingPort} · Enter the 6-digit pairing code",true)
+            pairingNotification(context,"CellTracker · Pairing device found","${ep.host}:${ep.pairingPort} · Tap to enter the 6-digit code in CellTracker",true)
         }
         discover(context,"_adb-tls-connect._tcp") { ep ->
             discoveredConnect=ep; val old=AdbToolStore.state.value
@@ -60,16 +62,15 @@ object CellTrackerAdbEngine {
     private fun pairingNotification(context:Context, title:String, text:String, allowInput:Boolean) {
         val nm=context.getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(NotificationChannel("adb_pair","ADB pairing",NotificationManager.IMPORTANCE_HIGH))
+        val launch=context.packageManager.getLaunchIntentForPackage(context.packageName)
+        val contentPi=launch?.let{PendingIntent.getActivity(context,8802,it,PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)}
         val b=NotificationCompat.Builder(context,"adb_pair")
             .setSmallIcon(android.R.drawable.stat_sys_upload)
             .setContentTitle(title).setContentText(text)
-            .setOngoing(allowInput).setOnlyAlertOnce(false).setCategory(NotificationCompat.CATEGORY_SERVICE).setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setAutoCancel(!allowInput).setOnlyAlertOnce(false)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE).setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
-        if(allowInput){
-            val ri=RemoteInput.Builder("pair_code").setLabel("6-digit pairing code").build()
-            val pi=PendingIntent.getBroadcast(context,8801,Intent(context,AdbPairCodeReceiver::class.java).setAction("PAIR_CODE"),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
-            b.addAction(NotificationCompat.Action.Builder(android.R.drawable.ic_menu_send,"ENTER PAIRING CODE",pi).addRemoteInput(ri).build())
-        }
+        if(contentPi!=null) b.setContentIntent(contentPi)
         nm.notify(8801,b.build())
     }
 
@@ -155,95 +156,93 @@ object CellTrackerAdbEngine {
     suspend fun pairRemote(context:Context,host:String,port:Int,code:String):Result<String> = withContext(Dispatchers.IO){ runCatching {
         val mgr=CellTrackerAdbConnectionManager.getInstance(context); check(mgr.pair(host,port,code)){"Remote pairing rejected"}; "REF paired. Enter its Wireless debugging connect port and press CONNECT."
     } }
-    suspend fun command(context:Context,cmd:String):Result<String> = withContext(Dispatchers.IO){ runCatching {
-        val stream=CellTrackerAdbConnectionManager.getInstance(context).openStream("shell:${cmd.trim()}")
-        stream.openInputStream().bufferedReader().use{it.readText()}
+    suspend fun command(context:Context,cmd:String,timeoutMs:Long=8_000):Result<String> = withContext(Dispatchers.IO){ runCatching {
+        val marker="__CT_DONE_${System.nanoTime()}__"
+        val wrapped="${cmd.trim()}; printf '\\n$marker\\n'"
+        val stream=CellTrackerAdbConnectionManager.getInstance(context).openStream("shell:$wrapped")
+        val input=stream.openInputStream()
+        val out=ByteArrayOutputStream()
+        val buf=ByteArray(4096)
+        withTimeout(timeoutMs){
+            while(true){
+                val n=withContext(Dispatchers.IO){input.read(buf)}
+                if(n<0) break
+                if(n>0){
+                    out.write(buf,0,n)
+                    if(out.toString(Charsets.UTF_8.name()).contains(marker)) break
+                }
+            }
+        }
+        runCatching{input.close()}
+        out.toString(Charsets.UTF_8.name()).substringBefore(marker).trimEnd()
     } }
+
     suspend fun exportDebuglogger(context:Context,path:String="/data/debuglogger"):Result<String> = withContext(Dispatchers.IO){ runCatching {
+        check(exportJob?.isActive!=true){"An export is already running"}
         val source=path.trim().ifBlank{"/data/debuglogger"}
         val q=source.replace("'","'\\''")
+        val access=command(context,"if [ -r '$q' ]; then echo READABLE; elif [ ! -e '$q' ]; then echo NOT_FOUND; else echo DENIED; fi",5_000).getOrThrow()
+        check(access.contains("READABLE")){when{access.contains("NOT_FOUND")->"Source does not exist: $source";access.contains("DENIED")->"Permission denied: shell cannot read $source";else->"Source check failed: $access"}}
+
         val started=System.currentTimeMillis()
-        AdbToolStore.state.value=AdbToolStore.state.value.copy(
-            exportRunning=true,exportPhase="Checking source…",exportBytes=0,exportTotalBytes=0,exportFiles=0,
-            exportStartedMs=started,exportPath="",exportResult="",exportError="",message="Checking $source"
-        )
-        val pre=command(context,"if [ ! -e '$q' ]; then echo CT_NOT_FOUND; elif [ ! -r '$q' ]; then echo CT_DENIED; else echo CT_READABLE; fi").getOrThrow()
-        check(!pre.contains("CT_NOT_FOUND")){"Source does not exist: $source"}
-        check(!pre.contains("CT_DENIED")){"Permission denied: shell cannot read $source"}
-        check(pre.contains("CT_READABLE")){"Unable to verify source access: ${pre.trim()}"}
-
-        AdbToolStore.state.value=AdbToolStore.state.value.copy(exportPhase="Scanning files…",message="Scanning $source")
-        // Use toybox utilities available on Android. Size is source bytes; tar adds small header overhead.
-        val scan=command(context,
-            "echo CT_FILES=$(find '$q' -type f 2>/dev/null | wc -l); " +
-            "echo CT_KB=$(du -sk '$q' 2>/dev/null | head -n 1 | cut -f1)"
-        ).getOrThrow()
-        val files=Regex("CT_FILES=(\\d+)").find(scan)?.groupValues?.get(1)?.toLongOrNull()?:0L
-        val totalKb=Regex("CT_KB=(\\d+)").find(scan)?.groupValues?.get(1)?.toLongOrNull()?:0L
-        val total=totalKb*1024L
-        check(files>0 || total>0){"Source is empty or its contents cannot be read: $source"}
-        AdbToolStore.state.value=AdbToolStore.state.value.copy(exportFiles=files,exportTotalBytes=total,exportPhase="Exporting…")
-
         val stamp=SimpleDateFormat("yyyyMMdd_HHmmss",Locale.US).format(Date())
         val name="DUT_debuglogger_$stamp.tar"
-        val values=android.content.ContentValues().apply{
-            put(MediaStore.Downloads.DISPLAY_NAME,name)
-            put(MediaStore.Downloads.MIME_TYPE,"application/x-tar")
-            put(MediaStore.Downloads.RELATIVE_PATH,"${Environment.DIRECTORY_DOWNLOADS}/CellTracker/Logs/DUT")
-            put(MediaStore.Downloads.IS_PENDING,1)
-        }
-        val resolver=context.contentResolver
-        val uri=resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI,values)?:error("Cannot create output in Download/CellTracker/Logs/DUT")
-        var written=0L
-        try {
-            resolver.openOutputStream(uri,"w")?.use { out ->
-                // Uncompressed tar keeps transferred bytes close to source bytes, so progress is meaningful.
-                val stream=CellTrackerAdbConnectionManager.getInstance(context).openStream(
-                    "shell:toybox tar -cf - '$q' 2>/dev/null"
-                )
-                stream.openInputStream().use { input ->
-                    val buf=ByteArray(64*1024)
-                    while(true){
-                        val n=input.read(buf)
-                        if(n<0) break
-                        if(n==0) continue
-                        out.write(buf,0,n); written+=n
-                        AdbToolStore.state.value=AdbToolStore.state.value.copy(exportBytes=written,exportPhase="Exporting…")
-                    }
-                    out.flush()
-                }
-            } ?: error("Cannot open destination file")
-            check(written>0){"ADB stream returned 0 bytes. The source may be unreadable or toybox tar failed."}
-            // A tar containing only headers is not a useful debuglogger export.
-            check(written>=1024){"Export produced only $written bytes; source contents were not transferred."}
-            values.clear(); values.put(MediaStore.Downloads.IS_PENDING,0); resolver.update(uri,values,null,null)
-            val publicPath="Download/CellTracker/Logs/DUT/$name"
-            AdbToolStore.state.value=AdbToolStore.state.value.copy(
-                exportRunning=false,exportPhase="Completed",exportBytes=written,exportPath=publicPath,
-                exportResult="SUCCESS",exportError="",message="Export successful: $publicPath"
-            )
-            publicPath
-        } catch(e:Throwable){
-            resolver.delete(uri,null,null)
-            throw e
-        }
-    }.onFailure { e ->
+        val publicPath="Download/CellTracker/Logs/DUT/$name"
         AdbToolStore.state.value=AdbToolStore.state.value.copy(
-            exportRunning=false,exportPhase="Failed",exportResult="FAILED",
-            exportError=e.message ?: e.javaClass.simpleName,message="Export failed: ${e.message ?: e.javaClass.simpleName}"
+            exportRunning=true,exportPhase="Starting transfer…",exportBytes=0,exportTotalBytes=0,exportFiles=0,
+            exportStartedMs=started,exportPath=publicPath,exportResult="",exportError="",message="Starting DUT log export"
         )
+        exportJob=scope.launch {
+            val values=android.content.ContentValues().apply{
+                put(MediaStore.Downloads.DISPLAY_NAME,name);put(MediaStore.Downloads.MIME_TYPE,"application/x-tar")
+                put(MediaStore.Downloads.RELATIVE_PATH,"${Environment.DIRECTORY_DOWNLOADS}/CellTracker/Logs/DUT");put(MediaStore.Downloads.IS_PENDING,1)
+            }
+            val resolver=context.contentResolver
+            var uri:android.net.Uri?=null
+            try{
+                uri=resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI,values)?:error("Cannot create $publicPath")
+                var written=0L
+                val stream=CellTrackerAdbConnectionManager.getInstance(context).openStream("shell:toybox tar -cf - '$q'")
+                resolver.openOutputStream(uri,"w")!!.use{out->
+                    stream.openInputStream().use{input->
+                        val b=ByteArray(64*1024)
+                        while(isActive){
+                            val n=input.read(b); if(n<0)break
+                            if(n>0){out.write(b,0,n);written+=n
+                                AdbToolStore.state.value=AdbToolStore.state.value.copy(exportPhase="Exporting…",exportBytes=written)
+                            }
+                        }
+                        out.flush()
+                    }
+                }
+                check(written>=1024){"ADB transfer returned only $written bytes; debuglogger was not transferred"}
+                values.clear();values.put(MediaStore.Downloads.IS_PENDING,0);resolver.update(uri,values,null,null)
+                AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=false,exportPhase="Completed",exportResult="SUCCESS",exportError="",message="Export successful: $publicPath")
+            }catch(e:CancellationException){
+                uri?.let{resolver.delete(it,null,null)}
+                AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=false,exportPhase="Cancelled",exportResult="CANCELLED",exportError="",message="Export cancelled")
+            }catch(e:Throwable){
+                uri?.let{resolver.delete(it,null,null)}
+                AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=false,exportPhase="Failed",exportResult="FAILED",exportError=e.message?:e.javaClass.simpleName,message="Export failed: ${e.message}")
+            }
+        }
+        "Export started"
+    }.onFailure{e->
+        AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=false,exportPhase="Failed",exportResult="FAILED",exportError=e.message?:e.javaClass.simpleName,message="Export failed: ${e.message}")
     } }
+    fun cancelExport(){ exportJob?.cancel(); exportJob=null }
 
-    fun startLogcat(context:Context,command:String="logcat -v threadtime") {
+    fun startLogcat(context:Context,command:String="logcat -v threadtime",refLabel:String="vivo_REF") {
         if(logcatJob?.isActive==true)return
         logcatJob=scope.launch { runCatching {
             val stamp=SimpleDateFormat("yyyyMMdd_HHmmss",Locale.US).format(Date())
-            val name="AP_Log_$stamp.txt"
-            val publicPath="Download/CellTracker/Logs/Samsung_REF/$name"
+            val safeLabel=refLabel.trim().ifBlank{"REF"}.replace(Regex("[^A-Za-z0-9._-]"),"_")
+            val name="${safeLabel}_AP_Log_$stamp.txt"
+            val publicPath="Download/CellTracker/Logs/$safeLabel/$name"
             val values=android.content.ContentValues().apply{
                 put(MediaStore.Downloads.DISPLAY_NAME,name)
                 put(MediaStore.Downloads.MIME_TYPE,"text/plain")
-                put(MediaStore.Downloads.RELATIVE_PATH,"${Environment.DIRECTORY_DOWNLOADS}/CellTracker/Logs/Samsung_REF")
+                put(MediaStore.Downloads.RELATIVE_PATH,"${Environment.DIRECTORY_DOWNLOADS}/CellTracker/Logs/$safeLabel")
                 put(MediaStore.Downloads.IS_PENDING,1)
             }
             val resolver=context.contentResolver
