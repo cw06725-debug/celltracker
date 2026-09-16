@@ -4105,7 +4105,23 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
                     OutlinedButton(onClick={scope.launch{busy=true;val r=CellTrackerAdbEngine.connectLocal(context);AdbToolStore.state.value=AdbToolStore.state.value.copy(message=r.fold({"Connected: $it"},{"Connect failed: ${it.message}"}));busy=false}}){Text("RECONNECT")}
                 }
                 OutlinedTextField(dutPath,{dutPath=it},label={Text("DUT log path")},singleLine=true,modifier=Modifier.fillMaxWidth())
-                Button(enabled=!busy && adb.localStatus=="Connected",onClick={scope.launch{busy=true;val r=CellTrackerAdbEngine.exportDebuglogger(context,dutPath);AdbToolStore.state.value=AdbToolStore.state.value.copy(message=r.fold({"Exported: $it"},{"Export failed: ${it.message}"}));busy=false}},modifier=Modifier.fillMaxWidth()){Text("EXPORT DUT DEBUGLOGGER")}
+                Button(enabled=!busy && !adb.exportRunning && adb.localStatus=="Connected",onClick={scope.launch{busy=true;CellTrackerAdbEngine.exportDebuglogger(context,dutPath);busy=false}},modifier=Modifier.fillMaxWidth()){Text(if(adb.exportRunning)"EXPORTING…" else "EXPORT DUT DEBUGLOGGER")}
+                if(adb.exportPhase.isNotBlank()){
+                    Field("Export status",adb.exportPhase)
+                    if(adb.exportFiles>0) Field("Files","${adb.exportFiles}")
+                    if(adb.exportTotalBytes>0){
+                        val progress=(adb.exportBytes.toFloat()/adb.exportTotalBytes.toFloat()).coerceIn(0f,1f)
+                        LinearProgressIndicator(progress={progress},modifier=Modifier.fillMaxWidth())
+                        Field("Progress",String.format(java.util.Locale.US,"%.1f%% · %.1f / %.1f MB",progress*100f,adb.exportBytes/1048576.0,adb.exportTotalBytes/1048576.0))
+                    } else if(adb.exportRunning) LinearProgressIndicator(modifier=Modifier.fillMaxWidth())
+                    if(adb.exportStartedMs>0){
+                        val elapsed=((System.currentTimeMillis()-adb.exportStartedMs)/1000).coerceAtLeast(0)
+                        Field("Elapsed",String.format(java.util.Locale.US,"%02d:%02d",elapsed/60,elapsed%60))
+                    }
+                    if(adb.exportResult.isNotBlank()) Field("Result",adb.exportResult)
+                    if(adb.exportError.isNotBlank()) Field("Reason",adb.exportError)
+                    if(adb.exportPath.isNotBlank()) Field("Saved to",adb.exportPath)
+                }
             }
             GlassSection("2 · Samsung / vivo REF Wireless ADB") {
                 Text("Pair any REF through Android Wireless debugging. Pairing and connection ports are different; enter the values shown by the REF.",style=MaterialTheme.typography.bodySmall)
