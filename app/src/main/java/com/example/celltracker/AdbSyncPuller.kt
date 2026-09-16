@@ -28,10 +28,92 @@ class AdbSyncPuller(private val context:Context){
   val uri=r.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI,v)?:error("Cannot create $name")
   try{r.openOutputStream(uri,"w")!!.use{local->session{i,o->request(o,"RECV",remote);while(true){when(String(exact(i,4),Charsets.US_ASCII)){"DONE"->{int(i);return@session};"FAIL"->fail(i);"DATA"->{var left=int(i);val b=ByteArray(65536);while(left>0){val n=i.read(b,0,minOf(left,b.size));if(n<0)throw EOFException("ADB Sync ended during $remote");local.write(b,0,n);left-=n;onBytes(n)}};else->error("Unexpected ADB Sync RECV response for $remote")}}}};v.clear();v.put(MediaStore.Downloads.IS_PENDING,0);r.update(uri,v,null,null);return uri}catch(e:Throwable){r.delete(uri,null,null);throw e}
  }
- fun pullTree(root:String,sessionDir:String,onProgress:(SyncPullProgress)->Unit):SyncPullResult{
-  data class Node(val remote:String,val rel:String);val q=ArrayDeque<Node>();q.add(Node(root.trimEnd('/'),""));var found=0L;var pulled=0L;var skipped=0L;var bytes=0L;val files=ArrayList<SyncPulledFile>();val visited=HashSet<String>()
-  while(q.isNotEmpty()){val n=q.removeFirst();if(!visited.add(n.remote))continue;val entries=try{list(n.remote)}catch(e:Throwable){skipped++;onProgress(SyncPullProgress(found,pulled,skipped,bytes,n.remote));continue};for(e in entries){found++;val remote="${n.remote}/${e.name}";val rel=if(n.rel.isBlank())e.name else "${n.rel}/${e.name}";when{e.isDir->q.add(Node(remote,rel));e.isFile->{onProgress(SyncPullProgress(found,pulled,skipped,bytes,remote));val x=rel.lastIndexOf('/');val sub=if(x>=0)rel.substring(0,x)else"";val name=if(x>=0)rel.substring(x+1)else rel;val dir=if(sub.isBlank())sessionDir else "$sessionDir/$sub";val uri=createFile(remote,dir,name){k->bytes+=k;onProgress(SyncPullProgress(found,pulled,skipped,bytes,remote))};files+=SyncPulledFile(uri,rel);pulled++};e.isLink->{/* adb pull follows directory symlinks on many vendor debug trees. Try it as a directory first. */q.add(Node(remote,rel))};else->{skipped++;onProgress(SyncPullProgress(found,pulled,skipped,bytes,remote))}}}}
-  return SyncPullResult(found,pulled,skipped,bytes,files)
+ fun pullTree(
+  root: String,
+  sessionDir: String,
+  onProgress: (SyncPullProgress) -> Unit
+ ): SyncPullResult {
+  data class Node(val remote: String, val rel: String)
+
+  val q = ArrayDeque<Node>()
+  q.add(Node(root.trimEnd('/'), ""))
+
+  var found = 0L
+  var pulled = 0L
+  var skipped = 0L
+  var bytes = 0L
+  val files = ArrayList<SyncPulledFile>()
+  val visited = HashSet<String>()
+
+  while (q.isNotEmpty()) {
+   val node = q.removeFirst()
+   if (!visited.add(node.remote)) continue
+
+   val entries = try {
+    list(node.remote)
+   } catch (e: Throwable) {
+    skipped++
+    onProgress(SyncPullProgress(found, pulled, skipped, bytes, node.remote))
+    continue
+   }
+
+   for (entry in entries) {
+    found++
+    val remote = "${node.remote}/${entry.name}"
+    val rel = if (node.rel.isBlank()) {
+     entry.name
+    } else {
+     "${node.rel}/${entry.name}"
+    }
+
+    when {
+     entry.isDir -> {
+      q.add(Node(remote, rel))
+     }
+
+     entry.isFile -> {
+      onProgress(SyncPullProgress(found, pulled, skipped, bytes, remote))
+
+      val slash = rel.lastIndexOf('/')
+      val subDir = if (slash >= 0) {
+       rel.substring(0, slash)
+      } else {
+       ""
+      }
+      val fileName = if (slash >= 0) {
+       rel.substring(slash + 1)
+      } else {
+       rel
+      }
+      val outputDir = if (subDir.isBlank()) {
+       sessionDir
+      } else {
+       "$sessionDir/$subDir"
+      }
+
+      val uri = createFile(remote, outputDir, fileName) { count ->
+       bytes += count
+       onProgress(SyncPullProgress(found, pulled, skipped, bytes, remote))
+      }
+      files += SyncPulledFile(uri, rel)
+      pulled++
+     }
+
+     entry.isLink -> {
+      // Vendor debug trees may expose useful folders through symlinks.
+      // Queue it once and let LIST determine whether the target is traversable.
+      q.add(Node(remote, rel))
+     }
+
+     else -> {
+      skipped++
+      onProgress(SyncPullProgress(found, pulled, skipped, bytes, remote))
+     }
+    }
+   }
+  }
+
+  return SyncPullResult(found, pulled, skipped, bytes, files)
  }
  fun compress(sessionName:String,result:SyncPullResult,deleteSource:Boolean,onProgress:(String)->Unit):String{
   val resolver=context.contentResolver;val zipName="$sessionName.zip";val v=ContentValues().apply{put(MediaStore.Downloads.DISPLAY_NAME,zipName);put(MediaStore.Downloads.MIME_TYPE,"application/zip");put(MediaStore.Downloads.RELATIVE_PATH,"${Environment.DIRECTORY_DOWNLOADS}/CellTracker/Logs/DUT");put(MediaStore.Downloads.IS_PENDING,1)};val zipUri=resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI,v)?:error("Cannot create ZIP")
