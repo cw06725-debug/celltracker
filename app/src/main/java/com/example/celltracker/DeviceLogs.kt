@@ -246,11 +246,16 @@ object CellTrackerAdbEngine {
     fun requestUsbPermission(context:Context) = runCatching {
         UsbAdbHost.get(context).requestPermission("com.example.celltracker.USB_ADB_PERMISSION")
     }
-    suspend fun connectUsbRef(context:Context):Result<String> = withContext(Dispatchers.IO){runCatching{
-        val h=UsbAdbHost.get(context);val banner=h.connect()
-        AdbToolStore.state.value=AdbToolStore.state.value.copy(usbStatus="Connected",usbError="",remoteStatus="USB Connected",remoteIdentity=banner,message="REF USB ADB ready")
-        banner
-    }.onFailure{e->AdbToolStore.state.value=AdbToolStore.state.value.copy(usbStatus="Failed · ${h.stage}",usbError=e.message ?: e.javaClass.simpleName,message="USB ADB: ${e.message}")}}
+    suspend fun connectUsbRef(context:Context):Result<String> = withContext(Dispatchers.IO){
+        val h=UsbAdbHost.get(context)
+        runCatching{
+            val banner=h.connect()
+            AdbToolStore.state.value=AdbToolStore.state.value.copy(usbStatus="Connected",usbError="",remoteStatus="USB Connected",remoteIdentity=banner,message="REF USB ADB ready")
+            banner
+        }.onFailure{e->
+            AdbToolStore.state.value=AdbToolStore.state.value.copy(usbStatus="Failed · ${h.stage}",usbError=e.message ?: e.javaClass.simpleName,message="USB ADB: ${e.message}")
+        }
+    }
     suspend fun startUsbLogcat(context:Context,command:String,refLabel:String):Result<String> = withContext(Dispatchers.IO){runCatching{
         check(logcatJob?.isActive!=true){"A log capture is already running"}
         val resolver=context.contentResolver;val stamp=SimpleDateFormat("yyyyMMdd_HHmmss",Locale.US).format(Date());val safe=refLabel.replace(Regex("[^A-Za-z0-9._-]"),"_")
