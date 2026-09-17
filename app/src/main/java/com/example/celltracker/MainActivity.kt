@@ -4195,7 +4195,7 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
                 OutlinedTextField(logcatCommand,{logcatCommand=it},label={Text("Logcat command")},modifier=Modifier.fillMaxWidth())
                 Field("Status",if(adb.logcatRunning)"RECORDING" else "Stopped"); Field("Size",String.format(java.util.Locale.US,"%.1f MB",adb.logcatBytes/1048576.0)); if(adb.logcatPath.isNotBlank())Field("File",adb.logcatPath)
                 Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
-                    Button(enabled=!adb.logcatRunning,onClick={if(refTransport=="USB") CellTrackerAdbEngine.startUsbLogcat(context,logcatCommand,refLabel) else CellTrackerAdbEngine.startLogcat(context,logcatCommand,refLabel)}){Text("START AP LOG")}
+                    Button(enabled=!adb.logcatRunning,onClick={scope.launch{if(refTransport=="USB") CellTrackerAdbEngine.startUsbLogcat(context,logcatCommand,refLabel) else CellTrackerAdbEngine.startLogcat(context,logcatCommand,refLabel)}}){Text("START AP LOG")}
                     OutlinedButton(enabled=adb.logcatRunning,onClick={CellTrackerAdbEngine.stopLogcat()}){Text("STOP")}
                 }
                 Text("Presets: AP = logcat -v threadtime · Radio = logcat -b radio -v threadtime",style=MaterialTheme.typography.bodySmall)

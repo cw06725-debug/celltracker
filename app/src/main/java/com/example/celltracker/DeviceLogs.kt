@@ -19,6 +19,7 @@ data class AdbEndpoint(val host:String="", val pairingPort:Int=0, val connectPor
 data class AdbUiState(
     val localEndpoint:AdbEndpoint=AdbEndpoint(), val localStatus:String="Not connected", val localIdentity:String="--",
     val remoteEndpoint:AdbEndpoint=AdbEndpoint(), val remoteStatus:String="Not connected", val remoteIdentity:String="--",
+    val usbStatus:String="Disconnected", val usbDevice:String="",
     val logcatRunning:Boolean=false, val logcatBytes:Long=0, val logcatPath:String="",
     val exportRunning:Boolean=false, val exportPhase:String="", val exportBytes:Long=0, val exportTotalBytes:Long=0,
     val exportFiles:Long=0, val exportFound:Long=0, val exportSkipped:Long=0, val exportStartedMs:Long=0,
@@ -249,12 +250,12 @@ object CellTrackerAdbEngine {
         banner
     }.onFailure{e->AdbToolStore.state.value=AdbToolStore.state.value.copy(usbStatus="Failed",message="USB ADB: ${e.message}")}}
     suspend fun startUsbLogcat(context:Context,command:String,refLabel:String):Result<String> = withContext(Dispatchers.IO){runCatching{
-        check(logJob?.isActive!=true){"A log capture is already running"}
+        check(logcatJob?.isActive!=true){"A log capture is already running"}
         val resolver=context.contentResolver;val stamp=SimpleDateFormat("yyyyMMdd_HHmmss",Locale.US).format(Date());val safe=refLabel.replace(Regex("[^A-Za-z0-9._-]"),"_")
         val name="${safe}_AP_Log_$stamp.txt";val values=ContentValues().apply{put(MediaStore.Downloads.DISPLAY_NAME,name);put(MediaStore.Downloads.MIME_TYPE,"text/plain");put(MediaStore.Downloads.RELATIVE_PATH,"${Environment.DIRECTORY_DOWNLOADS}/CellTracker/Logs/$safe")}
         val uri=resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI,values)?:error("Cannot create AP log")
-        AdbToolStore.state.value=AdbToolStore.state.value.copy(logRunning=true,logBytes=0,logPath="Download/CellTracker/Logs/$safe/$name",message="USB logcat recording")
-        logJob=scope.launch(Dispatchers.IO){try{resolver.openOutputStream(uri,"w")!!.use{out->UsbAdbHost.get(context).shell(command){b->out.write(b);out.flush();AdbToolStore.state.value=AdbToolStore.state.value.copy(logBytes=AdbToolStore.state.value.logBytes+b.size)}}}finally{AdbToolStore.state.value=AdbToolStore.state.value.copy(logRunning=false)}}
+        AdbToolStore.state.value=AdbToolStore.state.value.copy(logcatRunning=true,logcatBytes=0,logcatPath="Download/CellTracker/Logs/$safe/$name",message="USB logcat recording")
+        logcatJob=scope.launch(Dispatchers.IO){try{resolver.openOutputStream(uri,"w")!!.use{out->UsbAdbHost.get(context).shell(command){b->out.write(b);out.flush();AdbToolStore.state.value=AdbToolStore.state.value.copy(logcatBytes=AdbToolStore.state.value.logcatBytes+b.size)}}}finally{AdbToolStore.state.value=AdbToolStore.state.value.copy(logcatRunning=false)}}
         "USB AP log started"
     }}
     suspend fun connectRemote(context:Context,host:String,port:Int):Result<String> = withContext(Dispatchers.IO){ runCatching {
