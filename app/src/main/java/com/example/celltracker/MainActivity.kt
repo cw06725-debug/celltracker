@@ -4168,6 +4168,10 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
                     LaunchedEffect(Unit){CellTrackerAdbEngine.refreshUsbRef(context)}
                     Field("USB device",adb.usbDevice.ifBlank{"Tap REFRESH USB"})
                     Field("USB ADB",adb.usbStatus)
+                    if(adb.usbDetectedBrand.isNotBlank()) Field("Detected REF",adb.usbDetectedBrand)
+                    if(adb.usbDetectedBrand.isNotBlank() && adb.usbDetectedBrand!="Custom" && adb.usbDetectedBrand!=refType)
+                        Text("Selected $refType, but USB device looks like ${adb.usbDetectedBrand}. AP Log will still use the selected log folder until you switch REF device.",style=MaterialTheme.typography.bodySmall)
+                    if(adb.usbError.isNotBlank()) Field("USB reason",adb.usbError)
                     Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
                         OutlinedButton(onClick={CellTrackerAdbEngine.refreshUsbRef(context)}){Text("REFRESH USB")}
                         OutlinedButton(onClick={CellTrackerAdbEngine.requestUsbPermission(context)}){Text("USB PERMISSION")}

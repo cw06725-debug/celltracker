@@ -19,7 +19,7 @@ data class AdbEndpoint(val host:String="", val pairingPort:Int=0, val connectPor
 data class AdbUiState(
     val localEndpoint:AdbEndpoint=AdbEndpoint(), val localStatus:String="Not connected", val localIdentity:String="--",
     val remoteEndpoint:AdbEndpoint=AdbEndpoint(), val remoteStatus:String="Not connected", val remoteIdentity:String="--",
-    val usbStatus:String="Disconnected", val usbDevice:String="",
+    val usbStatus:String="Disconnected", val usbDevice:String="", val usbDetectedBrand:String="", val usbError:String="",
     val logcatRunning:Boolean=false, val logcatBytes:Long=0, val logcatPath:String="",
     val exportRunning:Boolean=false, val exportPhase:String="", val exportBytes:Long=0, val exportTotalBytes:Long=0,
     val exportFiles:Long=0, val exportFound:Long=0, val exportSkipped:Long=0, val exportStartedMs:Long=0,
@@ -238,7 +238,9 @@ object CellTrackerAdbEngine {
         val h=UsbAdbHost.get(context);val info=h.info()
         AdbToolStore.state.value=AdbToolStore.state.value.copy(
             usbDevice=info?.let{"${it.name} · VID ${String.format("%04X",it.vendorId)} PID ${String.format("%04X",it.productId)}"} ?: "No USB ADB device",
-            usbStatus=if(h.connected)"Connected" else if(info!=null && h.hasPermission())"Ready" else if(info!=null)"Permission required" else "Disconnected"
+            usbDetectedBrand=info?.name?.let{n->when{n.contains("SAMSUNG",true)->"Samsung";n.contains("vivo",true)->"vivo";else->"Custom"}} ?: "",
+            usbStatus=if(h.connected)"Connected" else if(info!=null && h.hasPermission())"Ready" else if(info!=null)"Permission required" else "Disconnected",
+            usbError=""
         )
     }
     fun requestUsbPermission(context:Context) = runCatching {
@@ -246,9 +248,9 @@ object CellTrackerAdbEngine {
     }
     suspend fun connectUsbRef(context:Context):Result<String> = withContext(Dispatchers.IO){runCatching{
         val h=UsbAdbHost.get(context);val banner=h.connect()
-        AdbToolStore.state.value=AdbToolStore.state.value.copy(usbStatus="Connected",remoteStatus="USB Connected",remoteIdentity=banner,message="REF USB ADB ready")
+        AdbToolStore.state.value=AdbToolStore.state.value.copy(usbStatus="Connected",usbError="",remoteStatus="USB Connected",remoteIdentity=banner,message="REF USB ADB ready")
         banner
-    }.onFailure{e->AdbToolStore.state.value=AdbToolStore.state.value.copy(usbStatus="Failed",message="USB ADB: ${e.message}")}}
+    }.onFailure{e->AdbToolStore.state.value=AdbToolStore.state.value.copy(usbStatus="Failed · ${h.stage}",usbError=e.message ?: e.javaClass.simpleName,message="USB ADB: ${e.message}")}}
     suspend fun startUsbLogcat(context:Context,command:String,refLabel:String):Result<String> = withContext(Dispatchers.IO){runCatching{
         check(logcatJob?.isActive!=true){"A log capture is already running"}
         val resolver=context.contentResolver;val stamp=SimpleDateFormat("yyyyMMdd_HHmmss",Locale.US).format(Date());val safe=refLabel.replace(Regex("[^A-Za-z0-9._-]"),"_")

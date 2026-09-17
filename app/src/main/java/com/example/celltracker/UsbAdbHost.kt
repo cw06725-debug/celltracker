@@ -29,6 +29,7 @@ class UsbAdbHost(private val context:Context) {
     private var localId=1
     @Volatile var connected=false; private set
     @Volatile var authorized=false; private set
+    @Volatile var stage:String="Disconnected"; private set
 
     fun findDevice():Pair<UsbDevice,UsbInterface>? {
         for(d in manager.deviceList.values) for(i in 0 until d.interfaceCount){
@@ -62,7 +63,17 @@ class UsbAdbHost(private val context:Context) {
         writeAll(h.array());if(data.isNotEmpty())writeAll(data)
     }
     private fun writeAll(b:ByteArray){var o=0;while(o<b.size){val n=conn!!.bulkTransfer(output,b,o,b.size-o,5000);if(n<=0)error("USB ADB write failed");o+=n}}
-    private fun readExact(n:Int,timeout:Int=5000):ByteArray{val r=ByteArray(n);var o=0;while(o<n){val tmp=ByteArray(min(16384,n-o));val k=conn!!.bulkTransfer(input,tmp,tmp.size,timeout);if(k<=0)error("USB ADB read timeout");System.arraycopy(tmp,0,r,o,k);o+=k};return r}
+    private fun readExact(n:Int,timeout:Int=5000):ByteArray{
+        val r=ByteArray(n);var o=0
+        while(o<n){
+            val want=min(16384,n-o);val tmp=ByteArray(want)
+            val k=conn!!.bulkTransfer(input,tmp,want,timeout)
+            if(k<0) error("USB ADB read failed at $stage ($o/$n)")
+            if(k==0) error("USB ADB read timeout at $stage ($o/$n)")
+            System.arraycopy(tmp,0,r,o,k);o+=k
+        }
+        return r
+    }
     private fun readPacket(timeout:Int=5000):P{
         val h=ByteBuffer.wrap(readExact(24,timeout)).order(ByteOrder.LITTLE_ENDIAN)
         val cmd=h.int;val a0=h.int;val a1=h.int;val len=h.int;val sum=h.int;val magic=h.int
@@ -71,24 +82,39 @@ class UsbAdbHost(private val context:Context) {
         return P(cmd,a0,a1,d)
     }
     fun connect():String{
-        close();setup();connected=false;authorized=false
-        writePacket(A_CNXN,0x01000001,MAX,"host::CellTracker\u0000".toByteArray())
+        close();stage="Opening USB ADB interface";setup();connected=false;authorized=false
+        stage="Sending CNXN"
+        writePacket(A_CNXN,0x01000001,MAX,"host::features=shell_v2,cmd,stat_v2,ls_v2\u0000".toByteArray())
         val key=CellTrackerAdbConnectionManager.getInstance(context)
-        repeat(8){
-            val p=readPacket(8000)
+        var tokenCount=0
+        repeat(12){
+            stage="Waiting for adbd"
+            val p=readPacket(10_000)
             when(p.cmd){
-                A_CNXN->{connected=true;authorized=true;return String(p.data).trimEnd('\u0000')}
+                A_CNXN->{
+                    connected=true;authorized=true;stage="Connected"
+                    return String(p.data).trimEnd('\u0000')
+                }
                 A_AUTH->{
-                    if(p.a0==AUTH_TOKEN){
-                        if(it==0){
-                            val sig=Signature.getInstance("NONEwithRSA");sig.initSign(key.privateKey);sig.update(p.data)
-                            writePacket(A_AUTH,AUTH_SIGNATURE,0,sig.sign())
-                        }else writePacket(A_AUTH,AUTH_RSAPUBLICKEY,0,adbPublicKey(key.certificate.publicKey as RSAPublicKey))
+                    check(p.a0==AUTH_TOKEN){"Unexpected AUTH type ${p.a0}"}
+                    tokenCount++
+                    if(tokenCount==1){
+                        stage="Signing AUTH token"
+                        val sig=Signature.getInstance("NONEwithRSA")
+                        sig.initSign(key.privateKey);sig.update(p.data)
+                        writePacket(A_AUTH,AUTH_SIGNATURE,0,sig.sign())
+                    }else{
+                        // adbd asks for another token when the signature key is unknown.
+                        // Send the Android adb public-key structure; REF should now show
+                        // "Allow USB debugging?" and then answer CNXN after approval.
+                        stage="Waiting for REF RSA authorization"
+                        writePacket(A_AUTH,AUTH_RSAPUBLICKEY,0,adbPublicKey(key.certificate.publicKey as RSAPublicKey))
                     }
                 }
+                else -> stage="Handshake packet 0x${p.cmd.toUInt().toString(16)}"
             }
         }
-        error("USB ADB authorization timed out. Accept 'Allow USB debugging' on REF and retry.")
+        error("USB ADB authorization timed out at $stage. Check REF screen for 'Allow USB debugging'.")
     }
     private fun adbPublicKey(k:RSAPublicKey):ByteArray{
         // Android RSAPublicKey wire structure: 2048-bit modulus in little endian + exponent.
@@ -121,5 +147,5 @@ class UsbAdbHost(private val context:Context) {
             }
         }
     }
-    fun close(){runCatching{intf?.let{conn?.releaseInterface(it)}};runCatching{conn?.close()};conn=null;connected=false}
+    fun close(){runCatching{intf?.let{conn?.releaseInterface(it)}};runCatching{conn?.close()};conn=null;connected=false;authorized=false;stage="Disconnected"}
 }
