@@ -4098,6 +4098,7 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
     var localPairCode by rememberSaveable { mutableStateOf("") }
     var pairDialogDismissedPort by rememberSaveable { mutableStateOf(0) }
     var refType by rememberSaveable { mutableStateOf("vivo") }
+            var refTransport by rememberSaveable { mutableStateOf("USB") }
     var customRefName by rememberSaveable { mutableStateOf("") }
     val refLabel = when(refType){"Samsung"->"Samsung_REF";"vivo"->"vivo_REF";else->customRefName.trim().ifBlank{"Custom_REF"}}
     LaunchedEffect(Unit) { CellTrackerAdbEngine.startDiscovery(context) }
@@ -4158,6 +4159,23 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
                     FilterChip(selected=refType=="Custom",onClick={refType="Custom"},label={Text("Custom")})
                 }
                 if(refType=="Custom") OutlinedTextField(customRefName,{customRefName=it},label={Text("Custom REF name")},singleLine=true,modifier=Modifier.fillMaxWidth())
+                Field("Connection",refTransport)
+                Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                    FilterChip(selected=refTransport=="USB",onClick={refTransport="USB";CellTrackerAdbEngine.refreshUsbRef(context)},label={Text("USB ADB")})
+                    FilterChip(selected=refTransport=="Wireless",onClick={refTransport="Wireless"},label={Text("Wireless ADB")})
+                }
+                if(refTransport=="USB"){
+                    LaunchedEffect(Unit){CellTrackerAdbEngine.refreshUsbRef(context)}
+                    Field("USB device",adb.usbDevice.ifBlank{"Tap REFRESH USB"})
+                    Field("USB ADB",adb.usbStatus)
+                    Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                        OutlinedButton(onClick={CellTrackerAdbEngine.refreshUsbRef(context)}){Text("REFRESH USB")}
+                        OutlinedButton(onClick={CellTrackerAdbEngine.requestUsbPermission(context)}){Text("USB PERMISSION")}
+                    }
+                    Button(onClick={scope.launch{CellTrackerAdbEngine.connectUsbRef(context)}},modifier=Modifier.fillMaxWidth()){Text("CONNECT USB ADB")}
+                    Text("REF: enable Developer options → USB debugging. Connect REF to this phone with an OTG/data cable; accept 'Allow USB debugging' on REF.",style=MaterialTheme.typography.bodySmall)
+                }
+                if(refTransport=="Wireless") Text("Wireless ADB controls below remain available as fallback.",style=MaterialTheme.typography.bodySmall)
                 Field("Log folder","Download/CellTracker/Logs/$refLabel")
                 OutlinedTextField(remoteHost,{remoteHost=it},label={Text("REF IP")},singleLine=true,modifier=Modifier.fillMaxWidth())
                 Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
@@ -4177,7 +4195,7 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
                 OutlinedTextField(logcatCommand,{logcatCommand=it},label={Text("Logcat command")},modifier=Modifier.fillMaxWidth())
                 Field("Status",if(adb.logcatRunning)"RECORDING" else "Stopped"); Field("Size",String.format(java.util.Locale.US,"%.1f MB",adb.logcatBytes/1048576.0)); if(adb.logcatPath.isNotBlank())Field("File",adb.logcatPath)
                 Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
-                    Button(enabled=!adb.logcatRunning,onClick={CellTrackerAdbEngine.startLogcat(context,logcatCommand,refLabel)}){Text("START AP LOG")}
+                    Button(enabled=!adb.logcatRunning,onClick={if(refTransport=="USB") CellTrackerAdbEngine.startUsbLogcat(context,logcatCommand,refLabel) else CellTrackerAdbEngine.startLogcat(context,logcatCommand,refLabel)}){Text("START AP LOG")}
                     OutlinedButton(enabled=adb.logcatRunning,onClick={CellTrackerAdbEngine.stopLogcat()}){Text("STOP")}
                 }
                 Text("Presets: AP = logcat -v threadtime · Radio = logcat -b radio -v threadtime",style=MaterialTheme.typography.bodySmall)
