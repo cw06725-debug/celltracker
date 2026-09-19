@@ -1006,28 +1006,16 @@ private fun MainScreen(
                     Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberRetainedScrollState("main.tests")),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    GlassSection("Automated Tests") {
-                        Text("Ping Test", style = MaterialTheme.typography.titleSmall)
-                        Text("Latency, success rate and packet-loss test.", style = MaterialTheme.typography.bodySmall)
-                        Button(onClick = onPingTest, modifier = Modifier.fillMaxWidth()) { Text(if (state.pingTest.isRunning) "Open Ping Test" else "Configure Ping Test") }
-                        HorizontalDivider(Modifier.padding(vertical = 6.dp))
-                        Text("Weak Coverage Route", style = MaterialTheme.typography.titleSmall)
-                        Text("Configurable weak-coverage route with custom points, optional fixed-point Ping and end recovery.", style = MaterialTheme.typography.bodySmall)
-                        Button(onClick = onBasementTest, modifier = Modifier.fillMaxWidth()) { Text(if (BasementTestStore.state.value.isRunning) "Open Weak Coverage Test" else "Configure Weak Coverage Test") }
-                        HorizontalDivider(Modifier.padding(vertical = 6.dp))
-                        Text("YouTube Video Loading", style = MaterialTheme.typography.titleSmall)
-                        Button(onClick = onVideoLoading, modifier = Modifier.fillMaxWidth()) { Text("Configure Video Loading") }
-                        HorizontalDivider(Modifier.padding(vertical = 6.dp))
-                        Text("WhatsApp Image Send", style = MaterialTheme.typography.titleSmall)
-                        Button(onClick = onWhatsAppSend, modifier = Modifier.fillMaxWidth()) { Text("Configure WhatsApp Send") }
-                        HorizontalDivider(Modifier.padding(vertical = 6.dp))
-                        Text("Dual-DUT Call Setup", style = MaterialTheme.typography.titleSmall)
-                        Button(onClick = onCallSetup, modifier = Modifier.fillMaxWidth()) { Text(if (state.callSetup.isRunning) "Open Call Setup" else "Configure Call Setup") }
-                        HorizontalDivider(Modifier.padding(vertical = 6.dp))
-                        Text("Device Logs / ADB Tools", style = MaterialTheme.typography.titleSmall)
-                        Text("Phone-side DUT log export. Local ADB and Samsung REF logcat are isolated in this module.", style = MaterialTheme.typography.bodySmall)
-                        Button(onClick = onDeviceLogs, modifier = Modifier.fillMaxWidth()) { Text("Open Device Logs") }
-                    }
+                    ScenarioTestsV1(
+                        isRecording = state.isRecording,
+                        onStartScenarioRecording = onStartRecording,
+                        onPingTest = onPingTest,
+                        onVideoLoading = onVideoLoading,
+                        onWhatsAppSend = onWhatsAppSend,
+                        onCallSetup = onCallSetup,
+                        onDeviceLogs = onDeviceLogs,
+                        onWeakCoverage = onBasementTest
+                    )
                     GlassSection("Network Recording") {
                         Field("Status", if (state.isRecording) "Recording" else "Stopped")
                         Field("Elapsed", formatElapsed(state.recordingElapsedMs))
@@ -4222,3 +4210,129 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
     }
 }
 
+
+private enum class ScenarioV1Type(val title: String, val subtitle: String) {
+    LONG_STAY("Long Stay", "School · Residential building · Market · Custom location"),
+    POWER_OUTAGE("Power Outage", "Signal · Ping · Call · VoWiFi · Wi-Fi/Cellular recovery"),
+    HOTSPOT("Hotspot Sharing", "Ping · Data service · Video · Long-duration stability")
+}
+
+@Composable
+private fun ScenarioTestsV1(
+    isRecording: Boolean,
+    onStartScenarioRecording: (String) -> Unit,
+    onPingTest: () -> Unit,
+    onVideoLoading: () -> Unit,
+    onWhatsAppSend: () -> Unit,
+    onCallSetup: () -> Unit,
+    onDeviceLogs: () -> Unit,
+    onWeakCoverage: () -> Unit
+) {
+    var selectedScenario by remember { mutableStateOf<ScenarioV1Type?>(null) }
+    Text("Scenario Tests", style = MaterialTheme.typography.titleLarge)
+    Text("Choose the real-world scenario first, then configure the test plan.", style = MaterialTheme.typography.bodySmall)
+    ScenarioV1Type.entries.forEach { item ->
+        Card(
+            onClick = { selectedScenario = item },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(item.title, style = MaterialTheme.typography.titleMedium)
+                Text(item.subtitle, style = MaterialTheme.typography.bodySmall)
+                Text("Configure scenario  ›", style = MaterialTheme.typography.labelMedium)
+            }
+        }
+    }
+
+    Spacer(Modifier.height(4.dp))
+    Text("Quick Tools", style = MaterialTheme.typography.titleLarge)
+    Text("Run a capability directly without creating a scenario session.", style = MaterialTheme.typography.bodySmall)
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onPingTest, modifier = Modifier.weight(1f)) { Text("Ping") }
+                OutlinedButton(onClick = onVideoLoading, modifier = Modifier.weight(1f)) { Text("Video") }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onWhatsAppSend, modifier = Modifier.weight(1f)) { Text("WhatsApp") }
+                OutlinedButton(onClick = onCallSetup, modifier = Modifier.weight(1f)) { Text("Call") }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onWeakCoverage, modifier = Modifier.weight(1f)) { Text("Weak Coverage") }
+                OutlinedButton(onClick = onDeviceLogs, modifier = Modifier.weight(1f)) { Text("ADB / Logs") }
+            }
+        }
+    }
+
+    selectedScenario?.let { scenario ->
+        ScenarioPlanDialogV1(
+            scenario = scenario,
+            recordingAlreadyRunning = isRecording,
+            onDismiss = { selectedScenario = null },
+            onStart = { location ->
+                onStartScenarioRecording("${scenario.title} · $location")
+                selectedScenario = null
+            }
+        )
+    }
+}
+
+@Composable
+private fun ScenarioPlanDialogV1(
+    scenario: ScenarioV1Type,
+    recordingAlreadyRunning: Boolean,
+    onDismiss: () -> Unit,
+    onStart: (String) -> Unit
+) {
+    var location by rememberSaveable(scenario.name) { mutableStateOf("") }
+    var operatorName by rememberSaveable(scenario.name + "operator") { mutableStateOf("") }
+    var dutName by rememberSaveable(scenario.name + "dut") { mutableStateOf("") }
+    var refName by rememberSaveable(scenario.name + "ref") { mutableStateOf("") }
+    var network by remember { mutableStateOf(true) }
+    var ping by remember { mutableStateOf(true) }
+    var call by remember { mutableStateOf(scenario != ScenarioV1Type.HOTSPOT) }
+    var data by remember { mutableStateOf(true) }
+    var logs by remember { mutableStateOf(true) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("${scenario.title} · Test Plan") },
+        text = {
+            Column(Modifier.fillMaxWidth().heightIn(max = 560.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Scenario First", style = MaterialTheme.typography.labelLarge)
+                OutlinedTextField(location, { location = it }, label = { Text("Location / Scenario Name") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(operatorName, { operatorName = it }, label = { Text("Operator") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(dutName, { dutName = it }, label = { Text("DUT") }, modifier = Modifier.weight(1f), singleLine = true)
+                    OutlinedTextField(refName, { refName = it }, label = { Text("REF") }, modifier = Modifier.weight(1f), singleLine = true)
+                }
+                HorizontalDivider()
+                Text("Test Items", style = MaterialTheme.typography.titleSmall)
+                ScenarioCheck("Network Recording", network) { network = it }
+                ScenarioCheck("Ping / Data quality", ping) { ping = it }
+                ScenarioCheck(if (scenario == ScenarioV1Type.POWER_OUTAGE) "VoLTE / WhatsApp / VoWiFi Call" else "VoLTE / WhatsApp Call", call) { call = it }
+                ScenarioCheck(if (scenario == ScenarioV1Type.HOTSPOT) "WhatsApp / Video / Hotspot stability" else "WhatsApp / Short Video / Upload", data) { data = it }
+                ScenarioCheck("DUT / REF Logs", logs) { logs = it }
+                if (scenario == ScenarioV1Type.POWER_OUTAGE) {
+                    Text("Session markers: POWER OFF → outage observation → POWER RESTORED → recovery observation", style = MaterialTheme.typography.bodySmall)
+                }
+                if (scenario == ScenarioV1Type.HOTSPOT) {
+                    Text("V1 plan: long-duration session with periodic checkpoints and service events.", style = MaterialTheme.typography.bodySmall)
+                }
+                if (recordingAlreadyRunning) Text("A network recording is already running. Stop it before starting a new scenario session.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            }
+        },
+        confirmButton = {
+            Button(onClick = { onStart(location.trim()) }, enabled = location.isNotBlank() && !recordingAlreadyRunning) { Text("Start Session") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+@Composable
+private fun ScenarioCheck(label: String, checked: Boolean, onChecked: (Boolean) -> Unit) {
+    Row(Modifier.fillMaxWidth().clickable { onChecked(!checked) }, verticalAlignment = Alignment.CenterVertically) {
+        Checkbox(checked = checked, onCheckedChange = onChecked)
+        Text(label, style = MaterialTheme.typography.bodyMedium)
+    }
+}
