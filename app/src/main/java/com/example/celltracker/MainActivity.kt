@@ -10,6 +10,10 @@ import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.ContentUris
 import android.content.Intent
+import android.content.Context
+import android.content.pm.PackageManager
+import android.telephony.SubscriptionManager
+import android.telephony.TelephonyManager
 import android.net.Uri
 import android.widget.Toast
 import android.preference.PreferenceManager
@@ -4214,7 +4218,8 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
 private enum class ScenarioV1Type(val title: String, val subtitle: String) {
     LONG_STAY("Long Stay", "School · Residential building · Market · Custom location"),
     POWER_OUTAGE("Power Outage", "Signal · Ping · Call · VoWiFi · Wi-Fi/Cellular recovery"),
-    HOTSPOT("Hotspot Sharing", "Ping · Data service · Video · Long-duration stability")
+    HOTSPOT("Hotspot Sharing", "Ping · Data service · Video · Long-duration stability"),
+    CUSTOM("Custom", "Build your own scenario and choose the required test capabilities")
 }
 
 @Composable
@@ -4284,8 +4289,12 @@ private fun ScenarioPlanDialogV1(
     onDismiss: () -> Unit,
     onStart: (String) -> Unit
 ) {
+    val context = LocalContext.current
     var location by rememberSaveable(scenario.name) { mutableStateOf("") }
+    var customScenarioName by rememberSaveable(scenario.name + "customName") { mutableStateOf("") }
     var operatorName by rememberSaveable(scenario.name + "operator") { mutableStateOf("") }
+    var operatorAutoState by remember(scenario.name) { mutableStateOf("Detecting current data SIM…") }
+    var operatorMenu by remember { mutableStateOf(false) }
     var dutName by rememberSaveable(scenario.name + "dut") { mutableStateOf("") }
     var refName by rememberSaveable(scenario.name + "ref") { mutableStateOf("") }
     var network by remember { mutableStateOf(true) }
@@ -4294,14 +4303,48 @@ private fun ScenarioPlanDialogV1(
     var data by remember { mutableStateOf(true) }
     var logs by remember { mutableStateOf(true) }
 
+    LaunchedEffect(scenario) {
+        val detected = withContext(Dispatchers.IO) { detectCurrentDataOperatorV1(context) }
+        if (detected != null) {
+            operatorName = detected.displayName
+            operatorAutoState = "Auto detected · ${detected.simLabel}"
+        } else {
+            operatorName = ""
+            operatorAutoState = "Auto-detection failed · Select manually"
+        }
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("${scenario.title} · Test Plan") },
         text = {
             Column(Modifier.fillMaxWidth().heightIn(max = 560.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Scenario First", style = MaterialTheme.typography.labelLarge)
+                if (scenario == ScenarioV1Type.CUSTOM) {
+                    OutlinedTextField(customScenarioName, { customScenarioName = it }, label = { Text("Scenario Name") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                }
                 OutlinedTextField(location, { location = it }, label = { Text("Location / Scenario Name") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-                OutlinedTextField(operatorName, { operatorName = it }, label = { Text("Operator") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                ExposedDropdownMenuBox(expanded = operatorMenu, onExpandedChange = { operatorMenu = !operatorMenu }) {
+                    OutlinedTextField(
+                        value = operatorName,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Operator") },
+                        placeholder = { Text("Select manually") },
+                        supportingText = { Text(operatorAutoState) },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = operatorMenu) },
+                        modifier = Modifier.fillMaxWidth().menuAnchor()
+                    )
+                    ExposedDropdownMenu(expanded = operatorMenu, onDismissRequest = { operatorMenu = false }) {
+                        listOf("Jazz", "Zong", "Ufone", "Telenor", "Other / Custom").forEach { op ->
+                            DropdownMenuItem(text = { Text(op) }, onClick = {
+                                operatorName = op
+                                operatorAutoState = "Selected manually"
+                                operatorMenu = false
+                            })
+                        }
+                    }
+                }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(dutName, { dutName = it }, label = { Text("DUT") }, modifier = Modifier.weight(1f), singleLine = true)
                     OutlinedTextField(refName, { refName = it }, label = { Text("REF") }, modifier = Modifier.weight(1f), singleLine = true)
@@ -4313,20 +4356,46 @@ private fun ScenarioPlanDialogV1(
                 ScenarioCheck(if (scenario == ScenarioV1Type.POWER_OUTAGE) "VoLTE / WhatsApp / VoWiFi Call" else "VoLTE / WhatsApp Call", call) { call = it }
                 ScenarioCheck(if (scenario == ScenarioV1Type.HOTSPOT) "WhatsApp / Video / Hotspot stability" else "WhatsApp / Short Video / Upload", data) { data = it }
                 ScenarioCheck("DUT / REF Logs", logs) { logs = it }
-                if (scenario == ScenarioV1Type.POWER_OUTAGE) {
-                    Text("Session markers: POWER OFF → outage observation → POWER RESTORED → recovery observation", style = MaterialTheme.typography.bodySmall)
-                }
-                if (scenario == ScenarioV1Type.HOTSPOT) {
-                    Text("V1 plan: long-duration session with periodic checkpoints and service events.", style = MaterialTheme.typography.bodySmall)
-                }
+                if (scenario == ScenarioV1Type.POWER_OUTAGE) Text("Session markers: POWER OFF → outage observation → POWER RESTORED → recovery observation", style = MaterialTheme.typography.bodySmall)
+                if (scenario == ScenarioV1Type.HOTSPOT) Text("Long-duration session with periodic checkpoints and service events.", style = MaterialTheme.typography.bodySmall)
+                if (scenario == ScenarioV1Type.CUSTOM) Text("Custom sessions can combine any available test capabilities.", style = MaterialTheme.typography.bodySmall)
                 if (recordingAlreadyRunning) Text("A network recording is already running. Stop it before starting a new scenario session.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
             }
         },
         confirmButton = {
-            Button(onClick = { onStart(location.trim()) }, enabled = location.isNotBlank() && !recordingAlreadyRunning) { Text("Start Session") }
+            val scenarioNameOk = scenario != ScenarioV1Type.CUSTOM || customScenarioName.isNotBlank()
+            Button(onClick = {
+                val prefix = if (scenario == ScenarioV1Type.CUSTOM) customScenarioName.trim() else scenario.title
+                onStart("$prefix · ${location.trim()} · ${operatorName.ifBlank { "Operator Unknown" }}")
+            }, enabled = location.isNotBlank() && scenarioNameOk && !recordingAlreadyRunning) { Text("Start Session") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
+}
+
+private data class DetectedOperatorV1(val displayName: String, val simLabel: String)
+
+private fun detectCurrentDataOperatorV1(context: Context): DetectedOperatorV1? {
+    if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) return null
+    val subId = runCatching { SubscriptionManager.getDefaultDataSubscriptionId() }.getOrNull()
+        ?.takeIf { it != SubscriptionManager.INVALID_SUBSCRIPTION_ID } ?: return null
+    val sm = context.getSystemService(SubscriptionManager::class.java) ?: return null
+    val info = runCatching { sm.getActiveSubscriptionInfo(subId) }.getOrNull() ?: return null
+    val tm = context.getSystemService(TelephonyManager::class.java)?.createForSubscriptionId(subId) ?: return null
+    val raw = sequenceOf(
+        runCatching { tm.networkOperatorName }.getOrNull(),
+        info.carrierName?.toString(),
+        info.displayName?.toString()
+    ).mapNotNull { it?.trim()?.takeIf(String::isNotBlank) }.firstOrNull() ?: return null
+    val normalized = when {
+        raw.contains("jazz", true) || raw.contains("mobilink", true) -> "Jazz"
+        raw.contains("zong", true) || raw.contains("cmpak", true) -> "Zong"
+        raw.contains("ufone", true) || raw.contains("ptml", true) -> "Ufone"
+        raw.contains("telenor", true) -> "Telenor"
+        else -> raw
+    }
+    val slot = if (info.simSlotIndex >= 0) "SIM ${info.simSlotIndex + 1}" else "Data SIM"
+    return DetectedOperatorV1(normalized, slot)
 }
 
 @Composable
