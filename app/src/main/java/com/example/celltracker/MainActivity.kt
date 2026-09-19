@@ -4282,6 +4282,7 @@ private fun ScenarioTestsV1(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ScenarioPlanDialogV1(
     scenario: ScenarioV1Type,
