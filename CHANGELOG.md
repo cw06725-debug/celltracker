@@ -1,3 +1,10 @@
+## 1.0.0.0.4
+- Add persistent Scenario Session data model/store.
+- Add unified session timestamps, phases and event timeline foundation.
+- Add Power Outage phase model and common event-marker schema.
+- Prepare Long Stay, Hotspot, Custom and Reports to share one Session Engine.
+- Keep v1.0.0.0.3 scenario UI as the stable front-end baseline.
+
 # CellTracker Changelog
 
 ## v0.9.3.0.56
