@@ -1,3 +1,12 @@
+## 1.0.0.0.5
+- Wire Scenario Start into a visible Running Session screen.
+- Persist real Scenario Session metadata and test plan.
+- Start existing Network Recording when selected.
+- Add live elapsed time, phase and event count.
+- Add Power Outage POWER OFF / POWER RESTORED phase controls.
+- Add quick event markers and direct Ping/Video/WhatsApp/Call/ADB test launchers.
+- Add Finish Session and stop scenario-owned network recording.
+
 ## 1.0.0.0.4
 - Add persistent Scenario Session data model/store.
 - Add unified session timestamps, phases and event timeline foundation.

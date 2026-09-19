@@ -1013,6 +1013,8 @@ private fun MainScreen(
                     ScenarioTestsV1(
                         isRecording = state.isRecording,
                         onStartScenarioRecording = onStartRecording,
+                        onStopScenarioRecording = onStopRecording,
+                        onMarkScenarioEvent = onMarkEvent,
                         onPingTest = onPingTest,
                         onVideoLoading = onVideoLoading,
                         onWhatsAppSend = onWhatsAppSend,
@@ -4226,6 +4228,8 @@ private enum class ScenarioV1Type(val title: String, val subtitle: String) {
 private fun ScenarioTestsV1(
     isRecording: Boolean,
     onStartScenarioRecording: (String) -> Unit,
+    onStopScenarioRecording: () -> Unit,
+    onMarkScenarioEvent: (String, String) -> Unit,
     onPingTest: () -> Unit,
     onVideoLoading: () -> Unit,
     onWhatsAppSend: () -> Unit,
@@ -4233,14 +4237,98 @@ private fun ScenarioTestsV1(
     onDeviceLogs: () -> Unit,
     onWeakCoverage: () -> Unit
 ) {
+    val context = LocalContext.current
     var selectedScenario by remember { mutableStateOf<ScenarioV1Type?>(null) }
+    var activeSessionId by rememberSaveable { mutableStateOf<String?>(null) }
+    var activeSession by remember { mutableStateOf<ScenarioSessionV1?>(null) }
+    var tick by remember { mutableLongStateOf(System.currentTimeMillis()) }
+
+    LaunchedEffect(activeSessionId) {
+        while (activeSessionId != null) {
+            tick = System.currentTimeMillis()
+            delay(1000)
+        }
+    }
+
+    if (activeSession != null) {
+        val s = activeSession!!
+        val elapsed = ((tick - s.startMs).coerceAtLeast(0L) / 1000L)
+        val hh = elapsed / 3600
+        val mm = (elapsed % 3600) / 60
+        val ss = elapsed % 60
+        Text("${s.scenario} · Running", style = MaterialTheme.typography.titleLarge)
+        Text(s.location, style = MaterialTheme.typography.titleMedium)
+        Text("${s.operator} · DUT ${s.dut.ifBlank { "—" }} · REF ${s.ref.ifBlank { "—" }}", style = MaterialTheme.typography.bodySmall)
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Field("Elapsed", "%02d:%02d:%02d".format(hh, mm, ss))
+                Field("Phase", s.phase.name.replace('_',' '))
+                Field("Network Recording", if (isRecording) "● Running" else "Stopped")
+                Field("Events", s.events.size.toString())
+                if (s.testItems.isNotEmpty()) Text("Plan: ${s.testItems.joinToString(" · ")}", style = MaterialTheme.typography.bodySmall)
+            }
+        }
+
+        if (s.scenario == "Power Outage") {
+            when (s.phase) {
+                ScenarioPhaseV1.BASELINE -> Button(
+                    onClick = {
+                        activeSession = ScenarioSessionStoreV1.addEvent(context, s.id, "POWER_OFF")
+                        activeSession = ScenarioSessionStoreV1.setPhase(context, s.id, ScenarioPhaseV1.POWER_OUT)
+                        if (isRecording) onMarkScenarioEvent("POWER_OFF", "Scenario marker")
+                    }, modifier = Modifier.fillMaxWidth()
+                ) { Text("POWER OFF") }
+                ScenarioPhaseV1.POWER_OUT -> Button(
+                    onClick = {
+                        activeSession = ScenarioSessionStoreV1.addEvent(context, s.id, "POWER_RESTORED")
+                        activeSession = ScenarioSessionStoreV1.setPhase(context, s.id, ScenarioPhaseV1.RECOVERY)
+                        if (isRecording) onMarkScenarioEvent("POWER_RESTORED", "Scenario marker")
+                    }, modifier = Modifier.fillMaxWidth()
+                ) { Text("POWER RESTORED") }
+                else -> Unit
+            }
+        }
+
+        Text("Quick Marker", style = MaterialTheme.typography.titleMedium)
+        val markers = listOf("VIDEO_FREEZE" to "Video Freeze", "CALL_DROP" to "Call Drop",
+            "DATA_FAILURE" to "Data Failure", "SLOW_LOADING" to "Slow Loading",
+            "NETWORK_ABNORMAL" to "Network Abnormal", "CHECKPOINT" to "Checkpoint")
+        markers.chunked(2).forEach { row ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                row.forEach { (type,label) ->
+                    OutlinedButton(onClick = {
+                        activeSession = ScenarioSessionStoreV1.addEvent(context, s.id, type)
+                        if (isRecording) onMarkScenarioEvent(type, "Scenario marker")
+                    }, modifier = Modifier.weight(1f)) { Text(label) }
+                }
+                if (row.size == 1) Spacer(Modifier.weight(1f))
+            }
+        }
+
+        Text("Run Test", style = MaterialTheme.typography.titleMedium)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = onPingTest, modifier = Modifier.weight(1f)) { Text("Ping") }
+            OutlinedButton(onClick = onVideoLoading, modifier = Modifier.weight(1f)) { Text("Video") }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = onWhatsAppSend, modifier = Modifier.weight(1f)) { Text("WhatsApp") }
+            OutlinedButton(onClick = onCallSetup, modifier = Modifier.weight(1f)) { Text("Call") }
+        }
+        OutlinedButton(onClick = onDeviceLogs, modifier = Modifier.fillMaxWidth()) { Text("ADB / Logs") }
+
+        Button(onClick = {
+            if (isRecording) onStopScenarioRecording()
+            activeSession = ScenarioSessionStoreV1.setPhase(context, s.id, ScenarioPhaseV1.FINISHED)
+            activeSessionId = null
+            activeSession = null
+        }, modifier = Modifier.fillMaxWidth()) { Text("FINISH SESSION") }
+        return
+    }
+
     Text("Scenario Tests", style = MaterialTheme.typography.titleLarge)
     Text("Choose the real-world scenario first, then configure the test plan.", style = MaterialTheme.typography.bodySmall)
     ScenarioV1Type.entries.forEach { item ->
-        Card(
-            onClick = { selectedScenario = item },
-            modifier = Modifier.fillMaxWidth()
-        ) {
+        Card(onClick = { selectedScenario = item }, modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(item.title, style = MaterialTheme.typography.titleMedium)
                 Text(item.subtitle, style = MaterialTheme.typography.bodySmall)
@@ -4274,13 +4362,37 @@ private fun ScenarioTestsV1(
             scenario = scenario,
             recordingAlreadyRunning = isRecording,
             onDismiss = { selectedScenario = null },
-            onStart = { location ->
-                onStartScenarioRecording("${scenario.title} · $location")
+            onStart = { config ->
+                val session = ScenarioSessionV1(
+                    scenario = config.scenarioName,
+                    location = config.location,
+                    operator = config.operator,
+                    dut = config.dut,
+                    ref = config.ref,
+                    testItems = config.testItems,
+                    phase = if (scenario == ScenarioV1Type.POWER_OUTAGE) ScenarioPhaseV1.BASELINE else ScenarioPhaseV1.ACTIVE,
+                    events = listOf(ScenarioEventV1(type = "SESSION_STARTED"))
+                )
+                ScenarioSessionStoreV1.save(context, session)
+                activeSessionId = session.id
+                activeSession = session
+                if ("Network Recording" in config.testItems) {
+                    onStartScenarioRecording("${config.scenarioName} · ${config.location} · ${config.operator}")
+                }
                 selectedScenario = null
             }
         )
     }
 }
+
+private data class ScenarioStartConfigV1(
+    val scenarioName: String,
+    val location: String,
+    val operator: String,
+    val dut: String,
+    val ref: String,
+    val testItems: List<String>
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -4288,7 +4400,7 @@ private fun ScenarioPlanDialogV1(
     scenario: ScenarioV1Type,
     recordingAlreadyRunning: Boolean,
     onDismiss: () -> Unit,
-    onStart: (String) -> Unit
+    onStart: (ScenarioStartConfigV1) -> Unit
 ) {
     val context = LocalContext.current
     var location by rememberSaveable(scenario.name) { mutableStateOf("") }
@@ -4367,7 +4479,14 @@ private fun ScenarioPlanDialogV1(
             val scenarioNameOk = scenario != ScenarioV1Type.CUSTOM || customScenarioName.isNotBlank()
             Button(onClick = {
                 val prefix = if (scenario == ScenarioV1Type.CUSTOM) customScenarioName.trim() else scenario.title
-                onStart("$prefix · ${location.trim()} · ${operatorName.ifBlank { "Operator Unknown" }}")
+                val items = buildList {
+                    if (network) add("Network Recording")
+                    if (ping) add("Ping / Data quality")
+                    if (call) add(if (scenario == ScenarioV1Type.POWER_OUTAGE) "VoLTE / WhatsApp / VoWiFi Call" else "VoLTE / WhatsApp Call")
+                    if (data) add(if (scenario == ScenarioV1Type.HOTSPOT) "WhatsApp / Video / Hotspot stability" else "WhatsApp / Short Video / Upload")
+                    if (logs) add("DUT / REF Logs")
+                }
+                onStart(ScenarioStartConfigV1(prefix, location.trim(), operatorName.ifBlank { "Operator Unknown" }, dutName.trim(), refName.trim(), items))
             }, enabled = location.isNotBlank() && scenarioNameOk && !recordingAlreadyRunning) { Text("Start Session") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
