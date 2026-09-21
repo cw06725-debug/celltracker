@@ -1,3 +1,14 @@
+## 1.0.0.0.7
+- Fix TikTok Auto Swipe by enabling Accessibility canPerformGestures and adding gesture result feedback.
+- Launch TikTok first, then create the test overlay.
+- Restore real-time HH:mm:ss.SSS clock for screen-recording calibration.
+- Redesign floating controls as equal-size 2x2 buttons.
+- Add pre-test Task Name, current-data-SIM Operator auto detection/manual selection, swipe mode and upload type.
+- Add direct Accessibility permission/settings entry and block start until service is enabled.
+- Add TikTok Video Lag and TikTok Upload categories to Reports.
+- Show report summary + detailed event/attempt rows and support CSV sharing.
+- Include Task/Operator/Swipe Mode or Upload Type in saved CSV.
+
 ## 1.0.0.0.6
 - Add Quick Tool: TikTok Video Lag.
 - Add Manual / Auto Swipe modes; Auto records T0 then performs one upward Accessibility swipe.

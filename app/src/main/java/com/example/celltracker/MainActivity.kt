@@ -464,6 +464,68 @@ private fun GlassSection(title: String, content: @Composable ColumnScope.() -> U
     }
 }
 
+private data class TikTokReportRowV1(
+    val uri:String,
+    val name:String,
+    val addedMs:Long,
+    val task:String,
+    val operator:String,
+    val start:String,
+    val fields:Map<String,String>,
+    val detail:String
+)
+
+private fun loadTikTokReportsV1(context: Context): Pair<List<TikTokReportRowV1>,List<TikTokReportRowV1>> {
+    val lag=mutableListOf<TikTokReportRowV1>()
+    val upload=mutableListOf<TikTokReportRowV1>()
+    val collection=android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI
+    val projection=arrayOf(
+        android.provider.MediaStore.Downloads._ID,
+        android.provider.MediaStore.Downloads.DISPLAY_NAME,
+        android.provider.MediaStore.Downloads.DATE_ADDED,
+        android.provider.MediaStore.Downloads.RELATIVE_PATH
+    )
+    runCatching {
+        context.contentResolver.query(collection,projection,null,null,
+            android.provider.MediaStore.Downloads.DATE_ADDED+" DESC")?.use { c ->
+            val idI=c.getColumnIndexOrThrow(android.provider.MediaStore.Downloads._ID)
+            val nameI=c.getColumnIndexOrThrow(android.provider.MediaStore.Downloads.DISPLAY_NAME)
+            val dateI=c.getColumnIndexOrThrow(android.provider.MediaStore.Downloads.DATE_ADDED)
+            val pathI=c.getColumnIndexOrThrow(android.provider.MediaStore.Downloads.RELATIVE_PATH)
+            while(c.moveToNext()){
+                val rel=c.getString(pathI).orEmpty()
+                val isLag=rel.contains("TikTok Video Lag",true)
+                val isUpload=rel.contains("TikTok Upload",true)
+                if(!isLag&&!isUpload) continue
+                val uri=android.content.ContentUris.withAppendedId(collection,c.getLong(idI))
+                val raw=runCatching {
+                    context.contentResolver.openInputStream(uri)?.bufferedReader()?.use{it.readText()}
+                }.getOrNull().orEmpty()
+                val lines=raw.lines()
+                val fields=linkedMapOf<String,String>()
+                var header=-1
+                lines.forEachIndexed { i,line ->
+                    if(line.startsWith("Sequence,")){header=i}
+                    else if(header<0){
+                        val k=line.substringBefore(',',"").trim()
+                        val v=line.substringAfter(',',"").trim()
+                        if(k.isNotBlank()) fields[k]=v
+                    }
+                }
+                val detail=if(header>=0) lines.drop(header).filter{it.isNotBlank()}.joinToString("\n") else ""
+                val row=TikTokReportRowV1(
+                    uri=uri.toString(),name=c.getString(nameI).orEmpty(),
+                    addedMs=c.getLong(dateI)*1000L,
+                    task=fields["Task"].orEmpty(),operator=fields["Operator"].orEmpty(),
+                    start=fields["Start"].orEmpty(),fields=fields,detail=detail
+                )
+                if(isLag) lag+=row else upload+=row
+            }
+        }
+    }
+    return lag to upload
+}
+
 private data class BasementReportRow(val uri: Uri, val name: String, val relativePath: String, val addedMs: Long)
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -479,6 +541,8 @@ private fun ReportsHome(
     var videoReports by remember { mutableStateOf(emptyList<VideoLoadingDetail>()) }
     var whatsappReports by remember { mutableStateOf(emptyList<WhatsAppSendDetail>()) }
     var basementReports by remember { mutableStateOf(emptyList<BasementReportRow>()) }
+    var tikTokLagReports by remember { mutableStateOf(emptyList<TikTokReportRowV1>()) }
+    var tikTokUploadReports by remember { mutableStateOf(emptyList<TikTokReportRowV1>()) }
     var category by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedPath by rememberSaveable { mutableStateOf<String?>(null) }
     var exportResult by remember { mutableStateOf<ExportResult?>(null) }
@@ -496,6 +560,9 @@ private fun ReportsHome(
             videoReports = loaded.first
             whatsappReports = loaded.second
             basementReports = loaded.third
+            val tt = withContext(Dispatchers.IO) { loadTikTokReportsV1(context) }
+            tikTokLagReports = tt.first
+            tikTokUploadReports = tt.second
         }
     }
 
@@ -545,6 +612,8 @@ private fun ReportsHome(
             "YOUTUBE" -> File(path).nameWithoutExtension
             "WHATSAPP" -> File(path).nameWithoutExtension
             "CALL" -> state.callHistory.firstOrNull { it.path == path }?.taskName?.ifBlank { "Call Setup Report" } ?: "Call Setup Report"
+            "TIKTOK_LAG" -> tikTokLagReports.firstOrNull { it.uri == path }?.task?.ifBlank { "TikTok Video Lag" } ?: "TikTok Video Lag"
+            "TIKTOK_UPLOAD" -> tikTokUploadReports.firstOrNull { it.uri == path }?.task?.ifBlank { "TikTok Upload" } ?: "TikTok Upload"
             else -> "Report"
         }
         Column(modifier.fillMaxSize()) {
@@ -594,6 +663,33 @@ private fun ReportsHome(
                             Field("Status", r.status)
                         }
                     }
+                    "TIKTOK_LAG" -> tikTokLagReports.firstOrNull { it.uri == path }?.let { r ->
+                        GlassSection("TikTok Video Lag Summary") {
+                            Field("Task", r.task)
+                            Field("Operator", r.operator)
+                            Field("Start", r.start)
+                            Field("Swipe Mode", r.fields["Swipe Mode"] ?: "--")
+                            Field("Videos", r.fields["Videos"] ?: "0")
+                            Field("Lag Count", r.fields["Lag Count"] ?: "0")
+                            Field("Total Lag", r.fields["Total Lag ms"]?.toLongOrNull()?.let { String.format(Locale.US,"%.3f s",it/1000.0) } ?: "--")
+                            Field("Average Lag", r.fields["Average Lag ms"]?.toLongOrNull()?.let { String.format(Locale.US,"%.3f s",it/1000.0) } ?: "--")
+                        }
+                        GlassSection("Event Detail") {
+                            Text(r.detail.ifBlank { "No lag events recorded." }, style=MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                    "TIKTOK_UPLOAD" -> tikTokUploadReports.firstOrNull { it.uri == path }?.let { r ->
+                        GlassSection("TikTok Upload Summary") {
+                            Field("Task", r.task)
+                            Field("Operator", r.operator)
+                            Field("Start", r.start)
+                            Field("Upload Type", r.fields["Upload Type"] ?: "--")
+                            Field("Completed", r.fields["Completed"] ?: "0")
+                        }
+                        GlassSection("Attempt Detail") {
+                            Text(r.detail.ifBlank { "No completed attempts recorded." }, style=MaterialTheme.typography.bodySmall)
+                        }
+                    }
                     "CALL" -> state.callHistory.firstOrNull { it.path == path }?.let { r ->
                         GlassSection("Call Setup Summary") {
                             Field("Started", SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(r.startedAt)))
@@ -605,7 +701,21 @@ private fun ReportsHome(
                         }
                     }
                 }
-                if (cat == "WEAK") {
+                if (cat == "TIKTOK_LAG" || cat == "TIKTOK_UPLOAD") {
+                    Button(
+                        onClick = {
+                            val uri = android.net.Uri.parse(path)
+                            val send = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/csv"
+                                putExtra(Intent.EXTRA_STREAM, uri)
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                            runCatching { context.startActivity(Intent.createChooser(send, "Share TikTok report")) }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("EXPORT / SHARE CSV") }
+                    Text("The full report is already shown above. CSV is saved under Download/CellTracker/<date>.", style=MaterialTheme.typography.bodySmall)
+                } else if (cat == "WEAK") {
                     Button(
                         onClick = {
                             basementReports.firstOrNull { it.uri.toString() == path }?.let { r ->
@@ -654,6 +764,8 @@ private fun ReportsHome(
             "WHATSAPP" -> whatsappReports.size
             "CALL" -> state.callHistory.size
             "RECORDING" -> state.recordings.size
+            "TIKTOK_LAG" -> tikTokLagReports.size
+            "TIKTOK_UPLOAD" -> tikTokUploadReports.size
             else -> 0
         }
         val title = when (cat) {
@@ -663,6 +775,8 @@ private fun ReportsHome(
             "WHATSAPP" -> "WhatsApp Image Send"
             "CALL" -> "Dual-DUT Call Setup"
             "RECORDING" -> "Network Recording"
+            "TIKTOK_LAG" -> "TikTok Video Lag"
+            "TIKTOK_UPLOAD" -> "TikTok Upload"
             else -> "Reports"
         }
 
@@ -716,6 +830,20 @@ private fun ReportsHome(
                             onClick = { selectedPath = r.path }
                         )
                     }
+                    "TIKTOK_LAG" -> items(tikTokLagReports, key = { it.uri }) { r ->
+                        ReportListCard(
+                            title = r.task.ifBlank { r.name.substringBeforeLast('.') },
+                            subtitle = "${r.start} · ${r.operator} · Lag ${r.fields["Lag Count"] ?: "0"}",
+                            onClick = { selectedPath = r.uri }
+                        )
+                    }
+                    "TIKTOK_UPLOAD" -> items(tikTokUploadReports, key = { it.uri }) { r ->
+                        ReportListCard(
+                            title = r.task.ifBlank { r.name.substringBeforeLast('.') },
+                            subtitle = "${r.start} · ${r.operator} · Completed ${r.fields["Completed"] ?: "0"}",
+                            onClick = { selectedPath = r.uri }
+                        )
+                    }
                     "CALL" -> items(state.callHistory, key = { it.path }) { r ->
                         ReportListCard(
                             title = r.taskName.ifBlank { "Call Setup" },
@@ -751,6 +879,8 @@ private fun ReportsHome(
         item { ReportCategoryCard("WhatsApp Image Send", whatsappReports.size) { category = "WHATSAPP" } }
         item { ReportCategoryCard("Dual-DUT Call Setup", state.callHistory.size) { category = "CALL" } }
         item { ReportCategoryCard("Network Recording", state.recordings.size) { category = "RECORDING" } }
+        item { ReportCategoryCard("TikTok Video Lag", tikTokLagReports.size) { category = "TIKTOK_LAG" } }
+        item { ReportCategoryCard("TikTok Upload", tikTokUploadReports.size) { category = "TIKTOK_UPLOAD" } }
     }
 }
 
@@ -4241,6 +4371,10 @@ private fun ScenarioTestsV1(
     var selectedScenario by remember { mutableStateOf<ScenarioV1Type?>(null) }
     var tikTokTool by remember { mutableStateOf<String?>(null) }
     var tikTokAutoSwipe by remember { mutableStateOf(false) }
+    var tikTokTaskName by remember { mutableStateOf("") }
+    var tikTokOperator by remember { mutableStateOf("") }
+    var tikTokOperatorHint by remember { mutableStateOf("Detecting current data SIM…") }
+    var tikTokUploadType by remember { mutableStateOf("Video") }
     var activeSessionId by rememberSaveable { mutableStateOf<String?>(null) }
     var activeSession by remember { mutableStateOf<ScenarioSessionV1?>(null) }
     var tick by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -4365,42 +4499,118 @@ private fun ScenarioTestsV1(
 
 
     tikTokTool?.let { tool ->
+        LaunchedEffect(tool) {
+            if (tikTokTaskName.isBlank()) {
+                tikTokTaskName = if (tool == "LAG") "TikTok Video Lag" else "TikTok Upload"
+            }
+            val detected = withContext(Dispatchers.IO) { detectCurrentDataOperatorV1(context) }
+            if (detected != null) {
+                tikTokOperator = detected.displayName
+                tikTokOperatorHint = "Auto detected · ${detected.simLabel}"
+            } else {
+                tikTokOperatorHint = "Auto-detection failed · enter/select manually"
+            }
+        }
+        val accessibilityEnabled = isCellTrackerAccessibilityEnabledV1(context)
         AlertDialog(
             onDismissRequest = { tikTokTool = null },
-            title = { Text(if (tool == "LAG") "TikTok Video Lag" else "TikTok Upload") },
+            title = { Text(if (tool == "LAG") "TikTok Video Lag · Setup" else "TikTok Upload · Setup") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    OutlinedTextField(
+                        value = tikTokTaskName,
+                        onValueChange = { tikTokTaskName = it },
+                        label = { Text("Task Name") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = tikTokOperator,
+                        onValueChange = { tikTokOperator = it },
+                        label = { Text("Operator") },
+                        supportingText = { Text(tikTokOperatorHint) },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf("Jazz","Zong","Ufone","Telenor").forEach { op ->
+                            FilterChip(
+                                selected = tikTokOperator.equals(op,true),
+                                onClick = { tikTokOperator=op; tikTokOperatorHint="Selected manually" },
+                                label = { Text(op) }
+                            )
+                        }
+                    }
                     if (tool == "LAG") {
-                        Text("Swipe mode")
+                        Text("Swipe Mode", style = MaterialTheme.typography.titleSmall)
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             RadioButton(selected = !tikTokAutoSwipe, onClick = { tikTokAutoSwipe = false })
                             Text("Manual")
-                            Spacer(Modifier.width(16.dp))
+                            Spacer(Modifier.width(18.dp))
                             RadioButton(selected = tikTokAutoSwipe, onClick = { tikTokAutoSwipe = true })
                             Text("Auto")
                         }
                         Text(if (tikTokAutoSwipe)
-                            "NEXT VIDEO records T0 and CellTracker performs one upward swipe."
-                        else "NEXT VIDEO records T0; swipe TikTok manually immediately after.")
+                            "NEXT VIDEO records T0 first, then CellTracker performs one upward swipe."
+                        else "NEXT VIDEO records T0. Swipe TikTok manually immediately after.")
                     } else {
-                        Text("START begins the session. Tap POST for T0 and POSTED after upload succeeds.")
+                        Text("Upload Type", style = MaterialTheme.typography.titleSmall)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(selected=tikTokUploadType=="Video",onClick={tikTokUploadType="Video"});Text("Video")
+                            Spacer(Modifier.width(18.dp))
+                            RadioButton(selected=tikTokUploadType=="Photo",onClick={tikTokUploadType="Photo"});Text("Photo")
+                        }
+                        Text("POST records T0. Tap POSTED immediately after TikTok reports upload success.")
                     }
-                    Text("Requires CellTracker Accessibility service. Reports are saved under Download/CellTracker/<date>.")
+                    HorizontalDivider()
+                    Text(
+                        if (accessibilityEnabled) "Accessibility · Enabled"
+                        else "Accessibility · Required before starting",
+                        color = if (accessibilityEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                    )
+                    OutlinedButton(
+                        onClick = {
+                            context.startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text(if(accessibilityEnabled)"OPEN ACCESSIBILITY SETTINGS" else "ENABLE CELLTRACKER ACCESSIBILITY") }
+                    Text("After FINISH, open Reports → ${if(tool=="LAG")"TikTok Video Lag" else "TikTok Upload"} to view the saved report.",
+                        style=MaterialTheme.typography.bodySmall)
                 }
             },
             confirmButton = {
-                Button(onClick = {
-                    YouTubeLoadingAccessibilityService.requestTikTokTool(tool, tikTokAutoSwipe)
-                    val launch = context.packageManager.getLaunchIntentForPackage("com.zhiliaoapp.musically")
-                        ?: context.packageManager.getLaunchIntentForPackage("com.ss.android.ugc.trill")
-                    if (launch != null) context.startActivity(launch)
-                    else Toast.makeText(context, "TikTok is not installed or not visible", Toast.LENGTH_SHORT).show()
-                    tikTokTool = null
-                }) { Text("OPEN TIKTOK") }
+                Button(
+                    enabled = tikTokTaskName.isNotBlank() && tikTokOperator.isNotBlank(),
+                    onClick = {
+                        if (!isCellTrackerAccessibilityEnabledV1(context)) {
+                            Toast.makeText(context, "Enable CellTracker Accessibility first", Toast.LENGTH_SHORT).show()
+                            context.startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                        } else {
+                            val launch = context.packageManager.getLaunchIntentForPackage("com.zhiliaoapp.musically")
+                                ?: context.packageManager.getLaunchIntentForPackage("com.ss.android.ugc.trill")
+                            if (launch != null) {
+                                context.startActivity(launch)
+                                // Give TikTok time to become the foreground window before creating/using the overlay.
+                                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                                    YouTubeLoadingAccessibilityService.requestTikTokTool(
+                                        tool, tikTokAutoSwipe, tikTokTaskName.trim(), tikTokOperator.trim(), tikTokUploadType
+                                    )
+                                }, 650)
+                                tikTokTool = null
+                            } else Toast.makeText(context, "TikTok is not installed or not visible", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                ) { Text("START TEST") }
             },
             dismissButton = { TextButton(onClick = { tikTokTool = null }) { Text("Cancel") } }
         )
     }
+
 
     selectedScenario?.let { scenario ->
         ScenarioPlanDialogV1(
@@ -4536,6 +4746,19 @@ private fun ScenarioPlanDialogV1(
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
+}
+
+private fun isCellTrackerAccessibilityEnabledV1(context: Context): Boolean {
+    val enabled = runCatching {
+        android.provider.Settings.Secure.getString(
+            context.contentResolver,
+            android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+        )
+    }.getOrNull().orEmpty()
+    return enabled.split(':').any {
+        it.contains(context.packageName, ignoreCase = true) &&
+            it.contains("YouTubeLoadingAccessibilityService", ignoreCase = true)
+    }
 }
 
 private data class DetectedOperatorV1(val displayName: String, val simLabel: String)
