@@ -51,6 +51,14 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                 if (activeInstance?.waRepo?.isArmed() == true) activeInstance?.showWhatsAppOverlay()
             }
         }
+
+        fun requestTikTokTool(mode: String, autoSwipe: Boolean) {
+            activeInstance?.scope?.launch {
+                activeInstance?.dismissOverlay()
+                activeInstance?.dismissWhatsAppOverlay()
+                activeInstance?.showTikTokOverlay(mode, autoSwipe)
+            }
+        }
     }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private lateinit var repo: VideoLoadingRepository
@@ -1942,6 +1950,173 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         )
     }
 
+
+    private var ttOverlay: View? = null
+    private var ttClockJob: Job? = null
+
+    private fun showTikTokOverlay(mode: String, autoSwipe: Boolean) {
+        dismissTikTokOverlay()
+        val wm = getSystemService(WindowManager::class.java)
+        val isLag = mode == "LAG"
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(18, 12, 18, 12)
+            setBackgroundColor(0xE6202124.toInt())
+        }
+        val header = TextView(this).apply {
+            setTextColor(0xffffffff.toInt())
+            text = if (isLag) "TikTok Video Lag · ${if(autoSwipe)"AUTO SWIPE" else "MANUAL"} · drag" else "TikTok Upload · drag"
+            setPadding(8,8,8,8)
+        }
+        val status = TextView(this).apply { setTextColor(0xffffffff.toInt()); text="Ready · press START"; setPadding(8,0,8,8) }
+        val clock = TextView(this).apply { setTextColor(0xffffffff.toInt()); text="00:00"; setPadding(8,0,8,8) }
+        val row = LinearLayout(this).apply { orientation=LinearLayout.HORIZONTAL }
+        val b1=Button(this).apply{text="START"}
+        val b2=Button(this).apply{text=if(isLag)"LAG" else "POST"; visibility=View.GONE}
+        val b3=Button(this).apply{text=if(isLag)"LOADED" else "POSTED"; visibility=View.GONE}
+        val stop=Button(this).apply{text="FINISH"; visibility=View.GONE}
+        val w=LinearLayout.LayoutParams(0,LinearLayout.LayoutParams.WRAP_CONTENT,1f)
+        row.addView(b1,w);row.addView(b2,w);row.addView(b3,w);row.addView(stop,w)
+        box.addView(header);box.addView(status);box.addView(clock);box.addView(row)
+        val lp=WindowManager.LayoutParams(WindowManager.LayoutParams.WRAP_CONTENT,WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,PixelFormat.TRANSLUCENT).apply{
+            gravity=Gravity.TOP or Gravity.START;x=16;y=150
+        }
+        var dx=0f;var dy=0f;var sx=0;var sy=0
+        header.setOnTouchListener{_,e->when(e.actionMasked){
+            MotionEvent.ACTION_DOWN->{dx=e.rawX;dy=e.rawY;sx=lp.x;sy=lp.y;true}
+            MotionEvent.ACTION_MOVE->{lp.x=(sx+e.rawX-dx).toInt().coerceAtLeast(0);lp.y=(sy+e.rawY-dy).toInt().coerceAtLeast(0);runCatching{wm.updateViewLayout(box,lp)};true}
+            else->true
+        }}
+        wm.addView(box,lp);ttOverlay=box
+
+        val fmt=java.text.SimpleDateFormat("HH:mm:ss.SSS",java.util.Locale.US)
+        val lines=mutableListOf<String>()
+        var sessionStartWall=0L
+        var sessionStartElapsed=0L
+        var running=false
+        var seq=0
+        var video=0
+        var pendingWall=0L
+        var pendingElapsed=0L
+        var pendingType=""
+        var lagCount=0
+        var totalLag=0L
+        var uploadType="Video/Photo"
+
+        fun nowText(ms:Long)=fmt.format(java.util.Date(ms))
+        fun setPending(type:String){
+            pendingWall=System.currentTimeMillis();pendingElapsed=SystemClock.elapsedRealtime();pendingType=type
+        }
+        fun clearPending(){pendingWall=0L;pendingElapsed=0L;pendingType=""}
+        fun swipe(){
+            val dm=resources.displayMetrics
+            val x=dm.widthPixels*0.5f
+            val y1=dm.heightPixels*0.78f
+            val y2=dm.heightPixels*0.28f
+            val path=Path().apply{moveTo(x,y1);lineTo(x,y2)}
+            val g=GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path,0,260)).build()
+            dispatchGesture(g,null,null)
+        }
+        fun saveReport(endWall:Long){
+            val duration=endWall-sessionStartWall
+            val csv=buildString{
+                if(isLag){
+                    appendLine("CellTracker TikTok Video Lag")
+                    appendLine("Start,${nowText(sessionStartWall)}")
+                    appendLine("End,${nowText(endWall)}")
+                    appendLine("Duration ms,$duration")
+                    appendLine("Videos,$video")
+                    appendLine("Lag Count,$lagCount")
+                    appendLine("Total Lag ms,$totalLag")
+                    appendLine()
+                    appendLine("Sequence,Video,Type,Lag Start,Lag End,Duration ms")
+                }else{
+                    appendLine("CellTracker TikTok Upload")
+                    appendLine("Start,${nowText(sessionStartWall)}")
+                    appendLine("End,${nowText(endWall)}")
+                    appendLine("Duration ms,$duration")
+                    appendLine()
+                    appendLine("Sequence,Type,Post Time,Posted Time,Upload Duration ms,Result")
+                }
+                lines.forEach{appendLine(it)}
+                if(pendingWall>0L && !isLag){appendLine("${seq+1},$uploadType,${nowText(pendingWall)},,,Incomplete")}
+            }
+            val stamp=java.text.SimpleDateFormat("yyyyMMdd_HHmmss",java.util.Locale.US).format(java.util.Date(sessionStartWall))
+            val name=(if(isLag)"TikTok_Video_Lag_" else "TikTok_Upload_")+stamp+".csv"
+            val values=android.content.ContentValues().apply{
+                put(android.provider.MediaStore.Downloads.DISPLAY_NAME,name)
+                put(android.provider.MediaStore.Downloads.MIME_TYPE,"text/csv")
+                put(android.provider.MediaStore.Downloads.RELATIVE_PATH,ReportStorage.relativePath(if(isLag)"TikTok Video Lag" else "TikTok Upload",sessionStartWall))
+            }
+            runCatching{
+                val uri=contentResolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI,values)!!
+                contentResolver.openOutputStream(uri)!!.use{it.write(csv.toByteArray())}
+            }
+        }
+
+        b1.setOnClickListener{
+            if(!running){
+                running=true;sessionStartWall=System.currentTimeMillis();sessionStartElapsed=SystemClock.elapsedRealtime()
+                b1.text=if(isLag)"NEXT VIDEO" else "READY";b2.visibility=View.VISIBLE;b3.visibility=View.VISIBLE;stop.visibility=View.VISIBLE
+                status.text=if(isLag)"Running · ${if(autoSwipe)"NEXT VIDEO records T0 + swipes" else "NEXT VIDEO records T0, then swipe manually"}" else "Running · tap POST immediately before posting"
+            }else if(isLag){
+                // A pending NEXT with no LOADED means no perceived initial lag; discard it.
+                if(pendingType=="INITIAL") clearPending()
+                video++;setPending("INITIAL")
+                status.text="Video #$video · T0 ${nowText(pendingWall)}"+if(autoSwipe)" · swiping…" else " · swipe now"
+                if(autoSwipe) swipe()
+            }
+        }
+        b2.setOnClickListener{
+            if(!running)return@setOnClickListener
+            if(isLag){
+                if(pendingWall>0L){status.text="Active ${pendingType.lowercase()} · tap LOADED first";return@setOnClickListener}
+                setPending("PLAYBACK");status.text="Playback lag T0 ${nowText(pendingWall)}"
+            }else{
+                if(pendingWall>0L){status.text="Upload active · tap POSTED first";return@setOnClickListener}
+                setPending("UPLOAD");status.text="POST T0 ${nowText(pendingWall)}"
+            }
+        }
+        b3.setOnClickListener{
+            if(!running||pendingWall<=0L){status.text="No active ${if(isLag)"lag" else "upload"}";return@setOnClickListener}
+            val endWall=System.currentTimeMillis();val endElapsed=SystemClock.elapsedRealtime();val d=(endElapsed-pendingElapsed).coerceAtLeast(0L)
+            seq++
+            if(isLag){
+                lagCount++;totalLag+=d
+                lines += "$seq,$video,$pendingType,${nowText(pendingWall)},${nowText(endWall)},$d"
+                status.text="$pendingType loaded · ${String.format(java.util.Locale.US,"%.3f",d/1000.0)} s · lag #$lagCount"
+            }else{
+                lines += "$seq,$uploadType,${nowText(pendingWall)},${nowText(endWall)},$d,Success"
+                status.text="Posted #$seq · ${String.format(java.util.Locale.US,"%.3f",d/1000.0)} s"
+            }
+            clearPending()
+        }
+        stop.setOnClickListener{
+            if(!running){dismissTikTokOverlay();return@setOnClickListener}
+            val end=System.currentTimeMillis()
+            // Unclosed initial/playback lag is not counted. Upload remains Incomplete in report.
+            saveReport(end);running=false;status.text="Saved · Download/CellTracker/${java.text.SimpleDateFormat("yyyy-MM-dd",java.util.Locale.US).format(java.util.Date(sessionStartWall))}/${if(isLag)"TikTok Video Lag" else "TikTok Upload"}"
+            scope.launch{delay(1000);dismissTikTokOverlay()}
+        }
+        ttClockJob?.cancel()
+        ttClockJob=scope.launch{
+            while(isActive&&ttOverlay===box){
+                if(running){
+                    val sec=(SystemClock.elapsedRealtime()-sessionStartElapsed)/1000
+                    clock.text=String.format(java.util.Locale.US,"%02d:%02d · %s",sec/60,sec%60,if(isLag)"Videos $video · Lag $lagCount" else "Posted $seq")
+                }else clock.text="00:00"
+                delay(250)
+            }
+        }
+    }
+
+    private fun dismissTikTokOverlay() {
+        ttClockJob?.cancel();ttClockJob=null
+        ttOverlay?.let{runCatching{getSystemService(WindowManager::class.java).removeView(it)}}
+        ttOverlay=null
+    }
+
     override fun onDestroy() {
         if (activeInstance === this) activeInstance = null
         visualWatchJob?.cancel()
@@ -1951,6 +2126,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         scope.cancel()
         overlay?.let { runCatching { getSystemService(WindowManager::class.java).removeView(it) } }
         overlay = null
+        dismissTikTokOverlay()
         super.onDestroy()
     }
 }

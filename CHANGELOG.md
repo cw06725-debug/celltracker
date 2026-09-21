@@ -1,3 +1,13 @@
+## 1.0.0.0.6
+- Add Quick Tool: TikTok Video Lag.
+- Add Manual / Auto Swipe modes; Auto records T0 then performs one upward Accessibility swipe.
+- Add NEXT VIDEO / LAG / LOADED / FINISH floating controls.
+- NEXT VIDEO pending T0 is discarded when the next video is started without LOADED.
+- Support repeated playback LAG -> LOADED events on the same video.
+- Add Quick Tool: TikTok Upload with POST / POSTED manual timing.
+- Save detailed CSV reports with wall-clock T0/T1, duration, counts and incomplete upload handling.
+- Add TikTok packages to the existing CellTracker Accessibility service.
+
 ## 1.0.0.0.5
 - Wire Scenario Start into a visible Running Session screen.
 - Persist real Scenario Session metadata and test plan.

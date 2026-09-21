@@ -4239,6 +4239,8 @@ private fun ScenarioTestsV1(
 ) {
     val context = LocalContext.current
     var selectedScenario by remember { mutableStateOf<ScenarioV1Type?>(null) }
+    var tikTokTool by remember { mutableStateOf<String?>(null) }
+    var tikTokAutoSwipe by remember { mutableStateOf(false) }
     var activeSessionId by rememberSaveable { mutableStateOf<String?>(null) }
     var activeSession by remember { mutableStateOf<ScenarioSessionV1?>(null) }
     var tick by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -4354,7 +4356,50 @@ private fun ScenarioTestsV1(
                 OutlinedButton(onClick = onWeakCoverage, modifier = Modifier.weight(1f)) { Text("Weak Coverage") }
                 OutlinedButton(onClick = onDeviceLogs, modifier = Modifier.weight(1f)) { Text("ADB / Logs") }
             }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { tikTokTool = "LAG" }, modifier = Modifier.weight(1f)) { Text("TikTok Video Lag") }
+                OutlinedButton(onClick = { tikTokTool = "UPLOAD" }, modifier = Modifier.weight(1f)) { Text("TikTok Upload") }
+            }
         }
+    }
+
+
+    tikTokTool?.let { tool ->
+        AlertDialog(
+            onDismissRequest = { tikTokTool = null },
+            title = { Text(if (tool == "LAG") "TikTok Video Lag" else "TikTok Upload") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (tool == "LAG") {
+                        Text("Swipe mode")
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(selected = !tikTokAutoSwipe, onClick = { tikTokAutoSwipe = false })
+                            Text("Manual")
+                            Spacer(Modifier.width(16.dp))
+                            RadioButton(selected = tikTokAutoSwipe, onClick = { tikTokAutoSwipe = true })
+                            Text("Auto")
+                        }
+                        Text(if (tikTokAutoSwipe)
+                            "NEXT VIDEO records T0 and CellTracker performs one upward swipe."
+                        else "NEXT VIDEO records T0; swipe TikTok manually immediately after.")
+                    } else {
+                        Text("START begins the session. Tap POST for T0 and POSTED after upload succeeds.")
+                    }
+                    Text("Requires CellTracker Accessibility service. Reports are saved under Download/CellTracker/<date>.")
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    YouTubeLoadingAccessibilityService.requestTikTokTool(tool, tikTokAutoSwipe)
+                    val launch = context.packageManager.getLaunchIntentForPackage("com.zhiliaoapp.musically")
+                        ?: context.packageManager.getLaunchIntentForPackage("com.ss.android.ugc.trill")
+                    if (launch != null) context.startActivity(launch)
+                    else Toast.makeText(context, "TikTok is not installed or not visible", Toast.LENGTH_SHORT).show()
+                    tikTokTool = null
+                }) { Text("OPEN TIKTOK") }
+            },
+            dismissButton = { TextButton(onClick = { tikTokTool = null }) { Text("Cancel") } }
+        )
     }
 
     selectedScenario?.let { scenario ->
