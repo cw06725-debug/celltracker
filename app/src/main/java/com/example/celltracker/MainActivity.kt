@@ -674,8 +674,18 @@ private fun ReportsHome(
                             Field("Total Lag", r.fields["Total Lag ms"]?.toLongOrNull()?.let { String.format(Locale.US,"%.3f s",it/1000.0) } ?: "--")
                             Field("Average Lag", r.fields["Average Lag ms"]?.toLongOrNull()?.let { String.format(Locale.US,"%.3f s",it/1000.0) } ?: "--")
                         }
-                        GlassSection("Event Detail") {
+                        GlassSection("Preview · Event Detail") {
                             Text(r.detail.ifBlank { "No lag events recorded." }, style=MaterialTheme.typography.bodySmall)
+                        }
+                        GlassSection("Analysis") {
+                            val count=r.fields["Lag Count"]?.toIntOrNull() ?: 0
+                            val avg=r.fields["Average Lag ms"]?.toLongOrNull() ?: 0L
+                            val total=r.fields["Total Lag ms"]?.toLongOrNull() ?: 0L
+                            Text(when {
+                                count==0 -> "No perceived lag was recorded in this session."
+                                avg>=3000 -> "Frequent/long visible stalls were recorded. Compare the event timestamps with signal quality, RAT/cell changes, ping loss/latency and REF behavior to narrow down radio/network versus app/content causes."
+                                else -> "$count perceived lag event(s), total ${String.format(Locale.US,"%.3f",total/1000.0)} s, average ${String.format(Locale.US,"%.3f",avg/1000.0)} s. Use the event timestamps to compare DUT network conditions and REF behavior."
+                            }, style=MaterialTheme.typography.bodySmall)
                         }
                     }
                     "TIKTOK_UPLOAD" -> tikTokUploadReports.firstOrNull { it.uri == path }?.let { r ->
@@ -686,8 +696,16 @@ private fun ReportsHome(
                             Field("Upload Type", r.fields["Upload Type"] ?: "--")
                             Field("Completed", r.fields["Completed"] ?: "0")
                         }
-                        GlassSection("Attempt Detail") {
+                        GlassSection("Preview · Attempt Detail") {
                             Text(r.detail.ifBlank { "No completed attempts recorded." }, style=MaterialTheme.typography.bodySmall)
+                        }
+                        GlassSection("Analysis") {
+                            val completed=r.fields["Completed"]?.toIntOrNull() ?: 0
+                            Text(if(completed==0)
+                                "No completed upload attempt is available for analysis."
+                            else
+                                "$completed upload attempt(s) completed. Compare upload durations and their timestamps with DUT/REF radio quality, uplink conditions, ping and cell/RAT changes when investigating slow attempts.",
+                                style=MaterialTheme.typography.bodySmall)
                         }
                     }
                     "CALL" -> state.callHistory.firstOrNull { it.path == path }?.let { r ->
@@ -714,7 +732,7 @@ private fun ReportsHome(
                         },
                         modifier = Modifier.fillMaxWidth()
                     ) { Text("EXPORT / SHARE CSV") }
-                    Text("The full report is already shown above. CSV is saved under Download/CellTracker/<date>.", style=MaterialTheme.typography.bodySmall)
+                    Text("Order: Preview → Analysis → Export. CSV is saved under Download/CellTracker/<date>.", style=MaterialTheme.typography.bodySmall)
                 } else if (cat == "WEAK") {
                     Button(
                         onClick = {
@@ -4535,13 +4553,16 @@ private fun ScenarioTestsV1(
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true
                     )
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        listOf("Jazz","Zong","Ufone","Telenor").forEach { op ->
-                            FilterChip(
-                                selected = tikTokOperator.equals(op,true),
-                                onClick = { tikTokOperator=op; tikTokOperatorHint="Selected manually" },
-                                label = { Text(op) }
-                            )
+                    listOf(listOf("Jazz","Zong"), listOf("Ufone","Telenor")).forEach { ops ->
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            ops.forEach { op ->
+                                FilterChip(
+                                    selected = tikTokOperator.equals(op,true),
+                                    onClick = { tikTokOperator=op; tikTokOperatorHint="Selected manually" },
+                                    label = { Text(op, maxLines=1) },
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
                         }
                     }
                     if (tool == "LAG") {
@@ -4563,7 +4584,7 @@ private fun ScenarioTestsV1(
                             Spacer(Modifier.width(18.dp))
                             RadioButton(selected=tikTokUploadType=="Photo",onClick={tikTokUploadType="Photo"});Text("Photo")
                         }
-                        Text("POST records T0. Tap POSTED immediately after TikTok reports upload success.")
+                        Text("Tap CellTracker POST to arm timing. Your next touch in TikTok (the real TikTok Post button) becomes T0. Tap POSTED after upload succeeds to record T1.")
                     }
                     HorizontalDivider()
                     Text(

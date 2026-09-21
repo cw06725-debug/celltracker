@@ -151,6 +151,11 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
         val pkg = event.packageName?.toString().orEmpty()
+        if (ttUploadAwaitingExternalTouch &&
+            event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED &&
+            (pkg == "com.zhiliaoapp.musically" || pkg == "com.ss.android.ugc.trill")) {
+            ttUploadExternalTouchCallback?.invoke()
+        }
 
         if (::waRepo.isInitialized && waRepo.isArmed() && waOverlay == null &&
             (pkg == "com.whatsapp" || pkg == "com.whatsapp.w4b")) {
@@ -1954,6 +1959,9 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
     private var ttOverlay: View? = null
     private var ttClockJob: Job? = null
 
+    private var ttUploadAwaitingExternalTouch = false
+    private var ttUploadExternalTouchCallback: (() -> Unit)? = null
+
     private fun showTikTokOverlay(mode: String, autoSwipe: Boolean, taskName: String, operator: String, configuredUploadType: String) {
         dismissTikTokOverlay()
         val wm = getSystemService(WindowManager::class.java)
@@ -2009,7 +2017,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             (resources.displayMetrics.widthPixels*0.82f).toInt(),
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
             PixelFormat.TRANSLUCENT
         ).apply{ gravity=Gravity.TOP or Gravity.START;x=12;y=120 }
         var dx=0f;var dy=0f;var sx=0;var sy=0
@@ -2018,6 +2026,12 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             MotionEvent.ACTION_MOVE->{lp.x=(sx+e.rawX-dx).toInt().coerceAtLeast(0);lp.y=(sy+e.rawY-dy).toInt().coerceAtLeast(0);runCatching{wm.updateViewLayout(box,lp)};true}
             else->true
         }}
+        box.setOnTouchListener { _, e ->
+            if (e.actionMasked == MotionEvent.ACTION_OUTSIDE && ttUploadAwaitingExternalTouch) {
+                ttUploadExternalTouchCallback?.invoke()
+                true
+            } else false
+        }
         wm.addView(box,lp);ttOverlay=box
 
         val fmt=java.text.SimpleDateFormat("HH:mm:ss.SSS",java.util.Locale.US)
@@ -2032,12 +2046,22 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         var pendingType=""
         var lagCount=0
         var totalLag=0L
+        var uploadAwaitingTouch=false
 
         fun nowText(ms:Long)=fmt.format(java.util.Date(ms))
         fun setPending(type:String){
             pendingWall=System.currentTimeMillis();pendingElapsed=SystemClock.elapsedRealtime();pendingType=type
         }
         fun clearPending(){pendingWall=0L;pendingElapsed=0L;pendingType=""}
+        fun recordUploadT0FromTikTokTouch() {
+            if (!isLag && running && ttUploadAwaitingExternalTouch) {
+                ttUploadAwaitingExternalTouch=false
+                uploadAwaitingTouch=false
+                setPending("UPLOAD")
+                status.post { status.text="TikTok touch = T0 ${nowText(pendingWall)} · waiting POSTED" }
+            }
+        }
+        ttUploadExternalTouchCallback = { recordUploadT0FromTikTokTouch() }
         fun swipe(){
             val dm=resources.displayMetrics
             val x=dm.widthPixels*0.72f
@@ -2120,7 +2144,10 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                 setPending("PLAYBACK");status.text="Playback lag T0 ${nowText(pendingWall)}"
             }else{
                 if(pendingWall>0L){status.text="Upload active · tap POSTED first";return@setOnClickListener}
-                setPending("UPLOAD");status.text="POST T0 ${nowText(pendingWall)}"
+                if(ttUploadAwaitingExternalTouch){status.text="Already armed · tap TikTok POST";return@setOnClickListener}
+                uploadAwaitingTouch=true
+                ttUploadAwaitingExternalTouch=true
+                status.text="Armed · next TikTok touch is T0"
             }
         }
         b3.setOnClickListener{
@@ -2137,8 +2164,19 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             }
             clearPending()
         }
+        var finishConfirmUntil=0L
         stop.setOnClickListener{
             if(!running){dismissTikTokOverlay();return@setOnClickListener}
+            val now=SystemClock.elapsedRealtime()
+            if(now>finishConfirmUntil){
+                finishConfirmUntil=now+3000L
+                stop.text="CONFIRM FINISH"
+                status.text="Tap CONFIRM FINISH again within 3 s"
+                scope.launch{delay(3000);if(running&&SystemClock.elapsedRealtime()>finishConfirmUntil){stop.text="FINISH"}}
+                return@setOnClickListener
+            }
+            ttUploadAwaitingExternalTouch=false
+            uploadAwaitingTouch=false
             val end=System.currentTimeMillis()
             saveReport(end);running=false
             b1.isEnabled=false;b2.isEnabled=false;b3.isEnabled=false;stop.isEnabled=false
@@ -2160,6 +2198,8 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
 
     private fun dismissTikTokOverlay() {
         ttClockJob?.cancel();ttClockJob=null
+        ttUploadAwaitingExternalTouch=false
+        ttUploadExternalTouchCallback=null
         ttOverlay?.let{runCatching{getSystemService(WindowManager::class.java).removeView(it)}}
         ttOverlay=null
     }

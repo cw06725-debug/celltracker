@@ -1,3 +1,11 @@
+## 1.0.0.0.8
+- Fix TikTok operator selector layout with equal-width 2x2 operator chips.
+- Add two-step FINISH confirmation to TikTok Lag and Upload overlays.
+- Rework TikTok Upload timing: CellTracker POST only arms timing; the next actual TikTok click/touch records T0; POSTED records T1.
+- Keep incomplete armed/upload attempts out of fabricated duration calculations.
+- Reorder TikTok report experience to Preview -> Analysis -> Export.
+- Add first-pass report analysis text and preserve detailed CSV export.
+
 ## 1.0.0.0.7
 - Fix TikTok Auto Swipe by enabling Accessibility canPerformGestures and adding gesture result feedback.
 - Launch TikTok first, then create the test overlay.
