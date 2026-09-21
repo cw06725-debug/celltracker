@@ -584,6 +584,7 @@ private fun ReportsHome(
                         "YOUTUBE" -> VideoLoadingExporter.export(context, path)
                         "WHATSAPP" -> WhatsAppSendExporter.export(context, path)
                         "CALL" -> CallSetupExporter.export(context, path)
+                        "TIKTOK_LAG", "TIKTOK_UPLOAD" -> TikTokReportExporter.export(context, path)
                         else -> null
                     }
                 }.getOrNull()
@@ -664,48 +665,59 @@ private fun ReportsHome(
                         }
                     }
                     "TIKTOK_LAG" -> tikTokLagReports.firstOrNull { it.uri == path }?.let { r ->
+                        val parsed = runCatching {
+                            context.contentResolver.openInputStream(Uri.parse(r.uri))?.bufferedReader()?.use { TikTokReportExporter.parse(it.readText()) }
+                        }.getOrNull()
+                        val durations=parsed?.events?.mapNotNull{it.durationMs}.orEmpty()
                         GlassSection("TikTok Video Lag Summary") {
                             Field("Task", r.task)
                             Field("Operator", r.operator)
-                            Field("Start", r.start)
+                            Field("Started", r.start)
                             Field("Swipe Mode", r.fields["Swipe Mode"] ?: "--")
                             Field("Videos", r.fields["Videos"] ?: "0")
                             Field("Lag Count", r.fields["Lag Count"] ?: "0")
-                            Field("Total Lag", r.fields["Total Lag ms"]?.toLongOrNull()?.let { String.format(Locale.US,"%.3f s",it/1000.0) } ?: "--")
-                            Field("Average Lag", r.fields["Average Lag ms"]?.toLongOrNull()?.let { String.format(Locale.US,"%.3f s",it/1000.0) } ?: "--")
+                            Field("Total Lag", durations.sum().let { String.format(Locale.US,"%.3f s",it/1000.0) })
+                            Field("Average", durations.takeIf{it.isNotEmpty()}?.average()?.let { String.format(Locale.US,"%.3f s",it/1000.0) } ?: "--")
+                            Field("Longest", durations.maxOrNull()?.let { String.format(Locale.US,"%.3f s",it/1000.0) } ?: "--")
                         }
-                        GlassSection("Preview · Event Detail") {
-                            Text(r.detail.ifBlank { "No lag events recorded." }, style=MaterialTheme.typography.bodySmall)
+                        parsed?.events?.forEachIndexed { i,e ->
+                            GlassSection("Lag #${i+1} · ${e.type.replace('_',' ')}") {
+                                Field("Lag Start (T0)", e.t0)
+                                Field("Lag End (T1)", e.t1)
+                                Field("Duration", e.durationMs?.let{String.format(Locale.US,"%.3f s",it/1000.0)} ?: "--")
+                                Text("Exported Excel includes a dedicated Lag ${i+1} sheet containing Cell Info samples from T0 to T1.", style=MaterialTheme.typography.bodySmall)
+                            }
                         }
-                        GlassSection("Analysis") {
-                            val count=r.fields["Lag Count"]?.toIntOrNull() ?: 0
-                            val avg=r.fields["Average Lag ms"]?.toLongOrNull() ?: 0L
-                            val total=r.fields["Total Lag ms"]?.toLongOrNull() ?: 0L
-                            Text(when {
-                                count==0 -> "No perceived lag was recorded in this session."
-                                avg>=3000 -> "Frequent/long visible stalls were recorded. Compare the event timestamps with signal quality, RAT/cell changes, ping loss/latency and REF behavior to narrow down radio/network versus app/content causes."
-                                else -> "$count perceived lag event(s), total ${String.format(Locale.US,"%.3f",total/1000.0)} s, average ${String.format(Locale.US,"%.3f",avg/1000.0)} s. Use the event timestamps to compare DUT network conditions and REF behavior."
-                            }, style=MaterialTheme.typography.bodySmall)
+                        if(parsed?.events.isNullOrEmpty()) Text("No perceived lag event recorded.",style=MaterialTheme.typography.bodySmall)
+                        GlassSection("Conclusion") {
+                            Text("Use Export Report to generate the full HTML summary, Excel workbook, Cell Info and Track KML. Excel correlates each T0–T1 event with the Cell Info samples recorded in that exact window.", style=MaterialTheme.typography.bodySmall)
                         }
                     }
                     "TIKTOK_UPLOAD" -> tikTokUploadReports.firstOrNull { it.uri == path }?.let { r ->
+                        val parsed = runCatching {
+                            context.contentResolver.openInputStream(Uri.parse(r.uri))?.bufferedReader()?.use { TikTokReportExporter.parse(it.readText()) }
+                        }.getOrNull()
+                        val durations=parsed?.events?.mapNotNull{it.durationMs}.orEmpty()
                         GlassSection("TikTok Upload Summary") {
                             Field("Task", r.task)
                             Field("Operator", r.operator)
-                            Field("Start", r.start)
+                            Field("Started", r.start)
                             Field("Upload Type", r.fields["Upload Type"] ?: "--")
-                            Field("Completed", r.fields["Completed"] ?: "0")
+                            Field("Completed", durations.size.toString())
+                            Field("Average", durations.takeIf{it.isNotEmpty()}?.average()?.let{String.format(Locale.US,"%.3f s",it/1000.0)} ?: "--")
+                            Field("Fastest", durations.minOrNull()?.let{String.format(Locale.US,"%.3f s",it/1000.0)} ?: "--")
+                            Field("Slowest", durations.maxOrNull()?.let{String.format(Locale.US,"%.3f s",it/1000.0)} ?: "--")
                         }
-                        GlassSection("Preview · Attempt Detail") {
-                            Text(r.detail.ifBlank { "No completed attempts recorded." }, style=MaterialTheme.typography.bodySmall)
+                        parsed?.events?.forEachIndexed { i,e ->
+                            GlassSection("Upload #${i+1}") {
+                                Field("TikTok Post Touch (T0)",e.t0)
+                                Field("Posted (T1)",e.t1)
+                                Field("Upload Time",e.durationMs?.let{String.format(Locale.US,"%.3f s",it/1000.0)} ?: "--")
+                                Text("Exported Excel includes an Upload ${i+1} sheet with Cell Info samples captured between T0 and T1.",style=MaterialTheme.typography.bodySmall)
+                            }
                         }
-                        GlassSection("Analysis") {
-                            val completed=r.fields["Completed"]?.toIntOrNull() ?: 0
-                            Text(if(completed==0)
-                                "No completed upload attempt is available for analysis."
-                            else
-                                "$completed upload attempt(s) completed. Compare upload durations and their timestamps with DUT/REF radio quality, uplink conditions, ping and cell/RAT changes when investigating slow attempts.",
-                                style=MaterialTheme.typography.bodySmall)
+                        GlassSection("Conclusion") {
+                            Text("Use Export Report for the complete correlated package. Slow attempts can then be checked against radio quality, RAT/cell transitions, location and REF behavior at the same timestamps.",style=MaterialTheme.typography.bodySmall)
                         }
                     }
                     "CALL" -> state.callHistory.firstOrNull { it.path == path }?.let { r ->
@@ -720,19 +732,11 @@ private fun ReportsHome(
                     }
                 }
                 if (cat == "TIKTOK_LAG" || cat == "TIKTOK_UPLOAD") {
-                    Button(
-                        onClick = {
-                            val uri = android.net.Uri.parse(path)
-                            val send = Intent(Intent.ACTION_SEND).apply {
-                                type = "text/csv"
-                                putExtra(Intent.EXTRA_STREAM, uri)
-                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                            }
-                            runCatching { context.startActivity(Intent.createChooser(send, "Share TikTok report")) }
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) { Text("EXPORT / SHARE CSV") }
-                    Text("Order: Preview → Analysis → Export. CSV is saved under Download/CellTracker/<date>.", style=MaterialTheme.typography.bodySmall)
+                    Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                        OutlinedButton(onClick={exportPath(cat,path,true)},enabled=!busy,modifier=Modifier.weight(1f)){Text("PREVIEW HTML")}
+                        Button(onClick={exportPath(cat,path,false)},enabled=!busy,modifier=Modifier.weight(1f)){Text(if(busy)"EXPORTING…" else "EXPORT REPORT")}
+                    }
+                    Text("Export package: HTML Summary · Excel · Cell Info · Track KML. Excel contains Summary, Events/Attempts, full Cell Info, plus one T0–T1 Cell Info sheet per lag/upload event.",style=MaterialTheme.typography.bodySmall)
                 } else if (cat == "WEAK") {
                     Button(
                         onClick = {

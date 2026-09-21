@@ -2047,6 +2047,8 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         var lagCount=0
         var totalLag=0L
         var uploadAwaitingTouch=false
+        var ownsRecording=false
+        var recordingPath=""
 
         fun nowText(ms:Long)=fmt.format(java.util.Date(ms))
         fun setPending(type:String){
@@ -2092,6 +2094,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                 appendLine("Start,${nowText(sessionStartWall)}")
                 appendLine("End,${nowText(endWall)}")
                 appendLine("Duration ms,$duration")
+                appendLine("Recording Path,$recordingPath")
                 if(isLag){
                     appendLine("Videos,$video")
                     appendLine("Lag Count,$lagCount")
@@ -2127,6 +2130,25 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         b1.setOnClickListener{
             if(!running){
                 running=true;sessionStartWall=System.currentTimeMillis();sessionStartElapsed=SystemClock.elapsedRealtime()
+                val before=RecordingState.status.value
+                if(!before.isRecording){
+                    val subId=NetworkStore.dataSimSubscriptionId
+                    val recIntent=Intent(this,RecordingService::class.java).apply{
+                        putExtra(RecordingService.EXTRA_SUBSCRIPTION_ID,subId)
+                        putExtra(RecordingService.EXTRA_MARK_SUBSCRIPTION_ID,subId)
+                        putExtra(RecordingService.EXTRA_BOTH_SIMS,false)
+                        putExtra(RecordingService.EXTRA_TASK_NAME,taskName)
+                    }
+                    if(android.os.Build.VERSION.SDK_INT>=26) startForegroundService(recIntent) else startService(recIntent)
+                    ownsRecording=true
+                }
+                scope.launch{
+                    repeat(20){
+                        delay(100)
+                        val p=RecordingState.status.value.latestPath.orEmpty()
+                        if(p.isNotBlank()){recordingPath=p;return@launch}
+                    }
+                }
                 if(isLag) b1.text="NEXT VIDEO" else { b1.text="RUNNING"; b1.isEnabled=false }
                 b2.visibility=View.VISIBLE;b3.visibility=View.VISIBLE;stop.visibility=View.VISIBLE
                 status.text=if(isLag) "Running · ${if(autoSwipe)"NEXT VIDEO = T0 + auto swipe" else "NEXT VIDEO = T0, then swipe manually"}" else "Running · POST = T0"
@@ -2179,6 +2201,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             uploadAwaitingTouch=false
             val end=System.currentTimeMillis()
             saveReport(end);running=false
+            if(ownsRecording) runCatching{stopService(Intent(this,RecordingService::class.java))}
             b1.isEnabled=false;b2.isEnabled=false;b3.isEnabled=false;stop.isEnabled=false
             scope.launch{delay(1800);dismissTikTokOverlay()}
         }

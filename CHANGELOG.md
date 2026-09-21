@@ -1,3 +1,11 @@
+## 1.0.0.0.9
+- Upgrade TikTok Lag/Upload from CSV-only reports to the standard CellTracker export flow.
+- Start/associate Network Recording during TikTok tests so Cell Info and location can be correlated with T0/T1.
+- Export HTML Summary, XLSX, Cell Info CSV and Track KML with export-success result UI.
+- Excel: Summary + Lag Events/Upload Attempts + full Cell Info + dedicated Lag/Upload event sheets containing T0-T1 Cell Info.
+- Report preview redesigned to match the clear YouTube-style summary and per-attempt cards.
+- Add HTML preview and full Export Report actions in Reports.
+
 ## 1.0.0.0.8
 - Fix TikTok operator selector layout with equal-width 2x2 operator chips.
 - Add two-step FINISH confirmation to TikTok Lag and Upload overlays.
