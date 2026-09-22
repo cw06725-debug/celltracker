@@ -1,3 +1,17 @@
+## 1.0.0.0.13
+- Introduce report review state: original results remain immutable while reviewed T0/T1, validity and notes are stored separately.
+- TikTok Lag/Upload event cards can mark accidental events invalid and manually correct T0/T1 after screen-recording review.
+- Add REVIEW VIDEO per event; playback request targets five seconds before reviewed T0 when the external Android video player supports seek-position extras.
+- Add CONFIRM REVIEW state before final export workflow.
+- Expand YouTube and TikTok floating-window drag areas: non-button information regions can move the overlay; action buttons remain dedicated to test actions.
+- NPS work remains deferred to a later version.
+
+## 1.0.0.0.12
+- Add Screen Recording card to TikTok Video Lag and TikTok Upload report preview.
+- Show the automatically associated MP4 filename in the report.
+- Add PLAY RECORDING action so testers can directly open the exact recording used for secondary timing verification.
+- Keep existing report export and T0/T1 Cell Info correlation unchanged.
+
 ## 1.0.0.0.11
 - Add reusable MediaProjection screen recorder for test workflows.
 - Add Auto Screen Recording option to YouTube Video Loading, TikTok Video Lag and TikTok Upload.

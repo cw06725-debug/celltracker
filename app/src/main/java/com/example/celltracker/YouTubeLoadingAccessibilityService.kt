@@ -647,18 +647,14 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         ).apply { gravity = Gravity.TOP or Gravity.START; x = 24; y = 180 }
 
         var downX = 0f; var downY = 0f; var startX = 0; var startY = 0
-        header.setOnTouchListener { _, e ->
+        val dragTouch=View.OnTouchListener { _, e ->
             when (e.actionMasked) {
-                MotionEvent.ACTION_DOWN -> { downX = e.rawX; downY = e.rawY; startX = lp.x; startY = lp.y; true }
-                MotionEvent.ACTION_MOVE -> {
-                    lp.x = (startX + e.rawX - downX).toInt().coerceAtLeast(0)
-                    lp.y = (startY + e.rawY - downY).toInt().coerceAtLeast(0)
-                    runCatching { wm.updateViewLayout(box, lp) }
-                    true
-                }
+                MotionEvent.ACTION_DOWN -> { downX=e.rawX;downY=e.rawY;startX=lp.x;startY=lp.y;true }
+                MotionEvent.ACTION_MOVE -> {lp.x=(startX+e.rawX-downX).toInt().coerceAtLeast(0);lp.y=(startY+e.rawY-downY).toInt().coerceAtLeast(0);runCatching{wm.updateViewLayout(box,lp)};true}
                 else -> true
             }
         }
+        header.setOnTouchListener(dragTouch);status.setOnTouchListener(dragTouch);clock.setOnTouchListener(dragTouch)
 
         start.setOnClickListener {
             if (running) {
@@ -2024,11 +2020,17 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             PixelFormat.TRANSLUCENT
         ).apply{ gravity=Gravity.TOP or Gravity.START;x=12;y=120 }
         var dx=0f;var dy=0f;var sx=0;var sy=0
-        header.setOnTouchListener{_,e->when(e.actionMasked){
+        val dragTouch=View.OnTouchListener{_,e->when(e.actionMasked){
             MotionEvent.ACTION_DOWN->{dx=e.rawX;dy=e.rawY;sx=lp.x;sy=lp.y;true}
-            MotionEvent.ACTION_MOVE->{lp.x=(sx+e.rawX-dx).toInt().coerceAtLeast(0);lp.y=(sy+e.rawY-dy).toInt().coerceAtLeast(0);runCatching{wm.updateViewLayout(box,lp)};true}
+            MotionEvent.ACTION_MOVE->{lp.x=(sx+e.rawX-dx).toInt().coerceIn(0,(resources.displayMetrics.widthPixels-lp.width).coerceAtLeast(0));lp.y=(sy+e.rawY-dy).toInt().coerceIn(0,(resources.displayMetrics.heightPixels-120).coerceAtLeast(0));runCatching{wm.updateViewLayout(box,lp)};true}
             else->true
         }}
+        // Every non-button information area can drag the overlay; action buttons keep their click behavior.
+        header.setOnTouchListener(dragTouch)
+        meta.setOnTouchListener(dragTouch)
+        realtime.setOnTouchListener(dragTouch)
+        clock.setOnTouchListener(dragTouch)
+        status.setOnTouchListener(dragTouch)
         box.setOnTouchListener { _, e ->
             if (e.actionMasked == MotionEvent.ACTION_OUTSIDE && ttUploadAwaitingExternalTouch) {
                 ttUploadExternalTouchCallback?.invoke()

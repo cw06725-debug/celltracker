@@ -548,6 +548,7 @@ private fun ReportsHome(
     var exportResult by remember { mutableStateOf<ExportResult?>(null) }
     var busy by remember { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<Pair<String,String>?>(null) }
+    var reviewEdit by remember { mutableStateOf<Triple<String,Int,ReviewedEventV1>?>(null) }
 
     fun reloadReports() {
         scope.launch {
@@ -602,6 +603,32 @@ private fun ReportsHome(
         }
     }
 
+    fun playScreenRecordingAt(uriString:String, positionMs:Long) {
+        if(uriString.isBlank()){Toast.makeText(context,"Screen recording unavailable",Toast.LENGTH_SHORT).show();return}
+        val intent=Intent(Intent.ACTION_VIEW).apply{
+            setDataAndType(Uri.parse(uriString),"video/mp4")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            putExtra("android.intent.extra.START_PLAYBACK",true)
+            putExtra("position",positionMs.coerceAtLeast(0L))
+            putExtra("android.provider.extra.MEDIA_CAPABILITIES",positionMs.coerceAtLeast(0L))
+        }
+        runCatching{context.startActivity(intent)}
+            .onFailure{Toast.makeText(context,"Unable to open screen recording",Toast.LENGTH_SHORT).show()}
+    }
+
+    fun playScreenRecording(uriString:String) {
+        if(uriString.isBlank()) {
+            Toast.makeText(context,"Screen recording unavailable",Toast.LENGTH_SHORT).show()
+            return
+        }
+        val intent=Intent(Intent.ACTION_VIEW).apply{
+            setDataAndType(Uri.parse(uriString),"video/mp4")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        runCatching{context.startActivity(intent)}
+            .onFailure{Toast.makeText(context,"Unable to open screen recording",Toast.LENGTH_SHORT).show()}
+    }
+
     fun deleteTikTokReport(type:String, path:String) {
         scope.launch {
             val ok = withContext(Dispatchers.IO) {
@@ -620,6 +647,33 @@ private fun ReportsHome(
                 Toast.makeText(context, "Unable to delete report", Toast.LENGTH_SHORT).show()
             }
         }
+    }
+
+    reviewEdit?.let { triple ->
+        val reportKey=triple.first;val idx=triple.second;val initial=triple.third
+        var t0 by remember(initial){mutableStateOf(initial.t0)}
+        var t1 by remember(initial){mutableStateOf(initial.t1)}
+        var note by remember(initial){mutableStateOf(initial.note)}
+        AlertDialog(
+            onDismissRequest={reviewEdit=null},
+            title={Text("Review event #${idx+1}")},
+            text={Column(verticalArrangement=Arrangement.spacedBy(8.dp)){
+                OutlinedTextField(t0,{t0=it},label={Text("T0 · HH:mm:ss.SSS")},singleLine=true)
+                OutlinedTextField(t1,{t1=it},label={Text("T1 · HH:mm:ss.SSS")},singleLine=true)
+                OutlinedTextField(note,{note=it},label={Text("Review note")})
+                Text("Original timing remains in the raw report. These reviewed values are stored separately for traceability.",style=MaterialTheme.typography.bodySmall)
+            }},
+            confirmButton={Button(onClick={
+                val catNow=category?:return@Button
+                val rows=if(catNow=="TIKTOK_LAG")tikTokLagReports else tikTokUploadReports
+                val rr=rows.firstOrNull{it.uri==reportKey}?:return@Button
+                val parsed=runCatching{context.contentResolver.openInputStream(Uri.parse(rr.uri))?.bufferedReader()?.use{TikTokReportExporter.parse(it.readText())}}.getOrNull()?:return@Button
+                val s=ReportReviewV1.load(context,reportKey,parsed.events)
+                val updated=s.events.mapIndexed{i,e->if(i==idx)e.copy(t0=t0.trim(),t1=t1.trim(),note=note.trim()) else e}
+                ReportReviewV1.save(context,reportKey,s.copy(confirmed=false,confirmedAt=0L,events=updated));reviewEdit=null
+            }){Text("SAVE")}},
+            dismissButton={TextButton(onClick={reviewEdit=null}){Text("Cancel")}}
+        )
     }
 
     deleteTarget?.let { target ->
@@ -712,15 +766,35 @@ private fun ReportsHome(
                             Field("Average", durations.takeIf{it.isNotEmpty()}?.average()?.let { String.format(Locale.US,"%.3f s",it/1000.0) } ?: "--")
                             Field("Longest", durations.maxOrNull()?.let { String.format(Locale.US,"%.3f s",it/1000.0) } ?: "--")
                         }
+                        val reviewState=parsed?.let{ReportReviewV1.load(context,r.uri,it.events)}
                         parsed?.events?.forEachIndexed { i,e ->
+                            val rev=reviewState?.events?.getOrNull(i)?:ReviewedEventV1(i,true,e.t0,e.t1)
                             GlassSection("Lag #${i+1} · ${e.type.replace('_',' ')}") {
-                                Field("Lag Start (T0)", e.t0)
-                                Field("Lag End (T1)", e.t1)
-                                Field("Duration", e.durationMs?.let{String.format(Locale.US,"%.3f s",it/1000.0)} ?: "--")
-                                Text("Exported Excel includes a dedicated Lag ${i+1} sheet containing Cell Info samples from T0 to T1.", style=MaterialTheme.typography.bodySmall)
+                                Field("Original T0 → T1","${e.t0} → ${e.t1}")
+                                Field("Reviewed T0 → T1","${rev.t0} → ${rev.t1}")
+                                Field("Review",if(rev.valid)"Valid":"Invalid / Mis-touch")
+                                if(rev.note.isNotBlank())Field("Note",rev.note)
+                                Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                                    OutlinedButton(onClick={
+                                        val pos=ReportReviewV1.offsetMs(rev.t0,r.start)?.minus(5000L)?:0L
+                                        playScreenRecordingAt(r.fields["Screen Recording URI"].orEmpty(),pos)
+                                    },modifier=Modifier.weight(1f)){Text("REVIEW VIDEO")}
+                                    OutlinedButton(onClick={reviewEdit=Triple(r.uri,i,rev)},modifier=Modifier.weight(1f)){Text("EDIT T0/T1")}
+                                }
+                                TextButton(onClick={
+                                    val s=ReportReviewV1.load(context,r.uri,parsed.events)
+                                    ReportReviewV1.save(context,r.uri,s.copy(confirmed=false,confirmedAt=0L,events=s.events.mapIndexed{j,x->if(j==i)x.copy(valid=!x.valid) else x}))
+                                }){Text(if(rev.valid)"MARK INVALID":"MARK VALID")}
                             }
                         }
                         if(parsed?.events.isNullOrEmpty()) Text("No perceived lag event recorded.",style=MaterialTheme.typography.bodySmall)
+                        val screenName=r.fields["Screen Recording"].orEmpty()
+                        val screenUri=r.fields["Screen Recording URI"].orEmpty()
+                        GlassSection("Screen Recording") {
+                            Field("File",screenName.ifBlank{"--"})
+                            if(screenUri.isNotBlank()) Button(onClick={playScreenRecording(screenUri)},modifier=Modifier.fillMaxWidth()){Text("PLAY RECORDING")}
+                            else Text("No recording is associated with this report.",style=MaterialTheme.typography.bodySmall)
+                        }
                         GlassSection("Conclusion") {
                             Text("Use Export Report to generate the full HTML summary, Excel workbook, Cell Info and Track KML. Excel correlates each T0–T1 event with the Cell Info samples recorded in that exact window.", style=MaterialTheme.typography.bodySmall)
                         }
@@ -740,13 +814,33 @@ private fun ReportsHome(
                             Field("Fastest", durations.minOrNull()?.let{String.format(Locale.US,"%.3f s",it/1000.0)} ?: "--")
                             Field("Slowest", durations.maxOrNull()?.let{String.format(Locale.US,"%.3f s",it/1000.0)} ?: "--")
                         }
+                        val reviewState=parsed?.let{ReportReviewV1.load(context,r.uri,it.events)}
                         parsed?.events?.forEachIndexed { i,e ->
+                            val rev=reviewState?.events?.getOrNull(i)?:ReviewedEventV1(i,true,e.t0,e.t1)
                             GlassSection("Upload #${i+1}") {
-                                Field("TikTok Post Touch (T0)",e.t0)
-                                Field("Posted (T1)",e.t1)
-                                Field("Upload Time",e.durationMs?.let{String.format(Locale.US,"%.3f s",it/1000.0)} ?: "--")
-                                Text("Exported Excel includes an Upload ${i+1} sheet with Cell Info samples captured between T0 and T1.",style=MaterialTheme.typography.bodySmall)
+                                Field("Original T0 → T1","${e.t0} → ${e.t1}")
+                                Field("Reviewed T0 → T1","${rev.t0} → ${rev.t1}")
+                                Field("Review",if(rev.valid)"Valid":"Invalid / Mis-touch")
+                                if(rev.note.isNotBlank())Field("Note",rev.note)
+                                Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                                    OutlinedButton(onClick={
+                                        val pos=ReportReviewV1.offsetMs(rev.t0,r.start)?.minus(5000L)?:0L
+                                        playScreenRecordingAt(r.fields["Screen Recording URI"].orEmpty(),pos)
+                                    },modifier=Modifier.weight(1f)){Text("REVIEW VIDEO")}
+                                    OutlinedButton(onClick={reviewEdit=Triple(r.uri,i,rev)},modifier=Modifier.weight(1f)){Text("EDIT T0/T1")}
+                                }
+                                TextButton(onClick={
+                                    val s=ReportReviewV1.load(context,r.uri,parsed.events)
+                                    ReportReviewV1.save(context,r.uri,s.copy(confirmed=false,confirmedAt=0L,events=s.events.mapIndexed{j,x->if(j==i)x.copy(valid=!x.valid) else x}))
+                                }){Text(if(rev.valid)"MARK INVALID":"MARK VALID")}
                             }
+                        }
+                        val screenName=r.fields["Screen Recording"].orEmpty()
+                        val screenUri=r.fields["Screen Recording URI"].orEmpty()
+                        GlassSection("Screen Recording") {
+                            Field("File",screenName.ifBlank{"--"})
+                            if(screenUri.isNotBlank()) Button(onClick={playScreenRecording(screenUri)},modifier=Modifier.fillMaxWidth()){Text("PLAY RECORDING")}
+                            else Text("No recording is associated with this report.",style=MaterialTheme.typography.bodySmall)
                         }
                         GlassSection("Conclusion") {
                             Text("Use Export Report for the complete correlated package. Slow attempts can then be checked against radio quality, RAT/cell transitions, location and REF behavior at the same timestamps.",style=MaterialTheme.typography.bodySmall)
@@ -768,6 +862,20 @@ private fun ReportsHome(
                         OutlinedButton(onClick={exportPath(cat,path,true)},enabled=!busy,modifier=Modifier.weight(1f)){Text("PREVIEW HTML")}
                         Button(onClick={exportPath(cat,path,false)},enabled=!busy,modifier=Modifier.weight(1f)){Text(if(busy)"EXPORTING…" else "EXPORT REPORT")}
                     }
+                    Button(
+                        onClick = {
+                            val rows=if(cat=="TIKTOK_LAG")tikTokLagReports else tikTokUploadReports
+                            val rr=rows.firstOrNull{it.uri==path}
+                            val parsed=rr?.let{runCatching{context.contentResolver.openInputStream(Uri.parse(it.uri))?.bufferedReader()?.use{x->TikTokReportExporter.parse(x.readText())}}.getOrNull()}
+                            if(parsed!=null){
+                                val s=ReportReviewV1.load(context,path,parsed.events)
+                                ReportReviewV1.save(context,path,s.copy(confirmed=true,confirmedAt=System.currentTimeMillis()))
+                                Toast.makeText(context,"Review confirmed · final report is ready to export",Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        enabled=!busy,
+                        modifier=Modifier.fillMaxWidth()
+                    ){Text("CONFIRM REVIEW")}
                     OutlinedButton(
                         onClick = { deleteTarget = cat to path },
                         enabled = !busy,
