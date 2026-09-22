@@ -1,3 +1,8 @@
+## 1.0.0.0.17
+- Fix GitHub Actions Kotlin compile error: add the missing Compose FontWeight import used by the built-in review player.
+- Replace the previous launcher artwork with a cleaner iOS-inspired CellTracker icon using a purple gradient, radio/cell motif and location marker.
+- Preserve the v1.0.0.0.16 built-in recording review player and T0/T1 calibration workflow.
+
 ## 1.0.0.0.16
 - Fix TikTokReportExporter Kotlin compilation failure caused by malformed newline/quote escaping in reviewed CSV generation.
 - Replace external screen-recording playback for TikTok review with an in-app VideoView reviewer.
