@@ -1,3 +1,8 @@
+## 1.0.0.0.14
+- Fix Kotlin compilation errors introduced by the v1.0.0.0.13 report-review UI.
+- Correct conditional expressions used by review status, MARK INVALID/MARK VALID, and TikTok export button text.
+- Preserve all v1.0.0.0.13 report-review and overlay-dragging functionality.
+
 ## 1.0.0.0.13
 - Introduce report review state: original results remain immutable while reviewed T0/T1, validity and notes are stored separately.
 - TikTok Lag/Upload event cards can mark accidental events invalid and manually correct T0/T1 after screen-recording review.

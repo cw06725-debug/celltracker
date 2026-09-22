@@ -772,7 +772,7 @@ private fun ReportsHome(
                             GlassSection("Lag #${i+1} · ${e.type.replace('_',' ')}") {
                                 Field("Original T0 → T1","${e.t0} → ${e.t1}")
                                 Field("Reviewed T0 → T1","${rev.t0} → ${rev.t1}")
-                                Field("Review",if(rev.valid)"Valid":"Invalid / Mis-touch")
+                                Field("Review",if (rev.valid) "Valid" else "Invalid / Mis-touch")
                                 if(rev.note.isNotBlank())Field("Note",rev.note)
                                 Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){
                                     OutlinedButton(onClick={
@@ -784,7 +784,7 @@ private fun ReportsHome(
                                 TextButton(onClick={
                                     val s=ReportReviewV1.load(context,r.uri,parsed.events)
                                     ReportReviewV1.save(context,r.uri,s.copy(confirmed=false,confirmedAt=0L,events=s.events.mapIndexed{j,x->if(j==i)x.copy(valid=!x.valid) else x}))
-                                }){Text(if(rev.valid)"MARK INVALID":"MARK VALID")}
+                                }){Text(if (rev.valid) "MARK INVALID" else "MARK VALID")}
                             }
                         }
                         if(parsed?.events.isNullOrEmpty()) Text("No perceived lag event recorded.",style=MaterialTheme.typography.bodySmall)
@@ -820,7 +820,7 @@ private fun ReportsHome(
                             GlassSection("Upload #${i+1}") {
                                 Field("Original T0 → T1","${e.t0} → ${e.t1}")
                                 Field("Reviewed T0 → T1","${rev.t0} → ${rev.t1}")
-                                Field("Review",if(rev.valid)"Valid":"Invalid / Mis-touch")
+                                Field("Review",if (rev.valid) "Valid" else "Invalid / Mis-touch")
                                 if(rev.note.isNotBlank())Field("Note",rev.note)
                                 Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){
                                     OutlinedButton(onClick={
@@ -832,7 +832,7 @@ private fun ReportsHome(
                                 TextButton(onClick={
                                     val s=ReportReviewV1.load(context,r.uri,parsed.events)
                                     ReportReviewV1.save(context,r.uri,s.copy(confirmed=false,confirmedAt=0L,events=s.events.mapIndexed{j,x->if(j==i)x.copy(valid=!x.valid) else x}))
-                                }){Text(if(rev.valid)"MARK INVALID":"MARK VALID")}
+                                }){Text(if (rev.valid) "MARK INVALID" else "MARK VALID")}
                             }
                         }
                         val screenName=r.fields["Screen Recording"].orEmpty()
@@ -860,7 +860,7 @@ private fun ReportsHome(
                 if (cat == "TIKTOK_LAG" || cat == "TIKTOK_UPLOAD") {
                     Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){
                         OutlinedButton(onClick={exportPath(cat,path,true)},enabled=!busy,modifier=Modifier.weight(1f)){Text("PREVIEW HTML")}
-                        Button(onClick={exportPath(cat,path,false)},enabled=!busy,modifier=Modifier.weight(1f)){Text(if(busy)"EXPORTING…" else "EXPORT REPORT")}
+                        Button(onClick={exportPath(cat,path,false)},enabled=!busy,modifier=Modifier.weight(1f)){Text(if (busy) "EXPORTING…" else "EXPORT REPORT")}
                     }
                     Button(
                         onClick = {
