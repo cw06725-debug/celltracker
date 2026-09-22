@@ -1,3 +1,9 @@
+## 1.0.0.0.19
+- Fix v1.0.0.0.18 Kotlin compilation failure caused by a duplicate `placeholder` argument accidentally inserted into the Ping Task Name field.
+- Restore Ping to its original `Ping_<host>` placeholder.
+- Move the new optional/custom Task Name hint to the intended TikTok Setup field.
+- Preserve the v1.0.0.0.18 blue UI, centered icon, Downloads/CellTracker recording path and redesigned export dialog.
+
 ## 1.0.0.0.18
 - Rebuild launcher icon as a centered, upright blue iOS-style CellTracker mark.
 - Switch the app-wide primary accent from green/default purple to CellTracker blue.

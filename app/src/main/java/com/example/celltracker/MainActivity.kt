@@ -1806,8 +1806,7 @@ private fun PingTestScreen(
                         onValueChange = { if (!state.isRunning && it.length <= 64) taskName = it },
                         enabled = !state.isRunning,
                         singleLine = true,
-                        label = { Text("Task Name (optional)") },
-                        placeholder = { Text("e.g. Hall Road / Round 1") },
+                        label = { Text("Task Name") },
                         placeholder = { Text("Ping_<host>") },
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -4891,7 +4890,8 @@ private fun ScenarioTestsV1(
                     OutlinedTextField(
                         value = tikTokTaskName,
                         onValueChange = { tikTokTaskName = it },
-                        label = { Text("Task Name") },
+                        label = { Text("Task Name (optional)") },
+                        placeholder = { Text("e.g. Hall Road / Round 1") },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true
                     )
