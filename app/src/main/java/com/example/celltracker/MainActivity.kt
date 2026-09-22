@@ -549,6 +549,7 @@ private fun ReportsHome(
     var busy by remember { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<Pair<String,String>?>(null) }
     var reviewEdit by remember { mutableStateOf<Triple<String,Int,ReviewedEventV1>?>(null) }
+    var reviewPlayer by remember { mutableStateOf<ReviewPlayerRequest?>(null) }
 
     fun reloadReports() {
         scope.launch {
@@ -647,6 +648,77 @@ private fun ReportsHome(
                 Toast.makeText(context, "Unable to delete report", Toast.LENGTH_SHORT).show()
             }
         }
+    }
+
+    reviewPlayer?.let { req ->
+        var videoView by remember(req) { mutableStateOf<android.widget.VideoView?>(null) }
+        var positionMs by remember(req) { mutableLongStateOf(req.initialPositionMs.coerceAtLeast(0L)) }
+        var playing by remember(req) { mutableStateOf(false) }
+        var markedT0 by remember(req) { mutableStateOf<Long?>(null) }
+        var markedT1 by remember(req) { mutableStateOf<Long?>(null) }
+        val clockFmt=remember { SimpleDateFormat("HH:mm:ss.SSS",Locale.US) }
+        LaunchedEffect(req,videoView) {
+            while(reviewPlayer==req){
+                videoView?.let { positionMs=it.currentPosition.toLong();playing=it.isPlaying }
+                delay(200)
+            }
+        }
+        AlertDialog(
+            onDismissRequest={reviewPlayer=null},
+            title={Text("${req.eventLabel} · Recording Review")},
+            text={
+                Column(verticalArrangement=Arrangement.spacedBy(10.dp)){
+                    AndroidView(
+                        factory={ctx->android.widget.VideoView(ctx).also{v->
+                            videoView=v
+                            v.setVideoURI(Uri.parse(req.videoUri))
+                            v.setOnPreparedListener{mp->
+                                v.seekTo(req.initialPositionMs.coerceAtLeast(0L).toInt())
+                                mp.setOnSeekCompleteListener{}
+                            }
+                        }},
+                        modifier=Modifier.fillMaxWidth().height(360.dp)
+                    )
+                    Text("Position  ${String.format(Locale.US,"%02d:%02d.%03d",positionMs/60000,(positionMs/1000)%60,positionMs%1000)}",
+                        style=MaterialTheme.typography.bodyMedium,fontWeight=FontWeight.SemiBold)
+                    Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp)){
+                        OutlinedButton(onClick={videoView?.seekTo((positionMs-5000).coerceAtLeast(0L).toInt())},modifier=Modifier.weight(1f)){Text("−5s")}
+                        Button(onClick={videoView?.let{if(it.isPlaying)it.pause() else it.start()}},modifier=Modifier.weight(1.4f)){Text(if(playing)"PAUSE" else "PLAY")}
+                        OutlinedButton(onClick={videoView?.seekTo((positionMs+5000).toInt())},modifier=Modifier.weight(1f)){Text("+5s")}
+                    }
+                    Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp)){
+                        OutlinedButton(onClick={markedT0=videoView?.currentPosition?.toLong()?:positionMs},modifier=Modifier.weight(1f)){Text("SET T0")}
+                        OutlinedButton(onClick={markedT1=videoView?.currentPosition?.toLong()?:positionMs},modifier=Modifier.weight(1f)){Text("SET T1")}
+                    }
+                    val base=req.recordingStartMs
+                    Text("T0  "+(markedT0?.let{clockFmt.format(Date(base+it))}?:"—")+"    T1  "+(markedT1?.let{clockFmt.format(Date(base+it))}?:"—"),
+                        style=MaterialTheme.typography.bodySmall)
+                    Text("Pause or seek to the exact frame, then tap SET T0 / SET T1. Saving writes the calibrated timestamps directly into Review; no manual time entry is required.",
+                        style=MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton={
+                Button(
+                    enabled=markedT0!=null&&markedT1!=null,
+                    onClick={
+                        val catNow=category
+                        val rows=if(catNow=="TIKTOK_LAG")tikTokLagReports else tikTokUploadReports
+                        val rr=rows.firstOrNull{it.uri==req.reportUri}
+                        val parsed=rr?.let{runCatching{context.contentResolver.openInputStream(Uri.parse(it.uri))?.bufferedReader()?.use{x->TikTokReportExporter.parse(x.readText())}}.getOrNull()}
+                        if(parsed!=null&&markedT0!=null&&markedT1!=null){
+                            val state=ReportReviewV1.load(context,req.reportUri,parsed.events)
+                            val nt0=clockFmt.format(Date(req.recordingStartMs+markedT0!!))
+                            val nt1=clockFmt.format(Date(req.recordingStartMs+markedT1!!))
+                            val updated=state.events.mapIndexed{i,x->if(i==req.eventIndex)x.copy(t0=nt0,t1=nt1,valid=true) else x}
+                            ReportReviewV1.save(context,req.reportUri,state.copy(confirmed=false,confirmedAt=0L,events=updated))
+                            Toast.makeText(context,"T0/T1 calibrated from recording",Toast.LENGTH_SHORT).show()
+                            reviewPlayer=null
+                        }
+                    }
+                ){Text("SAVE CALIBRATION")}
+            },
+            dismissButton={TextButton(onClick={reviewPlayer=null}){Text("Cancel")}}
+        )
     }
 
     reviewEdit?.let { triple ->
@@ -776,8 +848,20 @@ private fun ReportsHome(
                                 if(rev.note.isNotBlank())Field("Note",rev.note)
                                 Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){
                                     OutlinedButton(onClick={
-                                        val pos=ReportReviewV1.offsetMs(rev.t0,r.start)?.minus(5000L)?:0L
-                                        playScreenRecordingAt(r.fields["Screen Recording URI"].orEmpty(),pos)
+                                        val videoUri=r.fields["Screen Recording URI"].orEmpty()
+                                        if(videoUri.isBlank()){
+                                            Toast.makeText(context,"Screen recording unavailable",Toast.LENGTH_SHORT).show()
+                                        }else{
+                                            val recordedAt=r.fields["Screen Recording Start ms"]?.toLongOrNull()
+                                                ?: runCatching{SimpleDateFormat("HH:mm:ss.SSS",Locale.US).parse(r.start)?.time}.getOrNull()
+                                                ?: 0L
+                                            val timeFmt=SimpleDateFormat("HH:mm:ss.SSS",Locale.US)
+                                            val eventClock=runCatching{timeFmt.parse(rev.t0)?.time}.getOrNull()?:0L
+                                            val recordingClock=runCatching{timeFmt.parse(timeFmt.format(Date(recordedAt)))?.time}.getOrNull()?:0L
+                                            var offset=eventClock-recordingClock
+                                            if(offset<0)offset+=24L*60*60*1000
+                                            reviewPlayer=ReviewPlayerRequest(r.uri,i,videoUri,recordedAt,(offset-5000L).coerceAtLeast(0L),"Lag #${i+1}")
+                                        }
                                     },modifier=Modifier.weight(1f)){Text("REVIEW VIDEO")}
                                     OutlinedButton(onClick={reviewEdit=Triple(r.uri,i,rev)},modifier=Modifier.weight(1f)){Text("EDIT T0/T1")}
                                 }
@@ -792,7 +876,19 @@ private fun ReportsHome(
                         val screenUri=r.fields["Screen Recording URI"].orEmpty()
                         GlassSection("Screen Recording") {
                             Field("File",screenName.ifBlank{"--"})
-                            if(screenUri.isNotBlank()) Button(onClick={playScreenRecording(screenUri)},modifier=Modifier.fillMaxWidth()){Text("PLAY RECORDING")}
+                            if(screenUri.isNotBlank()) Button(onClick={
+                                val first=parsed?.events?.firstOrNull()
+                                val rev=reviewState?.events?.firstOrNull()
+                                if(first!=null&&rev!=null){
+                                    val recordedAt=r.fields["Screen Recording Start ms"]?.toLongOrNull()
+                                        ?: runCatching{SimpleDateFormat("HH:mm:ss.SSS",Locale.US).parse(r.start)?.time}.getOrNull() ?: 0L
+                                    val tf=SimpleDateFormat("HH:mm:ss.SSS",Locale.US)
+                                    val ec=runCatching{tf.parse(rev.t0)?.time}.getOrNull()?:0L
+                                    val rc=runCatching{tf.parse(tf.format(Date(recordedAt)))?.time}.getOrNull()?:0L
+                                    var off=ec-rc;if(off<0)off+=24L*60*60*1000
+                                    reviewPlayer=ReviewPlayerRequest(r.uri,0,screenUri,recordedAt,(off-5000L).coerceAtLeast(0L),if(cat=="TIKTOK_LAG")"Lag #1" else "Upload #1")
+                                }else Toast.makeText(context,"No reviewable event in this report",Toast.LENGTH_SHORT).show()
+                            },modifier=Modifier.fillMaxWidth()){Text("PLAY / REVIEW RECORDING")}
                             else Text("No recording is associated with this report.",style=MaterialTheme.typography.bodySmall)
                         }
                         GlassSection("Conclusion") {
@@ -824,8 +920,20 @@ private fun ReportsHome(
                                 if(rev.note.isNotBlank())Field("Note",rev.note)
                                 Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){
                                     OutlinedButton(onClick={
-                                        val pos=ReportReviewV1.offsetMs(rev.t0,r.start)?.minus(5000L)?:0L
-                                        playScreenRecordingAt(r.fields["Screen Recording URI"].orEmpty(),pos)
+                                        val videoUri=r.fields["Screen Recording URI"].orEmpty()
+                                        if(videoUri.isBlank()){
+                                            Toast.makeText(context,"Screen recording unavailable",Toast.LENGTH_SHORT).show()
+                                        }else{
+                                            val recordedAt=r.fields["Screen Recording Start ms"]?.toLongOrNull()
+                                                ?: runCatching{SimpleDateFormat("HH:mm:ss.SSS",Locale.US).parse(r.start)?.time}.getOrNull()
+                                                ?: 0L
+                                            val timeFmt=SimpleDateFormat("HH:mm:ss.SSS",Locale.US)
+                                            val eventClock=runCatching{timeFmt.parse(rev.t0)?.time}.getOrNull()?:0L
+                                            val recordingClock=runCatching{timeFmt.parse(timeFmt.format(Date(recordedAt)))?.time}.getOrNull()?:0L
+                                            var offset=eventClock-recordingClock
+                                            if(offset<0)offset+=24L*60*60*1000
+                                            reviewPlayer=ReviewPlayerRequest(r.uri,i,videoUri,recordedAt,(offset-5000L).coerceAtLeast(0L),"Upload #${i+1}")
+                                        }
                                     },modifier=Modifier.weight(1f)){Text("REVIEW VIDEO")}
                                     OutlinedButton(onClick={reviewEdit=Triple(r.uri,i,rev)},modifier=Modifier.weight(1f)){Text("EDIT T0/T1")}
                                 }
@@ -839,7 +947,19 @@ private fun ReportsHome(
                         val screenUri=r.fields["Screen Recording URI"].orEmpty()
                         GlassSection("Screen Recording") {
                             Field("File",screenName.ifBlank{"--"})
-                            if(screenUri.isNotBlank()) Button(onClick={playScreenRecording(screenUri)},modifier=Modifier.fillMaxWidth()){Text("PLAY RECORDING")}
+                            if(screenUri.isNotBlank()) Button(onClick={
+                                val first=parsed?.events?.firstOrNull()
+                                val rev=reviewState?.events?.firstOrNull()
+                                if(first!=null&&rev!=null){
+                                    val recordedAt=r.fields["Screen Recording Start ms"]?.toLongOrNull()
+                                        ?: runCatching{SimpleDateFormat("HH:mm:ss.SSS",Locale.US).parse(r.start)?.time}.getOrNull() ?: 0L
+                                    val tf=SimpleDateFormat("HH:mm:ss.SSS",Locale.US)
+                                    val ec=runCatching{tf.parse(rev.t0)?.time}.getOrNull()?:0L
+                                    val rc=runCatching{tf.parse(tf.format(Date(recordedAt)))?.time}.getOrNull()?:0L
+                                    var off=ec-rc;if(off<0)off+=24L*60*60*1000
+                                    reviewPlayer=ReviewPlayerRequest(r.uri,0,screenUri,recordedAt,(off-5000L).coerceAtLeast(0L),if(cat=="TIKTOK_LAG")"Lag #1" else "Upload #1")
+                                }else Toast.makeText(context,"No reviewable event in this report",Toast.LENGTH_SHORT).show()
+                            },modifier=Modifier.fillMaxWidth()){Text("PLAY / REVIEW RECORDING")}
                             else Text("No recording is associated with this report.",style=MaterialTheme.typography.bodySmall)
                         }
                         GlassSection("Conclusion") {

@@ -146,11 +146,15 @@ object TikTokReportExporter {
     }
 
     private fun finalCsv(p:Parsed):String=buildString {
-        p.fields.forEach{(k,v)->append(csv(k)).append(',').append(csv(v)).append('\\n')}
-        append('\\n');append(p.header.joinToString(","){csv(it)}).append('\\n')
-        p.rows.forEach{r->append(r.joinToString(","){csv(it)}).append('\\n')}
+        p.fields.forEach { (k,v) -> append(csv(k)).append(',').append(csv(v)).append('\n') }
+        append('\n')
+        append(p.header.joinToString(",") { csv(it) }).append('\n')
+        p.rows.forEach { r -> append(r.joinToString(",") { csv(it) }).append('\n') }
     }
-    private fun csv(s:String):String=if(s.any{it==','||it=='"'||it=='\\n'||it=='\\r'}) "\\"" + s.replace("\\"","\\"\\"") + "\\"" else s
+    private fun csv(s:String):String =
+        if (s.any { it == ',' || it == '"' || it == '\n' || it == '\r' })
+            "\"" + s.replace("\"", "\"\"") + "\""
+        else s
 
     private fun analysis(p:Parsed,h:List<String>,rows:List<List<String>>):String{
         if(p.events.isEmpty()) return if(p.isLag)"No perceived lag event was recorded." else "No completed upload attempt is available."

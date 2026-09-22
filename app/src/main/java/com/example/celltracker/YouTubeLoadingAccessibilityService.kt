@@ -2102,6 +2102,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                 appendLine("Recording Path,$recordingPath")
                 appendLine("Screen Recording,${TestScreenRecordingService.currentName.ifBlank{TestScreenRecordingService.lastName}}")
                 appendLine("Screen Recording URI,${TestScreenRecordingService.currentUri.ifBlank{TestScreenRecordingService.lastUri}}")
+                appendLine("Screen Recording Start ms,${TestScreenRecordingService.currentStartedAt.takeIf{it>0} ?: TestScreenRecordingService.lastStartedAt}")
                 if(isLag){
                     appendLine("Videos,$video")
                     appendLine("Lag Count,$lagCount")

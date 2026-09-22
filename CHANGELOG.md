@@ -1,3 +1,12 @@
+## 1.0.0.0.16
+- Fix TikTokReportExporter Kotlin compilation failure caused by malformed newline/quote escaping in reviewed CSV generation.
+- Replace external screen-recording playback for TikTok review with an in-app VideoView reviewer.
+- Review player opens around 5 seconds before the selected event and provides Play/Pause, -5s, +5s, SET T0 and SET T1.
+- SET T0 / SET T1 calibrate review timestamps directly from the recording position; manual timestamp typing is no longer required for normal review.
+- Record the exact screen-recording start timestamp in new TikTok reports so video positions map accurately to wall-clock T0/T1.
+- Saving calibration marks the event valid, clears prior review confirmation, and requires CONFIRM REVIEW again before final export.
+- Report-level PLAY RECORDING now enters the built-in review flow instead of launching Samsung or another external player.
+
 ## 1.0.0.0.15
 - Redesign TikTok Accessibility setup as a compact permission card with clear READY / SET UP state.
 - Remove the obsolete "drag" label from TikTok floating windows; non-button areas remain draggable.
