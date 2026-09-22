@@ -1972,7 +1972,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         }
         val header = TextView(this).apply {
             setTextColor(0xffffffff.toInt())
-            text = if (isLag) "TikTok Video Lag · ${if(autoSwipe)"AUTO" else "MANUAL"} · drag" else "TikTok Upload · $configuredUploadType · drag"
+            text = if (isLag) "TikTok Video Lag · ${if(autoSwipe)"AUTO" else "MANUAL"}" else "TikTok Upload · $configuredUploadType"
             setPadding(8,8,8,5)
         }
         val meta = TextView(this).apply {

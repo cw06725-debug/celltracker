@@ -468,45 +468,33 @@ class FloatingOverlayService : Service() {
 
     private fun confirmCloseOverlay() {
         if (closeConfirmView != null) return
-        val settings = settingsRepository.load()
-        val panel = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), dp(12), dp(12), dp(12))
-            background = roundedBackground((settings.floatingOpacity + 0.15f).coerceAtMost(1f))
+        val settings=settingsRepository.load()
+        val panel=LinearLayout(this).apply{
+            orientation=LinearLayout.VERTICAL
+            setPadding(dp(18),dp(16),dp(18),dp(12))
+            background=roundedBackground(0.98f)
         }
-        panel.addView(textView(15f, true).apply { text = "Close floating window?" })
-        panel.addView(textView(12f, false).apply {
-            text = if (RecordingState.status.value.isRecording)
-                "Recording will continue in the background."
-            else "You can enable the floating window again in Settings."
+        panel.addView(textView(17f,true).apply{text="Close CellTracker overlay?"})
+        panel.addView(textView(13f,false).apply{
+            text=if(RecordingState.status.value.isRecording)"Recording will continue in the background." else "You can enable the floating window again in Settings."
+            setPadding(0,dp(8),0,dp(12))
         })
-        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        row.addView(Button(this).apply {
-            text = "Cancel"; isAllCaps = false
-            setOnClickListener { closeCloseConfirmation() }
-        }, LinearLayout.LayoutParams(0, dp(42), 1f).apply { marginEnd = dp(4) })
-        row.addView(Button(this).apply {
-            text = "Close"; isAllCaps = false
-            setOnClickListener {
-                val current = settingsRepository.load()
-                settingsRepository.save(current.copy(floatingWindowEnabled = false))
-                closeCloseConfirmation()
-                closeIssueMenu()
-                closeStartMenu()
-                // Explicitly stop only this overlay service. RecordingService is untouched.
-                stopSelf()
-            }
-        }, LinearLayout.LayoutParams(0, dp(42), 1f).apply { marginStart = dp(4) })
+        val row=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL}
+        row.addView(Button(this).apply{text="Cancel";isAllCaps=false;setOnClickListener{closeCloseConfirmation()}},LinearLayout.LayoutParams(0,dp(48),1f).apply{marginEnd=dp(5)})
+        row.addView(Button(this).apply{text="Close";isAllCaps=false;setOnClickListener{
+            val current=settingsRepository.load();settingsRepository.save(current.copy(floatingWindowEnabled=false))
+            closeCloseConfirmation();closeIssueMenu();closeStartMenu();stopSelf()
+        }},LinearLayout.LayoutParams(0,dp(48),1f).apply{marginStart=dp(5)})
         panel.addView(row)
-        val base = overlayParams ?: return
-        val params = WindowManager.LayoutParams(
-            dp(230), WindowManager.LayoutParams.WRAP_CONTENT,
+        val dm=resources.displayMetrics
+        val params=WindowManager.LayoutParams(
+            (dm.widthPixels*0.84f).toInt(),WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_DIM_BEHIND,
             PixelFormat.TRANSLUCENT
-        ).apply { gravity = Gravity.TOP or Gravity.START; x = base.x; y = (base.y + dp(45)).coerceAtLeast(0) }
-        closeConfirmView = panel
-        runCatching { windowManager.addView(panel, params) }.onFailure { closeConfirmView = null }
+        ).apply{gravity=Gravity.CENTER;dimAmount=0.38f}
+        closeConfirmView=panel
+        runCatching{windowManager.addView(panel,params)}
     }
 
     private fun closeCloseConfirmation() {

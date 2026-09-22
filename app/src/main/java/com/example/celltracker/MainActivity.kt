@@ -868,9 +868,9 @@ private fun ReportsHome(
                             val rr=rows.firstOrNull{it.uri==path}
                             val parsed=rr?.let{runCatching{context.contentResolver.openInputStream(Uri.parse(it.uri))?.bufferedReader()?.use{x->TikTokReportExporter.parse(x.readText())}}.getOrNull()}
                             if(parsed!=null){
-                                val s=ReportReviewV1.load(context,path,parsed.events)
-                                ReportReviewV1.save(context,path,s.copy(confirmed=true,confirmedAt=System.currentTimeMillis()))
-                                Toast.makeText(context,"Review confirmed · final report is ready to export",Toast.LENGTH_SHORT).show()
+                                val reviewState=ReportReviewV1.load(context,path,parsed.events)
+                                ReportReviewV1.save(context,path,reviewState.copy(confirmed=true,confirmedAt=System.currentTimeMillis()))
+                                Toast.makeText(context,"Review confirmed · final export will use reviewed results only",Toast.LENGTH_SHORT).show()
                             }
                         },
                         enabled=!busy,
@@ -4792,18 +4792,27 @@ private fun ScenarioTestsV1(
                     }
                     Text("Android will show the system screen-capture confirmation before the test. Recording stops with FINISH and is saved using the task name.",style=MaterialTheme.typography.bodySmall)
                     HorizontalDivider()
-                    Text(
-                        if (accessibilityEnabled) "Accessibility · Enabled"
-                        else "Accessibility · Required before starting",
-                        color = if (accessibilityEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
-                    )
-                    OutlinedButton(
-                        onClick = {
-                            context.startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)
-                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) { Text(if(accessibilityEnabled)"OPEN ACCESSIBILITY SETTINGS" else "ENABLE CELLTRACKER ACCESSIBILITY") }
+                    Surface(
+                        modifier=Modifier.fillMaxWidth(),
+                        shape=RoundedCornerShape(14.dp),
+                        tonalElevation=2.dp
+                    ){
+                        Column(Modifier.padding(14.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){
+                            Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
+                                Column(Modifier.weight(1f)){
+                                    Text("Accessibility",fontWeight=FontWeight.SemiBold)
+                                    Text(if(accessibilityEnabled)"Enabled · automatic timing is ready" else "Required for automatic timing",style=MaterialTheme.typography.bodySmall)
+                                }
+                                Text(if(accessibilityEnabled)"READY" else "SET UP",color=if(accessibilityEnabled)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,fontWeight=FontWeight.SemiBold)
+                            }
+                            OutlinedButton(
+                                onClick={
+                                    context.startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                                },
+                                modifier=Modifier.fillMaxWidth()
+                            ){Text(if(accessibilityEnabled)"ACCESSIBILITY SETTINGS" else "GRANT ACCESSIBILITY")}
+                        }
+                    }
                     Text("After FINISH, open Reports → ${if(tool=="LAG")"TikTok Video Lag" else "TikTok Upload"} to view the saved report.",
                         style=MaterialTheme.typography.bodySmall)
                 }

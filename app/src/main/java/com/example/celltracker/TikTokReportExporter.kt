@@ -18,7 +18,14 @@ object TikTokReportExporter {
         val source=Uri.parse(uriString)
         val raw=c.contentResolver.openInputStream(source)?.bufferedReader()?.use{it.readText()}
             ?: error("Unable to read TikTok report")
-        val p=parse(raw)
+        val original=parse(raw)
+        val review=ReportReviewV1.load(c,uriString,original.events)
+        val reviewedEvents=review.events.mapNotNull { r ->
+            if(!r.valid) null else original.events.getOrNull(r.index)?.let { e ->
+                e.copy(t0=r.t0,t1=r.t1,durationMs=durationBetween(r.t0,r.t1))
+            }
+        }
+        val p=applyReview(original,reviewedEvents,review)
         val task=p.fields["Task"].orEmpty().ifBlank{if(p.isLag)"TikTok Video Lag" else "TikTok Upload"}
         val safe=task.replace(Regex("[\\/:*?\"<>|\\r\\n]+"),"_").replace(' ','_').take(48)
         val rec=File(p.fields["Recording Path"].orEmpty())
@@ -77,7 +84,7 @@ object TikTokReportExporter {
         val kmlName="${base}_track.kml"
         val kmlUri=save(c,kmlName,"application/vnd.google-earth.kml+xml",kml(cellHeader,cellData,p.events).toByteArray(),started).toString()
         val rawName="${base}_events.csv"
-        val rawUri=save(c,rawName,"text/csv",raw.toByteArray(),started).toString()
+        val rawUri=save(c,rawName,"text/csv",finalCsv(p).toByteArray(),started).toString()
         return ExportResult(
             message="Export successful · HTML Summary + Excel + Cell Info + Track KML",
             exportedFileUris=listOf(rawUri,cellUri),
@@ -114,6 +121,37 @@ object TikTokReportExporter {
         return Parsed(fields,header,rows,events,lag)
     }
 
+    private fun durationBetween(t0:String,t1:String):Long? {
+        val a=parseClock(t0);var b=parseClock(t1)
+        if(a<=0||b<=0)return null
+        if(b<a)b+=24*60*60*1000L
+        return b-a
+    }
+
+    private fun applyReview(src:Parsed,events:List<Event>,review:ReviewStateV1):Parsed {
+        val f=LinkedHashMap(src.fields)
+        f["Review Status"]=if(review.confirmed)"Confirmed" else "Draft / Not Confirmed"
+        if(review.confirmedAt>0)f["Review Confirmed At"]=SimpleDateFormat("yyyy-MM-dd HH:mm:ss",Locale.US).format(Date(review.confirmedAt))
+        if(src.isLag){
+            val ds=events.mapNotNull{it.durationMs}
+            f["Lag Count"]=events.size.toString()
+            f["Total Lag ms"]=ds.sum().toString()
+            f["Average Lag ms"]=if(ds.isEmpty())"0" else (ds.sum()/ds.size).toString()
+            val rows=events.mapIndexed{i,e->listOf((i+1).toString(),e.item,e.type,e.t0,e.t1,e.durationMs?.toString().orEmpty())}
+            return Parsed(f,src.header,rows,events,true)
+        }
+        f["Completed"]=events.size.toString()
+        val rows=events.mapIndexed{i,e->listOf((i+1).toString(),e.item,e.t0,e.t1,e.durationMs?.toString().orEmpty(),"Success")}
+        return Parsed(f,src.header,rows,events,false)
+    }
+
+    private fun finalCsv(p:Parsed):String=buildString {
+        p.fields.forEach{(k,v)->append(csv(k)).append(',').append(csv(v)).append('\\n')}
+        append('\\n');append(p.header.joinToString(","){csv(it)}).append('\\n')
+        p.rows.forEach{r->append(r.joinToString(","){csv(it)}).append('\\n')}
+    }
+    private fun csv(s:String):String=if(s.any{it==','||it=='"'||it=='\\n'||it=='\\r'}) "\\"" + s.replace("\\"","\\"\\"") + "\\"" else s
+
     private fun analysis(p:Parsed,h:List<String>,rows:List<List<String>>):String{
         if(p.events.isEmpty()) return if(p.isLag)"No perceived lag event was recorded." else "No completed upload attempt is available."
         if(h.isEmpty()) return "Cell Info was not available for this session; event timing is available but radio correlation cannot be concluded."
@@ -137,7 +175,7 @@ object TikTokReportExporter {
     }
 
     private fun html(p:Parsed,h:List<String>,cell:List<List<String>>):String=buildString{
-        append("<html><head><meta name='viewport' content='width=device-width'><style>body{font-family:sans-serif;margin:18px}.card{border:1px solid #ddd;border-radius:12px;padding:12px;margin:10px 0}table{border-collapse:collapse;width:100%;display:block;overflow:auto}th,td{padding:7px;border-bottom:1px solid #ddd;white-space:nowrap}</style></head><body>")
+        append("<html><head><meta name='viewport' content='width=device-width'><style>body{font-family:sans-serif;margin:18px}.card{border:1px solid #ddd;border-radius:12px;padding:12px;margin:10px 0}table{border-collapse:collapse;width:100%;table-layout:fixed}th,td{padding:7px;border-bottom:1px solid #ddd;white-space:normal;overflow-wrap:anywhere;word-break:break-word}.card{overflow-wrap:anywhere;word-break:break-word}</style></head><body>")
         append("<h1>${if(p.isLag)"TikTok Video Lag" else "TikTok Upload"}</h1><div class='card'>")
         p.fields.filterKeys{it!="Recording Path"}.forEach{(k,v)->append("<b>${esc(k)}</b>: ${esc(v)}<br>")}
         append("</div><div class='card'><b>Analysis</b><br>${esc(analysis(p,h,cell))}</div>")

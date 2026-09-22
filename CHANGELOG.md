@@ -1,3 +1,13 @@
+## 1.0.0.0.15
+- Redesign TikTok Accessibility setup as a compact permission card with clear READY / SET UP state.
+- Remove the obsolete "drag" label from TikTok floating windows; non-button areas remain draggable.
+- Restyle floating-window close confirmation as a centered, dimmed Android-style confirmation surface.
+- Fix TikTok HTML report wrapping for long recording filenames, URIs and table cells.
+- Make TikTok final exports honor report review: invalid events are excluded; reviewed T0/T1 values drive duration, statistics, analysis, KML markers and per-event Cell Info sheets.
+- Recalculate Lag Count, Total Lag and Average Lag from reviewed valid events.
+- Export reviewed event CSV instead of silently re-exporting the untouched raw event table.
+- Add CellTracker launcher and round launcher icons for common Android densities.
+
 ## 1.0.0.0.14
 - Fix Kotlin compilation errors introduced by the v1.0.0.0.13 report-review UI.
 - Correct conditional expressions used by review status, MARK INVALID/MARK VALID, and TikTok export button text.
