@@ -547,6 +547,7 @@ private fun ReportsHome(
     var selectedPath by rememberSaveable { mutableStateOf<String?>(null) }
     var exportResult by remember { mutableStateOf<ExportResult?>(null) }
     var busy by remember { mutableStateOf(false) }
+    var deleteTarget by remember { mutableStateOf<Pair<String,String>?>(null) }
 
     fun reloadReports() {
         scope.launch {
@@ -601,6 +602,37 @@ private fun ReportsHome(
         }
     }
 
+    fun deleteTikTokReport(type:String, path:String) {
+        scope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                runCatching {
+                    val uri = Uri.parse(path)
+                    context.contentResolver.delete(uri, null, null) > 0
+                }.getOrDefault(false)
+            }
+            if (ok) {
+                selectedPath = null
+                deleteTarget = null
+                reloadReports()
+                Toast.makeText(context, "Report deleted", Toast.LENGTH_SHORT).show()
+            } else {
+                deleteTarget = null
+                Toast.makeText(context, "Unable to delete report", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    deleteTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { deleteTarget = null },
+            title = { Text("Delete report?") },
+            text = { Text("This will permanently delete this TikTok report record. Exported report files are not removed automatically.") },
+            confirmButton = {
+                Button(onClick = { deleteTikTokReport(target.first, target.second) }) { Text("DELETE") }
+            },
+            dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("Cancel") } }
+        )
+    }
 
     if (selectedPath != null && category != null) {
         val path = selectedPath!!
@@ -736,6 +768,11 @@ private fun ReportsHome(
                         OutlinedButton(onClick={exportPath(cat,path,true)},enabled=!busy,modifier=Modifier.weight(1f)){Text("PREVIEW HTML")}
                         Button(onClick={exportPath(cat,path,false)},enabled=!busy,modifier=Modifier.weight(1f)){Text(if(busy)"EXPORTING…" else "EXPORT REPORT")}
                     }
+                    OutlinedButton(
+                        onClick = { deleteTarget = cat to path },
+                        enabled = !busy,
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("DELETE REPORT") }
                     Text("Export package: HTML Summary · Excel · Cell Info · Track KML. Excel contains Summary, Events/Attempts, full Cell Info, plus one T0–T1 Cell Info sheet per lag/upload event.",style=MaterialTheme.typography.bodySmall)
                 } else if (cat == "WEAK") {
                     Button(

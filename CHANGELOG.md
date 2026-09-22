@@ -1,3 +1,9 @@
+## 1.0.0.0.10
+- Add DELETE REPORT action for TikTok Video Lag and TikTok Upload reports.
+- Add delete confirmation dialog to prevent accidental deletion.
+- Refresh report lists immediately after successful deletion.
+- Deletion removes the selected source report record; previously exported HTML/XLSX/Cell Info/KML files are intentionally preserved.
+
 ## 1.0.0.0.9
 - Upgrade TikTok Lag/Upload from CSV-only reports to the standard CellTracker export flow.
 - Start/associate Network Recording during TikTok tests so Cell Info and location can be correlated with T0/T1.
