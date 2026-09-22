@@ -3918,6 +3918,23 @@ private fun VideoLoadingScreen(onBack: () -> Unit, onVisualAiCollector: () -> Un
     val metaRepo = remember { TestMetadataRepository(context) }
     var showMetadata by remember { mutableStateOf(false) }
     var pendingConfig by remember { mutableStateOf<VideoLoadingConfig?>(null) }
+    var autoScreenRecord by rememberSaveable { mutableStateOf(true) }
+    var pendingYouTubeMeta by remember { mutableStateOf<TestMetadata?>(null) }
+    val youtubeScreenRecordLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val meta=pendingYouTubeMeta
+        val data=result.data
+        if(meta!=null && result.resultCode==Activity.RESULT_OK && data!=null){
+            ContextCompat.startForegroundService(context,Intent(context,TestScreenRecordingService::class.java).apply{
+                action=TestScreenRecordingService.START
+                putExtra(TestScreenRecordingService.CODE,result.resultCode)
+                putExtra(TestScreenRecordingService.DATA,data)
+                putExtra(TestScreenRecordingService.NAME,meta.displayName()+"_Screen")
+            })
+            YouTubeLoadingAccessibilityService.requestOverlay()
+            context.packageManager.getLaunchIntentForPackage("com.google.android.youtube")?.let{context.startActivity(it)}
+        }else if(meta!=null) Toast.makeText(context,"Screen recording permission cancelled",Toast.LENGTH_SHORT).show()
+        pendingYouTubeMeta=null
+    }
 
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
@@ -3937,6 +3954,8 @@ private fun VideoLoadingScreen(onBack: () -> Unit, onVisualAiCollector: () -> Un
             OutlinedTextField(timeout, { timeout = it.filter(Char::isDigit) }, label = { Text("Load timeout (s)") }, singleLine = true)
             OutlinedTextField(returnWait, { returnWait = it.filter { c -> c.isDigit() || c == '.' } }, label = { Text("Return wait (s)") }, singleLine = true)
             Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(autoRecord, { autoRecord = it }); Text("Auto Network Recording") }
+            Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(autoScreenRecord, { autoScreenRecord = it }); Text("Auto Screen Recording") }
+            Text("Android shows the system capture confirmation before the test. The MP4 is named from the test metadata and stops when the YouTube test finishes.",style=MaterialTheme.typography.bodySmall)
             Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(semiAuto, { semiAuto = it }); Text("Semi-auto mode (START → click video → LOADED)") }
             if (semiAuto) Text("Semi-auto has no fixed test count. For EACH sample: press START on the YouTube list, then tap one video; that tap is T0. CellTracker automatically detects playback start as T1. LOADED is only the manual T1 fallback if AUTO is not confirmed. Between samples you can scroll freely. Use AD / SKIP for advertisements; AD rows are excluded from delay statistics.", style = MaterialTheme.typography.bodySmall)
             Button(onClick = { context.startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }) { Text("1. Enable CellTracker Accessibility") }
@@ -3984,9 +4003,17 @@ private fun VideoLoadingScreen(onBack: () -> Unit, onVisualAiCollector: () -> Un
                 val cfg = (pendingConfig ?: VideoLoadingConfig()).copy(metadata = meta)
                 repo.arm(cfg)
                 showMetadata = false
-                YouTubeLoadingAccessibilityService.requestOverlay()
                 val launch = context.packageManager.getLaunchIntentForPackage("com.google.android.youtube")
-                if (launch != null) context.startActivity(launch) else Toast.makeText(context, "YouTube is not installed", Toast.LENGTH_SHORT).show()
+                if(launch==null){
+                    Toast.makeText(context,"YouTube is not installed",Toast.LENGTH_SHORT).show()
+                }else if(autoScreenRecord){
+                    pendingYouTubeMeta=meta
+                    val mgr=context.getSystemService(android.media.projection.MediaProjectionManager::class.java)
+                    youtubeScreenRecordLauncher.launch(mgr.createScreenCaptureIntent())
+                }else{
+                    YouTubeLoadingAccessibilityService.requestOverlay()
+                    context.startActivity(launch)
+                }
             }
         )
     }
@@ -4434,6 +4461,30 @@ private fun ScenarioTestsV1(
     var tikTokOperator by remember { mutableStateOf("") }
     var tikTokOperatorHint by remember { mutableStateOf("Detecting current data SIM…") }
     var tikTokUploadType by remember { mutableStateOf("Video") }
+    var tikTokScreenRecord by rememberSaveable { mutableStateOf(true) }
+    var pendingTikTokStart by remember { mutableStateOf<String?>(null) }
+    val tikTokScreenRecordLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val tool = pendingTikTokStart
+        val data = result.data
+        if (tool != null && result.resultCode == Activity.RESULT_OK && data != null) {
+            val recordName = "${tikTokTaskName.trim()}_${tikTokOperator.trim()}_${if(tool=="LAG")"TikTok_Video_Lag" else "TikTok_Upload"}"
+            ContextCompat.startForegroundService(context, Intent(context, TestScreenRecordingService::class.java).apply {
+                action=TestScreenRecordingService.START
+                putExtra(TestScreenRecordingService.CODE,result.resultCode)
+                putExtra(TestScreenRecordingService.DATA,data)
+                putExtra(TestScreenRecordingService.NAME,recordName)
+            })
+            val launch=context.packageManager.getLaunchIntentForPackage("com.zhiliaoapp.musically")
+                ?:context.packageManager.getLaunchIntentForPackage("com.ss.android.ugc.trill")
+            if(launch!=null){
+                context.startActivity(launch)
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    YouTubeLoadingAccessibilityService.requestTikTokTool(tool,tikTokAutoSwipe,tikTokTaskName.trim(),tikTokOperator.trim(),tikTokUploadType)
+                },650)
+            }
+        } else if(tool!=null) Toast.makeText(context,"Screen recording permission cancelled",Toast.LENGTH_SHORT).show()
+        pendingTikTokStart=null
+    }
     var activeSessionId by rememberSaveable { mutableStateOf<String?>(null) }
     var activeSession by remember { mutableStateOf<ScenarioSessionV1?>(null) }
     var tick by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -4627,6 +4678,11 @@ private fun ScenarioTestsV1(
                         }
                         Text("Tap CellTracker POST to arm timing. Your next touch in TikTok (the real TikTok Post button) becomes T0. Tap POSTED after upload succeeds to record T1.")
                     }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked=tikTokScreenRecord,onCheckedChange={tikTokScreenRecord=it})
+                        Text("Auto Screen Recording")
+                    }
+                    Text("Android will show the system screen-capture confirmation before the test. Recording stops with FINISH and is saved using the task name.",style=MaterialTheme.typography.bodySmall)
                     HorizontalDivider()
                     Text(
                         if (accessibilityEnabled) "Accessibility · Enabled"
@@ -4656,13 +4712,18 @@ private fun ScenarioTestsV1(
                             val launch = context.packageManager.getLaunchIntentForPackage("com.zhiliaoapp.musically")
                                 ?: context.packageManager.getLaunchIntentForPackage("com.ss.android.ugc.trill")
                             if (launch != null) {
-                                context.startActivity(launch)
-                                // Give TikTok time to become the foreground window before creating/using the overlay.
-                                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                                    YouTubeLoadingAccessibilityService.requestTikTokTool(
-                                        tool, tikTokAutoSwipe, tikTokTaskName.trim(), tikTokOperator.trim(), tikTokUploadType
-                                    )
-                                }, 650)
+                                if(tikTokScreenRecord){
+                                    pendingTikTokStart=tool
+                                    val mgr=context.getSystemService(android.media.projection.MediaProjectionManager::class.java)
+                                    tikTokScreenRecordLauncher.launch(mgr.createScreenCaptureIntent())
+                                }else{
+                                    context.startActivity(launch)
+                                    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                                        YouTubeLoadingAccessibilityService.requestTikTokTool(
+                                            tool,tikTokAutoSwipe,tikTokTaskName.trim(),tikTokOperator.trim(),tikTokUploadType
+                                        )
+                                    },650)
+                                }
                                 tikTokTool = null
                             } else Toast.makeText(context, "TikTok is not installed or not visible", Toast.LENGTH_SHORT).show()
                         }

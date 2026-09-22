@@ -59,6 +59,7 @@
         <service
             android:name=".FloatingOverlayService"
             android:exported="false" />
+        <service android:name=".TestScreenRecordingService" android:exported="false" android:foregroundServiceType="mediaProjection" />
         <service
             android:name=".ScreenCaptureService"
             android:exported="false"

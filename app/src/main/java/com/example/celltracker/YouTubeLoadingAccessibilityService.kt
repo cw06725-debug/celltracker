@@ -1180,6 +1180,9 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             }
         }
         runCatching { repo.disarm() }
+        if(TestScreenRecordingService.isRecording) runCatching{
+            startService(Intent(this,TestScreenRecordingService::class.java).apply{action=TestScreenRecordingService.STOP})
+        }
         status.text = "YouTube Test · $state · results saved"
         if (f != null) {
             scope.launch(Dispatchers.IO) {
@@ -2095,6 +2098,8 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                 appendLine("End,${nowText(endWall)}")
                 appendLine("Duration ms,$duration")
                 appendLine("Recording Path,$recordingPath")
+                appendLine("Screen Recording,${TestScreenRecordingService.currentName.ifBlank{TestScreenRecordingService.lastName}}")
+                appendLine("Screen Recording URI,${TestScreenRecordingService.currentUri.ifBlank{TestScreenRecordingService.lastUri}}")
                 if(isLag){
                     appendLine("Videos,$video")
                     appendLine("Lag Count,$lagCount")
@@ -2201,6 +2206,9 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             uploadAwaitingTouch=false
             val end=System.currentTimeMillis()
             saveReport(end);running=false
+            if(TestScreenRecordingService.isRecording) runCatching{
+                startService(Intent(this,TestScreenRecordingService::class.java).apply{action=TestScreenRecordingService.STOP})
+            }
             if(ownsRecording) runCatching{stopService(Intent(this,RecordingService::class.java))}
             b1.isEnabled=false;b2.isEnabled=false;b3.isEnabled=false;stop.isEnabled=false
             scope.launch{delay(1800);dismissTikTokOverlay()}

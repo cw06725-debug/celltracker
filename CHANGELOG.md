@@ -1,3 +1,11 @@
+## 1.0.0.0.11
+- Add reusable MediaProjection screen recorder for test workflows.
+- Add Auto Screen Recording option to YouTube Video Loading, TikTok Video Lag and TikTok Upload.
+- Android system capture consent is requested before each recording session.
+- Screen recording starts before opening YouTube/TikTok and stops automatically when the test FINISH flow completes.
+- MP4 files are automatically named from task/test metadata plus timestamp and saved under Movies/CellTracker/ScreenRecordings.
+- TikTok report metadata records the associated screen-recording filename and URI for secondary verification.
+
 ## 1.0.0.0.10
 - Add DELETE REPORT action for TikTok Video Lag and TikTok Upload reports.
 - Add delete confirmation dialog to prevent accidental deletion.

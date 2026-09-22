@@ -42,7 +42,7 @@ object TikTokReportExporter {
 
         val summary=mutableListOf<List<String>>()
         summary+=listOf("CellTracker ${if(p.isLag)"TikTok Video Lag" else "TikTok Upload"} Report")
-        listOf("Task","Operator","Swipe Mode","Upload Type","Start","End","Duration ms","Videos","Lag Count","Total Lag ms","Average Lag ms","Completed","Recording Path").forEach{
+        listOf("Task","Operator","Swipe Mode","Upload Type","Start","End","Duration ms","Videos","Lag Count","Total Lag ms","Average Lag ms","Completed","Recording Path","Screen Recording","Screen Recording URI").forEach{
             p.fields[it]?.let{v->summary+=listOf(it,v)}
         }
         summary+=listOf("Analysis",analysis(p,cellHeader,cellData))
