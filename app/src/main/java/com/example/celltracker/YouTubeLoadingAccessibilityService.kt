@@ -1972,12 +1972,16 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         }
         val header = TextView(this).apply {
             setTextColor(0xffffffff.toInt())
-            text = if (isLag) "TikTok Video Lag · ${if(autoSwipe)"AUTO" else "MANUAL"}" else "TikTok Upload · $configuredUploadType"
+            text = if (isLag) {
+                listOf(taskName.takeUnless { it == "Session" }, if(autoSwipe)"AUTO" else "MANUAL", operator).filterNotNull().joinToString(" · ")
+            } else {
+                listOf(taskName.takeUnless { it == "Session" }, configuredUploadType, operator).filterNotNull().joinToString(" · ")
+            }
             setPadding(8,8,8,5)
         }
         val meta = TextView(this).apply {
             setTextColor(0xffdddddd.toInt())
-            text = "$taskName · $operator"
+            text = if (isLag) "TikTok Video Lag" else "TikTok Upload"
             setPadding(8,0,8,4)
         }
         val realtime = TextView(this).apply {

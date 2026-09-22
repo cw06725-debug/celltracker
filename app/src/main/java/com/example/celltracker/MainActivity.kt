@@ -140,7 +140,15 @@ class MainActivity : ComponentActivity() {
         setContent {
             val darkTheme = isSystemInDarkTheme()
             MaterialTheme(
-                colorScheme = if (darkTheme) darkColorScheme() else lightColorScheme()
+                colorScheme = if (darkTheme) darkColorScheme(
+                    primary = Color(0xFF5B7CFA),
+                    secondary = Color(0xFF7C9BFF)
+                ) else lightColorScheme(
+                    primary = Color(0xFF356DF3),
+                    secondary = Color(0xFF5B7CFA),
+                    primaryContainer = Color(0xFFEAF0FF),
+                    secondaryContainer = Color(0xFFF0F4FF)
+                )
             ) {
                 val vm: MainViewModel = viewModel()
                 val state by vm.state.collectAsStateWithLifecycle()
@@ -434,13 +442,13 @@ private fun WeChatBottomBar(
                         Text(
                             icon,
                             style = MaterialTheme.typography.titleMedium,
-                            color = if (isSelected) Color(0xFF07C160) else Color(0xFF5C5C5C)
+                            color = if (isSelected) Color(0xFF356DF3) else Color(0xFF5C5C5C)
                         )
                         Spacer(Modifier.height(2.dp))
                         Text(
                             label,
                             style = MaterialTheme.typography.labelSmall,
-                            color = if (isSelected) Color(0xFF07C160) else Color(0xFF5C5C5C)
+                            color = if (isSelected) Color(0xFF356DF3) else Color(0xFF5C5C5C)
                         )
                     }
                 }
@@ -1798,7 +1806,8 @@ private fun PingTestScreen(
                         onValueChange = { if (!state.isRunning && it.length <= 64) taskName = it },
                         enabled = !state.isRunning,
                         singleLine = true,
-                        label = { Text("Task Name") },
+                        label = { Text("Task Name (optional)") },
+                        placeholder = { Text("e.g. Hall Road / Round 1") },
                         placeholder = { Text("Ping_<host>") },
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -2101,27 +2110,47 @@ private fun ExportSuccessDialog(
     val context = LocalContext.current
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Export successful") },
+        shape = RoundedCornerShape(28.dp),
+        title = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Export Complete", fontWeight = FontWeight.Bold)
+                Text("Report package is ready", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(result.message)
-                Text("Saved under Downloads/CellTracker/<date>/<test type>", style = MaterialTheme.typography.bodyMedium)
-                result.excelName?.let { Text("Excel: $it", style = MaterialTheme.typography.bodySmall) }
-                result.kmlName?.let { Text("KML: $it", style = MaterialTheme.typography.bodySmall) }
-                if (result.screenshotNames.isNotEmpty()) Text("Screenshots: ${result.screenshotNames.size}", style = MaterialTheme.typography.bodySmall)
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = .72f)
+                ) {
+                    Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Text("Saved to CellTracker", fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary)
+                        Text(result.message, style = MaterialTheme.typography.bodyMedium)
+                        result.excelName?.let { Text("Excel  ·  $it", style = MaterialTheme.typography.bodySmall) }
+                        result.kmlName?.let { Text("KML  ·  $it", style = MaterialTheme.typography.bodySmall) }
+                        if (result.screenshotNames.isNotEmpty()) Text("Screenshots  ·  ${result.screenshotNames.size}", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = { result.summaryUri?.let { openExportedFile(context, it, "text/html") } },
+                        modifier = Modifier.weight(1f)
+                    ) { Text("Summary") }
+                    Button(
+                        onClick = { result.excelUri?.let { openExportedFile(context, it, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") } },
+                        modifier = Modifier.weight(1f)
+                    ) { Text("Excel") }
+                }
+                OutlinedButton(
+                    onClick = { shareExportedFiles(context, result) },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Share Report") }
             }
         },
         confirmButton = {
-            Row {
-                TextButton(onClick = { result.summaryUri?.let { openExportedFile(context, it, "text/html") } }) { Text("Open Summary") }
-                TextButton(onClick = { result.excelUri?.let { openExportedFile(context, it, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") } }) { Text("Open Excel") }
-            }
-        },
-        dismissButton = {
-            Row {
-                TextButton(onClick = { shareExportedFiles(context, result) }) { Text("Share") }
-                TextButton(onClick = onDismiss) { Text("Close") }
-            }
+            TextButton(onClick = onDismiss) { Text("Done") }
         }
     )
 }
@@ -4708,7 +4737,7 @@ private fun ScenarioTestsV1(
             if(launch!=null){
                 context.startActivity(launch)
                 android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                    YouTubeLoadingAccessibilityService.requestTikTokTool(tool,tikTokAutoSwipe,tikTokTaskName.trim(),tikTokOperator.trim(),tikTokUploadType)
+                    YouTubeLoadingAccessibilityService.requestTikTokTool(tool,tikTokAutoSwipe,tikTokTaskName.trim().ifBlank { "Session" },tikTokOperator.trim(),tikTokUploadType)
                 },650)
             }
         } else if(tool!=null) Toast.makeText(context,"Screen recording permission cancelled",Toast.LENGTH_SHORT).show()
@@ -4839,8 +4868,8 @@ private fun ScenarioTestsV1(
 
     tikTokTool?.let { tool ->
         LaunchedEffect(tool) {
-            if (tikTokTaskName.isBlank()) {
-                tikTokTaskName = if (tool == "LAG") "TikTok Video Lag" else "TikTok Upload"
+            if (tikTokTaskName == "TikTok Video Lag" || tikTokTaskName == "TikTok Upload") {
+                tikTokTaskName = ""
             }
             val detected = withContext(Dispatchers.IO) { detectCurrentDataOperatorV1(context) }
             if (detected != null) {
@@ -4940,7 +4969,7 @@ private fun ScenarioTestsV1(
             },
             confirmButton = {
                 Button(
-                    enabled = tikTokTaskName.isNotBlank() && tikTokOperator.isNotBlank(),
+                    enabled = tikTokOperator.isNotBlank(),
                     onClick = {
                         if (!isCellTrackerAccessibilityEnabledV1(context)) {
                             Toast.makeText(context, "Enable CellTracker Accessibility first", Toast.LENGTH_SHORT).show()
@@ -4958,7 +4987,7 @@ private fun ScenarioTestsV1(
                                     context.startActivity(launch)
                                     android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
                                         YouTubeLoadingAccessibilityService.requestTikTokTool(
-                                            tool,tikTokAutoSwipe,tikTokTaskName.trim(),tikTokOperator.trim(),tikTokUploadType
+                                            tool,tikTokAutoSwipe,tikTokTaskName.trim().ifBlank { "Session" },tikTokOperator.trim(),tikTokUploadType
                                         )
                                     },650)
                                 }

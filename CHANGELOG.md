@@ -1,3 +1,11 @@
+## 1.0.0.0.18
+- Rebuild launcher icon as a centered, upright blue iOS-style CellTracker mark.
+- Switch the app-wide primary accent from green/default purple to CellTracker blue.
+- Remove duplicated TikTok task labeling in the floating window; custom task name is now optional.
+- Restyle export success actions as clear blue cards/buttons.
+- Save automatic screen recordings through MediaStore Downloads under Downloads/CellTracker/<date>/Screen Recordings instead of Movies/CellTracker.
+- Keep the built-in review/calibration workflow from v1.0.0.0.17.
+
 ## 1.0.0.0.17
 - Fix GitHub Actions Kotlin compile error: add the missing Compose FontWeight import used by the built-in review player.
 - Replace the previous launcher artwork with a cleaner iOS-inspired CellTracker icon using a purple gradient, radio/cell motif and location marker.
