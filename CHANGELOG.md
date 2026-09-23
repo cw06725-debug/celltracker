@@ -1,3 +1,8 @@
+## 1.0.0.0.20
+- Replace launcher icon with the selected blue wave + signal-bar design.
+- Icon contains no CellTracker text.
+- No functional changes from v1.0.0.0.19.
+
 ## 1.0.0.0.19
 - Fix v1.0.0.0.18 Kotlin compilation failure caused by a duplicate `placeholder` argument accidentally inserted into the Ping Task Name field.
 - Restore Ping to its original `Ping_<host>` placeholder.
