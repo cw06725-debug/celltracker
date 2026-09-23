@@ -1,3 +1,8 @@
+## 1.0.0.0.21
+- Replace launcher icon with the newly regenerated, visually centered blue wave + signal-bar artwork.
+- Crop to the actual icon bounds before density scaling to avoid the previous off-center appearance.
+- No functional changes from v1.0.0.0.20.
+
 ## 1.0.0.0.20
 - Replace launcher icon with the selected blue wave + signal-bar design.
 - Icon contains no CellTracker text.
