@@ -141,13 +141,19 @@ class MainActivity : ComponentActivity() {
             val darkTheme = isSystemInDarkTheme()
             MaterialTheme(
                 colorScheme = if (darkTheme) darkColorScheme(
-                    primary = Color(0xFF5B7CFA),
-                    secondary = Color(0xFF7C9BFF)
+                    primary = Color(0xFF4F8CFF),
+                    secondary = Color(0xFF76A7FF),
+                    surface = Color(0xFF111827),
+                    surfaceVariant = Color(0xFF1F2937)
                 ) else lightColorScheme(
-                    primary = Color(0xFF356DF3),
-                    secondary = Color(0xFF5B7CFA),
-                    primaryContainer = Color(0xFFEAF0FF),
-                    secondaryContainer = Color(0xFFF0F4FF)
+                    primary = Color(0xFF3478F6),
+                    secondary = Color(0xFF5B8FF9),
+                    primaryContainer = Color(0xFFEAF2FF),
+                    secondaryContainer = Color(0xFFF3F7FF),
+                    background = Color(0xFFF7F9FC),
+                    surface = Color.White,
+                    surfaceVariant = Color(0xFFF1F5FB),
+                    outline = Color(0xFFD7E0EE)
                 )
             ) {
                 val vm: MainViewModel = viewModel()
@@ -397,9 +403,9 @@ private fun WeChatBottomBar(
 
     Surface(
         modifier = modifier.fillMaxWidth(),
-        color = Color.White,
+        color = MaterialTheme.colorScheme.surface,
         tonalElevation = 0.dp,
-        shadowElevation = 6.dp
+        shadowElevation = 2.dp
     ) {
         Column(Modifier.fillMaxWidth()) {
             HorizontalDivider(
@@ -442,13 +448,13 @@ private fun WeChatBottomBar(
                         Text(
                             icon,
                             style = MaterialTheme.typography.titleMedium,
-                            color = if (isSelected) Color(0xFF356DF3) else Color(0xFF5C5C5C)
+                            color = if (isSelected) MaterialTheme.colorScheme.primary else Color(0xFF94A3B8)
                         )
                         Spacer(Modifier.height(2.dp))
                         Text(
                             label,
                             style = MaterialTheme.typography.labelSmall,
-                            color = if (isSelected) Color(0xFF356DF3) else Color(0xFF5C5C5C)
+                            color = if (isSelected) MaterialTheme.colorScheme.primary else Color(0xFF94A3B8)
                         )
                     }
                 }
@@ -461,10 +467,10 @@ private fun WeChatBottomBar(
 private fun GlassSection(title: String, content: @Composable ColumnScope.() -> Unit) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(24.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.58f),
-        tonalElevation = 4.dp,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.10f))
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 1.dp,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.55f))
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(title, style = MaterialTheme.typography.titleMedium)
@@ -1184,10 +1190,10 @@ private fun ReportsHome(
 private fun ReportCategoryCard(title: String, count: Int, onClick: () -> Unit) {
     Surface(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
-        shape = RoundedCornerShape(24.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.58f),
-        tonalElevation = 4.dp,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.10f))
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 1.dp,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.55f))
     ) {
         Row(
             Modifier.fillMaxWidth().padding(18.dp),
@@ -4881,7 +4887,7 @@ private fun ScenarioTestsV1(
         val accessibilityEnabled = isCellTrackerAccessibilityEnabledV1(context)
         AlertDialog(
             onDismissRequest = { tikTokTool = null },
-            title = { Text(if (tool == "LAG") "TikTok Video Lag · Setup" else "TikTok Upload · Setup") },
+            title = { Column { Text(if (tool == "LAG") "TikTok Video Lag" else "TikTok Upload", fontWeight = FontWeight.SemiBold); Text("Test setup", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) } },
             text = {
                 Column(
                     modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
@@ -4890,7 +4896,7 @@ private fun ScenarioTestsV1(
                     OutlinedTextField(
                         value = tikTokTaskName,
                         onValueChange = { tikTokTaskName = it },
-                        label = { Text("Task Name (optional)") },
+                        label = { Text("Task name") },
                         placeholder = { Text("e.g. Hall Road / Round 1") },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true
@@ -4936,10 +4942,7 @@ private fun ScenarioTestsV1(
                         }
                         Text("Tap CellTracker POST to arm timing. Your next touch in TikTok (the real TikTok Post button) becomes T0. Tap POSTED after upload succeeds to record T1.")
                     }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(checked=tikTokScreenRecord,onCheckedChange={tikTokScreenRecord=it})
-                        Text("Auto Screen Recording")
-                    }
+                    Surface(shape=RoundedCornerShape(16.dp), color=MaterialTheme.colorScheme.surfaceVariant) { Row(Modifier.fillMaxWidth().padding(10.dp),verticalAlignment=Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text("Auto screen recording",fontWeight=FontWeight.SemiBold); Text("Starts with the test and stops at FINISH",style=MaterialTheme.typography.bodySmall) }; Switch(checked=tikTokScreenRecord,onCheckedChange={tikTokScreenRecord=it}) } }
                     Text("Android will show the system screen-capture confirmation before the test. Recording stops with FINISH and is saved using the task name.",style=MaterialTheme.typography.bodySmall)
                     HorizontalDivider()
                     Surface(

@@ -1,3 +1,8 @@
+## 1.0.0.0.22
+- Unified blue visual system across the app.
+- Refined cards, bottom navigation and TikTok setup controls.
+- Removed pale/white launcher icon perimeter.
+
 ## 1.0.0.0.21
 - Replace launcher icon with the newly regenerated, visually centered blue wave + signal-bar artwork.
 - Crop to the actual icon bounds before density scaling to avoid the previous off-center appearance.
