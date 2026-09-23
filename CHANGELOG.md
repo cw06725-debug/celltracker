@@ -1,3 +1,12 @@
+## 1.2.0
+- Major visual refresh for the Tests workspace based on the approved blue/white CellTracker concept.
+- Added a live network hero card with operator, RAT, SIM, RSRP, SINR and band.
+- Rebuilt Quick Start into compact two-column cards with installed app icons where available.
+- Refined Scenario Tests cards and page hierarchy.
+- Tests now uses an immersive header instead of the legacy top app bar.
+- Refined bottom navigation shape, spacing and selected-state treatment.
+- Existing test engines and workflows are preserved.
+
 # CellTracker v1.1.0
 
 - Begins the full UI/UX redesign with a unified blue design system.

@@ -399,7 +399,7 @@ private fun WeChatBottomBar(
         Triple("TEST", "◉", "Tests"),
         Triple("CELL", "▥", "Cell Info"),
         Triple("MAP", "⌖", "Map"),
-        Triple("SETTINGS", "⚙", "Setting"),
+        Triple("SETTINGS", "⚙", "Settings"),
         Triple("REPORTS", "▤", "Reports")
     )
     val selectedIndex = items.indexOfFirst { it.first == selected }.coerceAtLeast(0)
@@ -410,7 +410,8 @@ private fun WeChatBottomBar(
         modifier = modifier.fillMaxWidth(),
         color = MaterialTheme.colorScheme.surface,
         tonalElevation = 0.dp,
-        shadowElevation = 2.dp
+        shadowElevation = 10.dp,
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
     ) {
         Column(Modifier.fillMaxWidth()) {
             HorizontalDivider(
@@ -420,7 +421,7 @@ private fun WeChatBottomBar(
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .height(66.dp)
+                    .height(72.dp)
                     .onSizeChanged { barWidthPx = it.width.coerceAtLeast(1) }
                     .pointerInput(selected, barWidthPx) {
                         detectHorizontalDragGestures(
@@ -451,8 +452,8 @@ private fun WeChatBottomBar(
                         verticalArrangement = Arrangement.Center
                     ) {
                         Surface(
-                            shape = RoundedCornerShape(14.dp),
-                            color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent
+                            shape = RoundedCornerShape(16.dp),
+                            color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.11f) else Color.Transparent
                         ) {
                             Text(
                                 icon,
@@ -1404,7 +1405,7 @@ private fun MainScreen(
 
     Scaffold(
         topBar = {
-            if (!((mainTab == "SETTINGS" && settingsSubpageVisible) || (mainTab == "REPORTS" && reportsSubpageVisible))) {
+            if (mainTab != "TEST" && !((mainTab == "SETTINGS" && settingsSubpageVisible) || (mainTab == "REPORTS" && reportsSubpageVisible))) {
                 TopAppBar(
                     title = {
                         Text(
@@ -1438,7 +1439,7 @@ private fun MainScreen(
                 label = "mainTabs",
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(bottom = if ((mainTab == "SETTINGS" && settingsSubpageVisible) || (mainTab == "REPORTS" && reportsSubpageVisible)) 0.dp else 67.dp)
+                    .padding(bottom = if ((mainTab == "SETTINGS" && settingsSubpageVisible) || (mainTab == "REPORTS" && reportsSubpageVisible)) 0.dp else 73.dp)
             ) { tab ->
                 if (tab == "MAP") {
                     LiveMapScreen(
@@ -1451,9 +1452,78 @@ private fun MainScreen(
                 ) mainContent@{
             if (tab == "TEST") {
                 Column(
-                    Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberRetainedScrollState("main.tests")),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                    Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.075f),
+                                    MaterialTheme.colorScheme.background,
+                                    MaterialTheme.colorScheme.background
+                                )
+                            )
+                        )
+                        .padding(horizontal = 16.dp)
+                        .verticalScroll(rememberRetainedScrollState("main.tests")),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
+                    Spacer(Modifier.height(10.dp))
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("CellTracker", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                            Text("Network testing workspace", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(999.dp),
+                            color = if (state.isRecording) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surface,
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
+                        ) {
+                            Text(
+                                if (state.isRecording) "● Recording" else "● Ready",
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = if (state.isRecording) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(26.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
+                    ) {
+                        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        selected?.servingCell?.displayRat?.takeIf { it.isNotBlank() && it != "--" } ?: "Network",
+                                        color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.8f),
+                                        style = MaterialTheme.typography.labelLarge
+                                    )
+                                    Text(
+                                        selected?.servingCell?.operator?.takeIf { it.isNotBlank() && it != "--" } ?: "Waiting for network",
+                                        color = MaterialTheme.colorScheme.onPrimary,
+                                        style = MaterialTheme.typography.headlineSmall,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                                Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.12f)) {
+                                    Text(
+                                        "SIM ${((selected?.simSlotIndex ?: 0) + 1)}",
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                        color = MaterialTheme.colorScheme.onPrimary,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            }
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                V12MetricChip("RSRP", selected?.servingCell?.rsrp ?: "--", Modifier.weight(1f))
+                                V12MetricChip("SINR", selected?.servingCell?.sinr ?: "--", Modifier.weight(1f))
+                                V12MetricChip("Band", selected?.servingCell?.band ?: "--", Modifier.weight(1f))
+                            }
+                        }
+                    }
                     ScenarioTestsV1(
                         isRecording = state.isRecording,
                         onStartScenarioRecording = onStartRecording,
@@ -4875,35 +4945,53 @@ private fun ScenarioTestsV1(
 
     var quickFilter by rememberSaveable { mutableStateOf("All Tests") }
 
-    Text("Quick Start", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-    Text("Choose a capability and start testing instantly", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text("Quick Start", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Text("Start a test instantly", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
 
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        listOf("All Tests", "Video", "Network", "Call").forEach { label ->
+        listOf("All", "Video", "Network", "Call").forEach { label ->
             FilterChip(
-                selected = quickFilter == label,
-                onClick = { quickFilter = label },
+                selected = quickFilter == (if(label=="All") "All Tests" else label),
+                onClick = { quickFilter = if(label=="All") "All Tests" else label },
                 label = { Text(label, maxLines = 1) },
                 modifier = Modifier.weight(1f),
-                shape = RoundedCornerShape(12.dp)
+                shape = RoundedCornerShape(999.dp)
             )
         }
     }
 
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        if (quickFilter == "All Tests" || quickFilter == "Video") {
-            QuickTestCardV1("TikTok Video Lag", "Measure video loading & playing performance", "♪", Color(0xFF111111), listOf("com.zhiliaoapp.musically", "com.ss.android.ugc.trill")) { tikTokTool = "LAG" }
-            QuickTestCardV1("TikTok Upload", "Measure video / photo upload time", "↑", Color(0xFF111111), listOf("com.zhiliaoapp.musically", "com.ss.android.ugc.trill")) { tikTokTool = "UPLOAD" }
-            QuickTestCardV1("YouTube Video Loading", "Measure video loading and playing performance", "▶", Color(0xFFFF0033), listOf("com.google.android.youtube"), onVideoLoading)
-            QuickTestCardV1("WhatsApp Image Send", "Measure image sending experience", "☎", Color(0xFF25D366), listOf("com.whatsapp", "com.whatsapp.w4b"), onWhatsAppSend)
+    if (quickFilter == "All Tests" || quickFilter == "Video") {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            QuickTestCompactCardV12("TikTok Lag", "Video performance", "♪", Color(0xFF111111), listOf("com.zhiliaoapp.musically", "com.ss.android.ugc.trill"), Modifier.weight(1f)) { tikTokTool = "LAG" }
+            QuickTestCompactCardV12("TikTok Upload", "Upload timing", "↑", Color(0xFF111111), listOf("com.zhiliaoapp.musically", "com.ss.android.ugc.trill"), Modifier.weight(1f)) { tikTokTool = "UPLOAD" }
         }
-        if (quickFilter == "All Tests" || quickFilter == "Network") {
-            QuickTestCardV1("Ping Test", "Network latency, packet loss & reachability", "↗", Color(0xFF3478F6), onClick = onPingTest)
-            QuickTestCardV1("Network Recording", "Record Cell Info, location & network changes", "▥", Color(0xFF3478F6), onClick = onNetworkRecording)
-            QuickTestCardV1("ADB / Logs", "Device connection, logs and diagnostics", ">_", Color(0xFF64748B), onClick = onDeviceLogs)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            QuickTestCompactCardV12("YouTube", "Video loading", "▶", Color(0xFFFF0033), listOf("com.google.android.youtube"), Modifier.weight(1f), onVideoLoading)
+            QuickTestCompactCardV12("WhatsApp", "Image sending", "☎", Color(0xFF25D366), listOf("com.whatsapp", "com.whatsapp.w4b"), Modifier.weight(1f), onWhatsAppSend)
         }
-        if (quickFilter == "All Tests" || quickFilter == "Call") {
-            QuickTestCardV1("Call Test", "Call setup, connection time & voice service", "✆", Color(0xFF16A34A), onClick = onCallSetup)
+    }
+    if (quickFilter == "All Tests" || quickFilter == "Network") {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            QuickTestCompactCardV12("Ping Test", "Latency & loss", "↗", MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f), onClick = onPingTest)
+            QuickTestCompactCardV12("Recording", "Cell + route data", "●", MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f), onClick = onNetworkRecording)
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            QuickTestCompactCardV12("ADB / Logs", "Device diagnostics", ">_", Color(0xFF64748B), modifier = Modifier.weight(1f), onClick = onDeviceLogs)
+            if (quickFilter == "All Tests") {
+                QuickTestCompactCardV12("Call Test", "Voice setup", "✆", Color(0xFF16A34A), modifier = Modifier.weight(1f), onClick = onCallSetup)
+            } else {
+                Spacer(Modifier.weight(1f))
+            }
+        }
+    }
+    if (quickFilter == "Call") {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            QuickTestCompactCardV12("Call Test", "Voice setup & connection", "✆", Color(0xFF16A34A), modifier = Modifier.weight(1f), onClick = onCallSetup)
+            Spacer(Modifier.weight(1f))
         }
     }
 
@@ -4914,9 +5002,10 @@ private fun ScenarioTestsV1(
         Card(
             onClick = { if (item == ScenarioV1Type.BASEMENT) onWeakCoverage() else selectedScenario = item },
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(18.dp),
+            shape = RoundedCornerShape(22.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.55f))
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.22f)),
+            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
         ) {
             Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                 AppIconTileV1(if (item == ScenarioV1Type.POWER_OUTAGE) "⚡" else if (item == ScenarioV1Type.HOTSPOT) "⌁" else if (item == ScenarioV1Type.LONG_STAY) "⌂" else if (item == ScenarioV1Type.BASEMENT) "▥" else "+", MaterialTheme.colorScheme.primary)
@@ -5101,6 +5190,48 @@ private data class ScenarioStartConfigV1(
     val ref: String,
     val testItems: List<String>
 )
+
+@Composable
+private fun V12MetricChip(label: String, value: String, modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.10f)
+    ) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+            Text(label, color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.72f), style = MaterialTheme.typography.labelSmall)
+            Text(value, color = MaterialTheme.colorScheme.onPrimary, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, maxLines = 1)
+        }
+    }
+}
+
+@Composable
+private fun QuickTestCompactCardV12(
+    title: String,
+    subtitle: String,
+    symbol: String,
+    iconColor: Color,
+    appPackages: List<String> = emptyList(),
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Card(
+        onClick = onClick,
+        modifier = modifier.height(132.dp),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.22f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp, pressedElevation = 0.dp)
+    ) {
+        Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.SpaceBetween) {
+            if (appPackages.isNotEmpty()) InstalledAppIconV1(appPackages, symbol, iconColor) else AppIconTileV1(symbol, iconColor)
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+            }
+        }
+    }
+}
 
 @Composable
 private fun AppIconTileV1(symbol: String, color: Color) {
