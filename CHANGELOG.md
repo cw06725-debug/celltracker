@@ -1,3 +1,7 @@
+## v1.0.0.0.24
+- Fix Kotlin compilation failure in ScenarioPlanDialogV1 by applying ExperimentalMaterial3Api opt-in to the correct composable.
+- Preserve v1.0.0.0.23 redesigned blue Tests UI and function-card layout.
+
 ## 1.0.0.0.22
 - Unified blue visual system across the app.
 - Refined cards, bottom navigation and TikTok setup controls.

@@ -5064,8 +5064,6 @@ private data class ScenarioStartConfigV1(
     val testItems: List<String>
 )
 
-@OptIn(ExperimentalMaterial3Api::class)
-
 @Composable
 private fun AppIconTileV1(symbol: String, color: Color) {
     Surface(
@@ -5107,6 +5105,7 @@ private fun QuickTestCardV1(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ScenarioPlanDialogV1(
     scenario: ScenarioV1Type,
