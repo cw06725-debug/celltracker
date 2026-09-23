@@ -1,3 +1,12 @@
+## 1.0.0.0.25
+- Harden Local Wireless ADB reconnect: rediscover rotating TLS service, retry once, and verify a real uid=2000 shell before reporting Connected.
+- DUT Debuglogger export now performs an ADB health check and automatic reconnect before starting Sync pull.
+- Add MFT Report pull for /sdcard/Android/data/com.transsion.mft/files/Reports/<date>/MFT-Reports-*.xls.
+- MFT pull selects the newest report for today, renames the local copy to the entered test task, and saves it under CellTracker.
+- Add Safe Cleanup: remote MFT source is deleted only after the local pulled file is verified non-empty; only that exact source file is removed.
+- If MFT pull loses ADB, CellTracker performs one reconnect/retry instead of crashing.
+- Add MFT status/source/saved-path/cleanup feedback in Device Logs / ADB Tools.
+
 ## v1.0.0.0.24
 - Fix Kotlin compilation failure in ScenarioPlanDialogV1 by applying ExperimentalMaterial3Api opt-in to the correct composable.
 - Preserve v1.0.0.0.23 redesigned blue Tests UI and function-card layout.

@@ -27,6 +27,7 @@ data class AdbUiState(
     val exportDeleted:Long=0, val exportDeleteFailed:Long=0, val exportSymlinks:Long=0, val exportListFailed:Long=0,
     val exportPath:String="", val exportResult:String="", val exportError:String="",
     val refLabel:String="vivo_REF",
+    val mftRunning:Boolean=false, val mftPhase:String="", val mftSource:String="", val mftSavedPath:String="", val mftCleanup:String="",
     val message:String=""
 )
 object AdbToolStore { val state=MutableStateFlow(AdbUiState()) }
@@ -220,17 +221,34 @@ object CellTrackerAdbEngine {
 
     suspend fun connectLocal(context:Context):Result<String> = withContext(Dispatchers.IO){
         runCatching {
-            // Never trust the previous port: Wireless debugging ports can rotate after pairing,
-            // especially on HiOS. Rediscover the current _adb-tls-connect._tcp endpoint.
-            val id=discoverAndConnectLocal(context,15_000)
+            // Never trust a cached Wireless-debugging port. Wi-Fi changes can rotate the TLS service.
+            var last:Throwable?=null
+            var id:String?=null
+            repeat(2){attempt->
+                try{
+                    AdbToolStore.state.value=AdbToolStore.state.value.copy(
+                        localStatus="Reconnecting",
+                        message=if(attempt==0)"Rediscovering Wireless ADB…" else "Retrying ADB discovery…"
+                    )
+                    id=discoverAndConnectLocal(context,15_000)
+                    val verified=command(context,"id",5_000).getOrThrow()
+                    check(verified.contains("uid=2000")){"ADB shell verification failed: $verified"}
+                    id=verified.trim()
+                    return@repeat
+                }catch(e:Throwable){
+                    last=e
+                    if(attempt==0) delay(800)
+                }
+            }
+            val ready=id ?: throw (last ?: IllegalStateException("ADB reconnect failed"))
             AdbToolStore.state.value=AdbToolStore.state.value.copy(
-                localStatus="Connected",localIdentity=id,message="Local ADB ready"
+                localStatus="Connected",localIdentity=ready,message="Local ADB verified · ready"
             )
-            id
+            ready
         }.onFailure { e ->
             AdbToolStore.state.value=AdbToolStore.state.value.copy(
                 localStatus="Not connected",
-                message="Reconnect failed: ${e.message ?: e.javaClass.simpleName}"
+                message="Reconnect failed safely: ${e.message ?: e.javaClass.simpleName}"
             )
         }
     }
@@ -294,8 +312,62 @@ object CellTrackerAdbEngine {
         out.toString(Charsets.UTF_8.name()).substringBefore(marker).trimEnd()
     } }
 
+    private suspend fun ensureLocalReady(context:Context,reason:String):String {
+        AdbToolStore.state.value=AdbToolStore.state.value.copy(message="Checking ADB before $reason…")
+        val first=command(context,"id",4_000).getOrNull()
+        if(first?.contains("uid=2000") == true){
+            AdbToolStore.state.value=AdbToolStore.state.value.copy(localStatus="Connected",localIdentity=first.trim(),message="ADB ready")
+            return first
+        }
+        AdbToolStore.state.value=AdbToolStore.state.value.copy(localStatus="Reconnecting",message="ADB session stale · rediscovering Wireless debugging…")
+        val connected=connectLocal(context).getOrElse{throw IllegalStateException("ADB reconnect failed: ${it.message ?: it.javaClass.simpleName}")}
+        val verified=command(context,"id",5_000).getOrElse{throw IllegalStateException("ADB reconnected but shell verification failed: ${it.message}")}
+        check(verified.contains("uid=2000")){"ADB shell is not ready: $verified"}
+        AdbToolStore.state.value=AdbToolStore.state.value.copy(localStatus="Connected",localIdentity=verified.trim(),message="ADB recovered · ready")
+        return connected
+    }
+
+    suspend fun exportMftReport(context:Context,taskName:String,deleteRemoteAfterVerified:Boolean=true):Result<String> = withContext(Dispatchers.IO){ runCatching {
+        check(exportJob?.isActive!=true){"Another ADB export is already running"}
+        val task=taskName.trim().replace(Regex("[^A-Za-z0-9._-]+"),"_").trim('_').ifBlank{"MFT_Test"}
+        ensureLocalReady(context,"MFT report pull")
+        val day=SimpleDateFormat("yyyy-MM-dd",Locale.US).format(Date())
+        val base="/sdcard/Android/data/com.transsion.mft/files/Reports/$day"
+        AdbToolStore.state.value=AdbToolStore.state.value.copy(mftRunning=true,mftPhase="Finding newest report…",mftSource="",mftSavedPath="",mftCleanup="",message="Scanning $base")
+        val quoted="'${base.replace("'", "'\\''")}'"
+        val listing=command(context,"ls -1t $quoted/MFT-Reports-*.xls 2>/dev/null",8_000).getOrElse{
+            ensureLocalReady(context,"MFT retry")
+            command(context,"ls -1t $quoted/MFT-Reports-*.xls 2>/dev/null",8_000).getOrThrow()
+        }
+        val remote=listing.lineSequence().map{it.trim()}.firstOrNull{it.endsWith(".xls",true)} ?: error("No MFT report found for $day")
+        val outputName="${task}.xls"
+        val relative="MFT/$day/$task"
+        AdbToolStore.state.value=AdbToolStore.state.value.copy(mftPhase="Pulling & verifying…",mftSource=remote,message="Pulling ${remote.substringAfterLast('/')}")
+        val pulled=try{
+            AdbSyncPuller(context).pullSingleFile(remote,relative,outputName){pr->
+                AdbToolStore.state.value=AdbToolStore.state.value.copy(mftPhase=pr.phase,exportBytes=pr.bytesDone,message="MFT · ${pr.phase}")
+            }
+        }catch(first:Throwable){
+            ensureLocalReady(context,"MFT pull retry")
+            AdbSyncPuller(context).pullSingleFile(remote,relative,outputName){pr->AdbToolStore.state.value=AdbToolStore.state.value.copy(mftPhase=pr.phase,exportBytes=pr.bytesDone,message="MFT retry · ${pr.phase}")}
+        }
+        val saved="Download/CellTracker/Logs/DUT/$relative/$outputName"
+        var cleanup="Kept on device"
+        if(deleteRemoteAfterVerified){
+            AdbToolStore.state.value=AdbToolStore.state.value.copy(mftPhase="Verified · cleaning source…",message="Local copy verified; deleting only pulled source")
+            val esc=remote.replace("'", "'\\''")
+            command(context,"rm -f '$esc' && if [ -e '$esc' ]; then echo DELETE_FAILED; else echo DELETED; fi",8_000).fold(
+                { cleanup=if(it.contains("DELETED")) "Source deleted after verification" else "Cleanup failed · source kept" },
+                { cleanup="Cleanup failed · source kept (${it.message})" }
+            )
+        }
+        AdbToolStore.state.value=AdbToolStore.state.value.copy(mftRunning=false,mftPhase="Completed",mftSavedPath=saved,mftCleanup=cleanup,message="MFT report ready")
+        saved
+    }.onFailure{e->AdbToolStore.state.value=AdbToolStore.state.value.copy(mftRunning=false,mftPhase="Failed",message="MFT pull failed: ${e.message ?: e.javaClass.simpleName}")} }
+
     suspend fun exportDebuglogger(context:Context,path:String="/data/debuglogger",logName:String="",compress:Boolean=false,deleteAfterZip:Boolean=false):Result<String> = withContext(Dispatchers.IO){ runCatching {
         check(exportJob?.isActive!=true){"An export is already running"}
+        ensureLocalReady(context,"DUT log pull")
         val source=path.trim().ifBlank{"/data/debuglogger"};val started=System.currentTimeMillis();val stamp=SimpleDateFormat("yyyyMMdd_HHmmss",Locale.US).format(Date())
         val safe=logName.trim().replace(Regex("[^A-Za-z0-9._-]+"),"_").trim('_').ifBlank{"DUT_debuglogger"};val session="${safe}_$stamp";val folderPath="Download/CellTracker/Logs/DUT/$session/"
         AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=true,exportPhase="Starting ADB Sync pull…",exportBytes=0,exportFiles=0,exportFound=0,exportSkipped=0,exportStartedMs=started,exportPullMs=0,exportTotalMs=0,exportZipMs=0,exportPullBytes=0,exportDeleted=0,exportDeleteFailed=0,exportSymlinks=0,exportListFailed=0,exportPath="",exportResult="",exportError="")

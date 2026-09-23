@@ -140,6 +140,21 @@ class AdbSyncPuller(private val context:Context){
 
   return SyncPullResult(found, pulled, skipped, bytes, files, symlinks, listFailed)
  }
+ fun pullSingleFile(remote:String, relativeDir:String, outputName:String, onProgress:(SyncPullProgress)->Unit):SyncPulledFile {
+  var bytes=0L
+  val cleanDir=relativeDir.trim('/').replace("..", "_")
+  val cleanName=outputName.replace(Regex("[\\/:*?\"<>|]+"), "_").ifBlank { "MFT_Report.xls" }
+  onProgress(SyncPullProgress(1,0,0,0,remote,"Pulling file…"))
+  val uri=createFile(remote, cleanDir, cleanName){n->
+   bytes+=n
+   onProgress(SyncPullProgress(1,0,0,bytes,remote,"Pulling file…"))
+  }
+  val size=context.contentResolver.openFileDescriptor(uri,"r")?.use{it.statSize}?:0L
+  if(size<=0L){ context.contentResolver.delete(uri,null,null); error("Pulled file is empty") }
+  onProgress(SyncPullProgress(1,1,0,size,remote,"Verified"))
+  return SyncPulledFile(uri,cleanName)
+ }
+
  data class ZipResult(val path:String,val deleted:Int,val deleteFailed:Int,val zipBytes:Long)
  fun compress(sessionName:String,result:SyncPullResult,deleteSource:Boolean,onProgress:(String)->Unit):ZipResult{
   val resolver=context.contentResolver

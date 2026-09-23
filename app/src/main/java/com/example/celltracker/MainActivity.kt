@@ -4559,6 +4559,8 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
     val adb by AdbToolStore.state.collectAsStateWithLifecycle()
     var dutPath by rememberSaveable { mutableStateOf("/data/debuglogger") }
     var dutLogName by rememberSaveable { mutableStateOf("") }
+    var mftTaskName by rememberSaveable { mutableStateOf("") }
+    var mftSafeCleanup by rememberSaveable { mutableStateOf(true) }
     var compressDutLog by rememberSaveable { mutableStateOf(false) }
     var deleteAfterZip by rememberSaveable { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
@@ -4624,7 +4626,29 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
                     if(adb.exportPath.isNotBlank()) Field("Saved to",adb.exportPath)
                 }
             }
-            GlassSection("2 · Samsung / vivo REF Wireless ADB") {
+            GlassSection("2 · MFT Report") {
+                Text("Pull the newest MFT report from Android/data, rename it to the test task, verify the local copy, then optionally delete only that verified source file.",style=MaterialTheme.typography.bodySmall)
+                Field("MFT source","/sdcard/Android/data/com.transsion.mft/files/Reports/<date>/MFT-Reports-*.xls")
+                OutlinedTextField(mftTaskName,{mftTaskName=it},label={Text("Test task name")},supportingText={Text("Example: HallRoad_TikTok_Lag_X6878")},singleLine=true,modifier=Modifier.fillMaxWidth())
+                Surface(shape=RoundedCornerShape(14.dp),color=MaterialTheme.colorScheme.surfaceVariant){
+                    Row(Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=8.dp),verticalAlignment=Alignment.CenterVertically){
+                        Column(Modifier.weight(1f)){Text("Safe cleanup",fontWeight=FontWeight.SemiBold);Text("Delete only the successfully pulled + verified MFT source file",style=MaterialTheme.typography.bodySmall)}
+                        Switch(checked=mftSafeCleanup,onCheckedChange={mftSafeCleanup=it})
+                    }
+                }
+                Button(enabled=!busy && !adb.mftRunning && mftTaskName.isNotBlank(),onClick={scope.launch{
+                    busy=true
+                    val r=CellTrackerAdbEngine.exportMftReport(context,mftTaskName,mftSafeCleanup)
+                    if(r.isFailure) Toast.makeText(context,r.exceptionOrNull()?.message?:"MFT pull failed",Toast.LENGTH_LONG).show()
+                    busy=false
+                }},modifier=Modifier.fillMaxWidth()){Text(if(adb.mftRunning)"PULLING MFT…" else "PULL MFT REPORT")}
+                if(adb.mftPhase.isNotBlank()) Field("Status",adb.mftPhase)
+                if(adb.mftSource.isNotBlank()) Field("Source",adb.mftSource.substringAfterLast('/'))
+                if(adb.mftSavedPath.isNotBlank()) Field("Saved to",adb.mftSavedPath)
+                if(adb.mftCleanup.isNotBlank()) Field("Source cleanup",adb.mftCleanup)
+                if(adb.mftRunning) LinearProgressIndicator(Modifier.fillMaxWidth())
+            }
+            GlassSection("3 · Samsung / vivo REF Wireless ADB") {
                 Text("Pair any REF through Android Wireless debugging. Pairing and connection ports are different; enter the values shown by the REF.",style=MaterialTheme.typography.bodySmall)
                 Text("REF device")
                 Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
@@ -4667,7 +4691,7 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
                 }
                 Field("REF ADB",adb.remoteStatus); Field("REF identity",adb.remoteIdentity)
             }
-            GlassSection("3 · $refType REF AP Log") {
+            GlassSection("4 · $refType REF AP Log") {
                 Field("REF device",if(refType=="Custom") customRefName.ifBlank{"Custom"} else refType)
                 Field("Log folder","Download/CellTracker/Logs/$refLabel")
                 OutlinedTextField(logcatCommand,{logcatCommand=it},label={Text("Logcat command")},modifier=Modifier.fillMaxWidth())
@@ -4678,7 +4702,7 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
                 }
                 Text("Presets: AP = logcat -v threadtime · Radio = logcat -b radio -v threadtime",style=MaterialTheme.typography.bodySmall)
             }
-            GlassSection("4 · ADB Shell / Custom Command") {
+            GlassSection("5 · ADB Shell / Custom Command") {
                 OutlinedTextField(shellCommand,{shellCommand=it},label={Text("Command (without 'adb shell')")},modifier=Modifier.fillMaxWidth())
                 Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
                     AssistChip(onClick={shellCommand="logcat -b radio -d -v threadtime"},label={Text("Radio")}); AssistChip(onClick={shellCommand="getprop"},label={Text("Getprop")}); AssistChip(onClick={shellCommand="dumpsys telephony.registry"},label={Text("Telephony")})
@@ -4686,7 +4710,7 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
                 Button(onClick={scope.launch{busy=true;val r=CellTrackerAdbEngine.command(context,shellCommand);shellOutput=r.fold({it},{"ERROR: ${it.message}"});busy=false}},modifier=Modifier.fillMaxWidth()){Text("RUN COMMAND")}
                 if(shellOutput.isNotBlank()) SelectionContainer{Text(shellOutput.take(12000),style=MaterialTheme.typography.bodySmall)}
             }
-            GlassSection("5 · No-Wi-Fi options") {
+            GlassSection("6 · No-Wi-Fi options") {
                 Text("Wireless debugging normally requires Wi-Fi. After Local ADB connects, you can experimentally run 'tcpip 5555' from Custom Command and then test localhost:5555. Support depends on the OEM ROM. REF devices can later use USB-OTG ADB Host when Wi-Fi is unavailable.",style=MaterialTheme.typography.bodySmall)
                 Text("This build does not fake USB support: USB-OTG transport is marked as the next transport until it is validated on your DUT/REF hardware.",style=MaterialTheme.typography.bodySmall)
             }
