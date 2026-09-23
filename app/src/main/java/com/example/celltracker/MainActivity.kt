@@ -61,6 +61,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.clip
@@ -4684,11 +4685,21 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
                     OutlinedTextField(remotePairPort,{remotePairPort=it.filter(Char::isDigit)},label={Text("Pair port")},singleLine=true,modifier=Modifier.weight(1f))
                     OutlinedTextField(remoteCode,{remoteCode=it.filter(Char::isDigit).take(6)},label={Text("6-digit code")},singleLine=true,modifier=Modifier.weight(1f))
                 }
-                Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
-                    Button(onClick={scope.launch{busy=true;val r=CellTrackerAdbEngine.pairRemote(context,remoteHost,remotePairPort.toIntOrNull()?:0,remoteCode);AdbToolStore.state.value=AdbToolStore.state.value.copy(message=r.fold({it},{"REF pair failed: ${it.message}"}));busy=false}}){Text("PAIR REF")}
-                    OutlinedTextField(remoteConnectPort,{remoteConnectPort=it.filter(Char::isDigit)},label={Text("Connect port")},singleLine=true,modifier=Modifier.weight(1f))
-                    Button(onClick={scope.launch{busy=true;val r=CellTrackerAdbEngine.connectRemote(context,remoteHost,remoteConnectPort.toIntOrNull()?:0);AdbToolStore.state.value=AdbToolStore.state.value.copy(message=r.fold({"REF connected: $it"},{"REF connect failed: ${it.message}"}));busy=false}}){Text("CONNECT")}
-                }
+                Button(
+                    onClick={scope.launch{busy=true;val r=CellTrackerAdbEngine.pairRemote(context,remoteHost,remotePairPort.toIntOrNull()?:0,remoteCode);AdbToolStore.state.value=AdbToolStore.state.value.copy(message=r.fold({it},{"REF pair failed: ${it.message}"}));busy=false}},
+                    modifier=Modifier.fillMaxWidth()
+                ){Text("PAIR REF")}
+                OutlinedTextField(
+                    remoteConnectPort,
+                    {remoteConnectPort=it.filter(Char::isDigit)},
+                    label={Text("Connect port")},
+                    singleLine=true,
+                    modifier=Modifier.fillMaxWidth()
+                )
+                Button(
+                    onClick={scope.launch{busy=true;val r=CellTrackerAdbEngine.connectRemote(context,remoteHost,remoteConnectPort.toIntOrNull()?:0);AdbToolStore.state.value=AdbToolStore.state.value.copy(message=r.fold({"REF connected: $it"},{"REF connect failed: ${it.message}"}));busy=false}},
+                    modifier=Modifier.fillMaxWidth()
+                ){Text("CONNECT")}
                 Field("REF ADB",adb.remoteStatus); Field("REF identity",adb.remoteIdentity)
             }
             GlassSection("4 · $refType REF AP Log") {
@@ -4878,18 +4889,18 @@ private fun ScenarioTestsV1(
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         if (quickFilter == "All Tests" || quickFilter == "Video") {
-            QuickTestCardV1("TikTok Video Lag", "Measure video loading & playing performance", "♪", Color(0xFF111111)) { tikTokTool = "LAG" }
-            QuickTestCardV1("TikTok Upload", "Measure video / photo upload time", "↑", Color(0xFF111111)) { tikTokTool = "UPLOAD" }
-            QuickTestCardV1("YouTube Video Loading", "Measure video loading and playing performance", "▶", Color(0xFFFF0033), onVideoLoading)
-            QuickTestCardV1("WhatsApp Image Send", "Measure image sending experience", "☎", Color(0xFF25D366), onWhatsAppSend)
+            QuickTestCardV1("TikTok Video Lag", "Measure video loading & playing performance", "♪", Color(0xFF111111), listOf("com.zhiliaoapp.musically", "com.ss.android.ugc.trill")) { tikTokTool = "LAG" }
+            QuickTestCardV1("TikTok Upload", "Measure video / photo upload time", "↑", Color(0xFF111111), listOf("com.zhiliaoapp.musically", "com.ss.android.ugc.trill")) { tikTokTool = "UPLOAD" }
+            QuickTestCardV1("YouTube Video Loading", "Measure video loading and playing performance", "▶", Color(0xFFFF0033), listOf("com.google.android.youtube"), onVideoLoading)
+            QuickTestCardV1("WhatsApp Image Send", "Measure image sending experience", "☎", Color(0xFF25D366), listOf("com.whatsapp", "com.whatsapp.w4b"), onWhatsAppSend)
         }
         if (quickFilter == "All Tests" || quickFilter == "Network") {
-            QuickTestCardV1("Ping Test", "Latency, packet loss and connectivity", "◎", Color(0xFF3478F6), onPingTest)
-            QuickTestCardV1("Basement Weak Coverage", "Test network performance in weak coverage areas", "▥", Color(0xFF3478F6), onWeakCoverage)
-            QuickTestCardV1("ADB / Logs", "Device connection, logs and diagnostics", ">_", Color(0xFF64748B), onDeviceLogs)
+            QuickTestCardV1("Ping Test", "Latency, packet loss and connectivity", "◎", Color(0xFF3478F6), onClick = onPingTest)
+            QuickTestCardV1("Basement Weak Coverage", "Test network performance in weak coverage areas", "▥", Color(0xFF3478F6), onClick = onWeakCoverage)
+            QuickTestCardV1("ADB / Logs", "Device connection, logs and diagnostics", ">_", Color(0xFF64748B), onClick = onDeviceLogs)
         }
         if (quickFilter == "All Tests" || quickFilter == "Call") {
-            QuickTestCardV1("Call Test", "Call setup and voice service test", "☎", Color(0xFF16A34A), onCallSetup)
+            QuickTestCardV1("Call Test", "Call setup and voice service test", "☎", Color(0xFF16A34A), onClick = onCallSetup)
         }
     }
 
@@ -5102,11 +5113,31 @@ private fun AppIconTileV1(symbol: String, color: Color) {
 }
 
 @Composable
+private fun InstalledAppIconV1(packageNames: List<String>, fallbackSymbol: String, fallbackColor: Color) {
+    val context = LocalContext.current
+    val drawable = remember(packageNames) {
+        packageNames.firstNotNullOfOrNull { pkg ->
+            runCatching { context.packageManager.getApplicationIcon(pkg) }.getOrNull()
+        }
+    }
+    if (drawable != null) {
+        AndroidView(
+            factory = { ctx -> android.widget.ImageView(ctx).apply { scaleType = android.widget.ImageView.ScaleType.FIT_CENTER } },
+            update = { it.setImageDrawable(drawable) },
+            modifier = Modifier.size(46.dp).graphicsLayer { clip = true; shape = RoundedCornerShape(13.dp) }
+        )
+    } else {
+        AppIconTileV1(fallbackSymbol, fallbackColor)
+    }
+}
+
+@Composable
 private fun QuickTestCardV1(
     title: String,
     subtitle: String,
     symbol: String,
     iconColor: Color,
+    appPackages: List<String> = emptyList(),
     onClick: () -> Unit
 ) {
     Card(
@@ -5118,7 +5149,7 @@ private fun QuickTestCardV1(
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
         Row(Modifier.padding(horizontal = 15.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-            AppIconTileV1(symbol, iconColor)
+            if (appPackages.isNotEmpty()) InstalledAppIconV1(appPackages, symbol, iconColor) else AppIconTileV1(symbol, iconColor)
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)

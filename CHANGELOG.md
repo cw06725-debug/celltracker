@@ -1,3 +1,8 @@
+## 1.0.0.0.26
+- Tests cards now use the launcher icon from the installed TikTok, YouTube and WhatsApp apps, with CellTracker fallback icons when unavailable.
+- Rebuilt REF Wireless ADB layout: Pair port/code stay side-by-side, while PAIR REF, Connect port and CONNECT each get a full-width row.
+- Pair port and Connect port remain separate values and no longer compete for horizontal space on narrow displays.
+
 ## 1.0.0.0.25
 - Harden Local Wireless ADB reconnect: rediscover rotating TLS service, retry once, and verify a real uid=2000 shell before reporting Connected.
 - DUT Debuglogger export now performs an ADB health check and automatic reconnect before starting Sync pull.
