@@ -68,6 +68,7 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.ContentScale
@@ -4834,38 +4835,59 @@ private fun ScenarioTestsV1(
         return
     }
 
-    Text("Scenario Tests", style = MaterialTheme.typography.titleLarge)
-    Text("Choose the real-world scenario first, then configure the test plan.", style = MaterialTheme.typography.bodySmall)
-    ScenarioV1Type.entries.forEach { item ->
-        Card(onClick = { selectedScenario = item }, modifier = Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(item.title, style = MaterialTheme.typography.titleMedium)
-                Text(item.subtitle, style = MaterialTheme.typography.bodySmall)
-                Text("Configure scenario  ›", style = MaterialTheme.typography.labelMedium)
-            }
+    var quickFilter by rememberSaveable { mutableStateOf("All Tests") }
+
+    Text("Quick Start", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+    Text("Choose a test to begin", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        listOf("All Tests", "Video", "Network", "Call").forEach { label ->
+            FilterChip(
+                selected = quickFilter == label,
+                onClick = { quickFilter = label },
+                label = { Text(label, maxLines = 1) },
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(12.dp)
+            )
         }
     }
 
-    Spacer(Modifier.height(4.dp))
-    Text("Quick Tools", style = MaterialTheme.typography.titleLarge)
-    Text("Run a capability directly without creating a scenario session.", style = MaterialTheme.typography.bodySmall)
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = onPingTest, modifier = Modifier.weight(1f)) { Text("Ping") }
-                OutlinedButton(onClick = onVideoLoading, modifier = Modifier.weight(1f)) { Text("Video") }
-            }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = onWhatsAppSend, modifier = Modifier.weight(1f)) { Text("WhatsApp") }
-                OutlinedButton(onClick = onCallSetup, modifier = Modifier.weight(1f)) { Text("Call") }
-            }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = onWeakCoverage, modifier = Modifier.weight(1f)) { Text("Weak Coverage") }
-                OutlinedButton(onClick = onDeviceLogs, modifier = Modifier.weight(1f)) { Text("ADB / Logs") }
-            }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { tikTokTool = "LAG" }, modifier = Modifier.weight(1f)) { Text("TikTok Video Lag") }
-                OutlinedButton(onClick = { tikTokTool = "UPLOAD" }, modifier = Modifier.weight(1f)) { Text("TikTok Upload") }
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        if (quickFilter == "All Tests" || quickFilter == "Video") {
+            QuickTestCardV1("TikTok Video Lag", "Measure video loading & playing performance", "♪", Color(0xFF111111)) { tikTokTool = "LAG" }
+            QuickTestCardV1("TikTok Upload", "Measure video / photo upload time", "↑", Color(0xFF111111)) { tikTokTool = "UPLOAD" }
+            QuickTestCardV1("YouTube Video Loading", "Measure video loading and playing performance", "▶", Color(0xFFFF0033), onVideoLoading)
+            QuickTestCardV1("WhatsApp Image Send", "Measure image sending experience", "☎", Color(0xFF25D366), onWhatsAppSend)
+        }
+        if (quickFilter == "All Tests" || quickFilter == "Network") {
+            QuickTestCardV1("Ping Test", "Latency, packet loss and connectivity", "◎", Color(0xFF3478F6), onPingTest)
+            QuickTestCardV1("Basement Weak Coverage", "Test network performance in weak coverage areas", "▥", Color(0xFF3478F6), onWeakCoverage)
+            QuickTestCardV1("ADB / Logs", "Device connection, logs and diagnostics", ">_", Color(0xFF64748B), onDeviceLogs)
+        }
+        if (quickFilter == "All Tests" || quickFilter == "Call") {
+            QuickTestCardV1("Call Test", "Call setup and voice service test", "☎", Color(0xFF16A34A), onCallSetup)
+        }
+    }
+
+    Spacer(Modifier.height(6.dp))
+    Text("Scenario Tests", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+    Text("Choose a real-world scenario, then configure the test plan.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    ScenarioV1Type.entries.forEach { item ->
+        Card(
+            onClick = { selectedScenario = item },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(18.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.55f))
+        ) {
+            Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                AppIconTileV1(if (item == ScenarioV1Type.POWER_OUTAGE) "⚡" else if (item == ScenarioV1Type.HOTSPOT) "⌁" else if (item == ScenarioV1Type.LONG_STAY) "⌂" else "+", MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(item.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text(item.subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Text("›", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
@@ -5043,6 +5065,48 @@ private data class ScenarioStartConfigV1(
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
+
+@Composable
+private fun AppIconTileV1(symbol: String, color: Color) {
+    Surface(
+        modifier = Modifier.size(46.dp),
+        shape = RoundedCornerShape(13.dp),
+        color = color.copy(alpha = 0.12f)
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Text(symbol, color = color, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun QuickTestCardV1(
+    title: String,
+    subtitle: String,
+    symbol: String,
+    iconColor: Color,
+    onClick: () -> Unit
+) {
+    Card(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Row(Modifier.padding(horizontal = 15.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+            AppIconTileV1(symbol, iconColor)
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Text("›", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
 @Composable
 private fun ScenarioPlanDialogV1(
     scenario: ScenarioV1Type,
