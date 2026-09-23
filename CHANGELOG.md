@@ -1,3 +1,11 @@
+# CellTracker v1.1.0
+
+- Begins the full UI/UX redesign with a unified blue design system.
+- Refines light/dark palettes, hierarchy, cards, spacing, navigation states and page transitions.
+- Reworks Tests visual hierarchy for Quick Start and Scenario Tests while preserving existing test logic.
+- Adds softer surfaces, larger rounded cards and clearer selected states as the foundation for the 1.1 interface.
+- Keeps TikTok, YouTube, WhatsApp, Ping, Call, Network Recording, ADB/MFT and report engines intact.
+
 ## 1.0.0.0.26
 - Tests cards now use the launcher icon from the installed TikTok, YouTube and WhatsApp apps, with CellTracker fallback icons when unavailable.
 - Rebuilt REF Wireless ADB layout: Pair port/code stay side-by-side, while PAIR REF, Connect port and CONNECT each get a full-width row.

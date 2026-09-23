@@ -143,19 +143,22 @@ class MainActivity : ComponentActivity() {
             val darkTheme = isSystemInDarkTheme()
             MaterialTheme(
                 colorScheme = if (darkTheme) darkColorScheme(
-                    primary = Color(0xFF4F8CFF),
-                    secondary = Color(0xFF76A7FF),
-                    surface = Color(0xFF111827),
-                    surfaceVariant = Color(0xFF1F2937)
+                    primary = Color(0xFF5B9CFF),
+                    secondary = Color(0xFF7FB2FF),
+                    primaryContainer = Color(0xFF173A68),
+                    background = Color(0xFF080F1E),
+                    surface = Color(0xFF101B2E),
+                    surfaceVariant = Color(0xFF17243A),
+                    outline = Color(0xFF2C4161)
                 ) else lightColorScheme(
-                    primary = Color(0xFF3478F6),
-                    secondary = Color(0xFF5B8FF9),
-                    primaryContainer = Color(0xFFEAF2FF),
-                    secondaryContainer = Color(0xFFF3F7FF),
-                    background = Color(0xFFF7F9FC),
-                    surface = Color.White,
-                    surfaceVariant = Color(0xFFF1F5FB),
-                    outline = Color(0xFFD7E0EE)
+                    primary = Color(0xFF1473E6),
+                    secondary = Color(0xFF4B91F1),
+                    primaryContainer = Color(0xFFE8F2FF),
+                    secondaryContainer = Color(0xFFF1F6FD),
+                    background = Color(0xFFF5F8FC),
+                    surface = Color(0xFFFFFFFF),
+                    surfaceVariant = Color(0xFFF3F7FC),
+                    outline = Color(0xFFDCE5F0)
                 )
             ) {
                 val vm: MainViewModel = viewModel()
@@ -447,11 +450,17 @@ private fun WeChatBottomBar(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center
                     ) {
-                        Text(
-                            icon,
-                            style = MaterialTheme.typography.titleMedium,
-                            color = if (isSelected) MaterialTheme.colorScheme.primary else Color(0xFF94A3B8)
-                        )
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent
+                        ) {
+                            Text(
+                                icon,
+                                modifier = Modifier.padding(horizontal = 13.dp, vertical = 4.dp),
+                                style = MaterialTheme.typography.titleMedium,
+                                color = if (isSelected) MaterialTheme.colorScheme.primary else Color(0xFF94A3B8)
+                            )
+                        }
                         Spacer(Modifier.height(2.dp))
                         Text(
                             label,
@@ -1405,7 +1414,8 @@ private fun MainScreen(
                                 "SETTINGS" -> "Setting"
                                 "REPORTS" -> "Reports"
                                 else -> "Cell Info"
-                            }
+                            },
+                            fontWeight = FontWeight.SemiBold
                         )
                     },
                     actions = {
@@ -4865,8 +4875,8 @@ private fun ScenarioTestsV1(
 
     var quickFilter by rememberSaveable { mutableStateOf("All Tests") }
 
-    Text("Quick Start", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
-    Text("Choose a test to begin", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Text("Quick Start", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+    Text("Choose a capability and start testing instantly", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         listOf("All Tests", "Video", "Network", "Call").forEach { label ->
@@ -4898,7 +4908,7 @@ private fun ScenarioTestsV1(
     }
 
     Spacer(Modifier.height(6.dp))
-    Text("Scenario Tests", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+    Text("Scenario Tests", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
     Text("Choose a real-world scenario, then configure the test plan.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     ScenarioV1Type.entries.forEach { item ->
         Card(
@@ -5136,12 +5146,12 @@ private fun QuickTestCardV1(
     Card(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(22.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.28f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
-        Row(Modifier.padding(horizontal = 15.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.padding(horizontal = 18.dp, vertical = 17.dp), verticalAlignment = Alignment.CenterVertically) {
             if (appPackages.isNotEmpty()) InstalledAppIconV1(appPackages, symbol, iconColor) else AppIconTileV1(symbol, iconColor)
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
