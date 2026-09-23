@@ -1454,20 +1454,11 @@ private fun MainScreen(
                         onWhatsAppSend = onWhatsAppSend,
                         onCallSetup = onCallSetup,
                         onDeviceLogs = onDeviceLogs,
-                        onWeakCoverage = onBasementTest
-                    )
-                    GlassSection("Network Recording") {
-                        Field("Status", if (state.isRecording) "Recording" else "Stopped")
-                        Field("Elapsed", formatElapsed(state.recordingElapsedMs))
-                        if (state.isRecording) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                Button(onClick = onStopRecording) { Text("Stop") }
-                                OutlinedButton(onClick = { showMarkDialog = true }) { Text("Mark issue") }
-                            }
-                        } else {
-                            Button(onClick = { showTaskNameDialog = true }, enabled = selected != null) { Text("Start Recording") }
+                        onWeakCoverage = onBasementTest,
+                        onNetworkRecording = {
+                            if (state.isRecording) onStopRecording() else showTaskNameDialog = true
                         }
-                    }
+                    )
                 }
                 return@mainContent
             }
@@ -4736,6 +4727,7 @@ private enum class ScenarioV1Type(val title: String, val subtitle: String) {
     LONG_STAY("Long Stay", "School · Residential building · Market · Custom location"),
     POWER_OUTAGE("Power Outage", "Signal · Ping · Call · VoWiFi · Wi-Fi/Cellular recovery"),
     HOTSPOT("Hotspot Sharing", "Ping · Data service · Video · Long-duration stability"),
+    BASEMENT("Basement Weak Coverage", "Basement route · weak coverage · network recovery"),
     CUSTOM("Custom", "Build your own scenario and choose the required test capabilities")
 }
 
@@ -4750,12 +4742,13 @@ private fun ScenarioTestsV1(
     onWhatsAppSend: () -> Unit,
     onCallSetup: () -> Unit,
     onDeviceLogs: () -> Unit,
-    onWeakCoverage: () -> Unit
+    onWeakCoverage: () -> Unit,
+    onNetworkRecording: () -> Unit
 ) {
     val context = LocalContext.current
     var selectedScenario by remember { mutableStateOf<ScenarioV1Type?>(null) }
     var tikTokTool by remember { mutableStateOf<String?>(null) }
-    var tikTokAutoSwipe by remember { mutableStateOf(false) }
+    var tikTokAutoSwipe by remember { mutableStateOf(true) }
     var tikTokTaskName by remember { mutableStateOf("") }
     var tikTokOperator by remember { mutableStateOf("") }
     var tikTokOperatorHint by remember { mutableStateOf("Detecting current data SIM…") }
@@ -4895,12 +4888,12 @@ private fun ScenarioTestsV1(
             QuickTestCardV1("WhatsApp Image Send", "Measure image sending experience", "☎", Color(0xFF25D366), listOf("com.whatsapp", "com.whatsapp.w4b"), onWhatsAppSend)
         }
         if (quickFilter == "All Tests" || quickFilter == "Network") {
-            QuickTestCardV1("Ping Test", "Latency, packet loss and connectivity", "◎", Color(0xFF3478F6), onClick = onPingTest)
-            QuickTestCardV1("Basement Weak Coverage", "Test network performance in weak coverage areas", "▥", Color(0xFF3478F6), onClick = onWeakCoverage)
+            QuickTestCardV1("Ping Test", "Network latency, packet loss & reachability", "↗", Color(0xFF3478F6), onClick = onPingTest)
+            QuickTestCardV1("Network Recording", "Record Cell Info, location & network changes", "▥", Color(0xFF3478F6), onClick = onNetworkRecording)
             QuickTestCardV1("ADB / Logs", "Device connection, logs and diagnostics", ">_", Color(0xFF64748B), onClick = onDeviceLogs)
         }
         if (quickFilter == "All Tests" || quickFilter == "Call") {
-            QuickTestCardV1("Call Test", "Call setup and voice service test", "☎", Color(0xFF16A34A), onClick = onCallSetup)
+            QuickTestCardV1("Call Test", "Call setup, connection time & voice service", "✆", Color(0xFF16A34A), onClick = onCallSetup)
         }
     }
 
@@ -4909,14 +4902,14 @@ private fun ScenarioTestsV1(
     Text("Choose a real-world scenario, then configure the test plan.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     ScenarioV1Type.entries.forEach { item ->
         Card(
-            onClick = { selectedScenario = item },
+            onClick = { if (item == ScenarioV1Type.BASEMENT) onWeakCoverage() else selectedScenario = item },
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(18.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.55f))
         ) {
             Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                AppIconTileV1(if (item == ScenarioV1Type.POWER_OUTAGE) "⚡" else if (item == ScenarioV1Type.HOTSPOT) "⌁" else if (item == ScenarioV1Type.LONG_STAY) "⌂" else "+", MaterialTheme.colorScheme.primary)
+                AppIconTileV1(if (item == ScenarioV1Type.POWER_OUTAGE) "⚡" else if (item == ScenarioV1Type.HOTSPOT) "⌁" else if (item == ScenarioV1Type.LONG_STAY) "⌂" else if (item == ScenarioV1Type.BASEMENT) "▥" else "+", MaterialTheme.colorScheme.primary)
                 Spacer(Modifier.width(14.dp))
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Text(item.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
