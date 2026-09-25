@@ -3466,18 +3466,25 @@ private fun SettingsScreen(
                     }
                 }
                 "metadata" -> MetadataOptionsSettings()
-                else -> Column(Modifier.padding(12.dp).verticalScroll(rootScrollState), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    SettingsMenuRow("Sampling", "UI refresh and recording intervals") { navigateTo("sampling") }
-                    HorizontalDivider()
-                    SettingsMenuRow("Marker Button", "Tap, long press and feedback") { navigateTo("marker") }
-                    HorizontalDivider()
-                    SettingsMenuRow("Floating Window", "Overlay info, opacity, compact mode and permission") { navigateTo("floating") }
-                    HorizontalDivider()
-                    SettingsMenuRow("Map Point Details", "Choose information shown for a map point") { navigateTo("map") }
-                    HorizontalDivider()
-                    SettingsMenuRow("Issue Types", "Manage built-in and custom issue choices") { navigateTo("issues") }
-                    HorizontalDivider()
-                    SettingsMenuRow("Test Metadata Options", "Customize Scenario, Operator, RAT and Task choices") { navigateTo("metadata") }
+                else -> Column(
+                    Modifier.padding(horizontal = 16.dp, vertical = 14.dp).verticalScroll(rootScrollState),
+                    verticalArrangement = Arrangement.spacedBy(18.dp)
+                ) {
+                    SettingsGroup(title = "GENERAL") {
+                        SettingsMenuRow("◴", "Sampling", "UI refresh and recording intervals") { navigateTo("sampling") }
+                        SettingsGroupDivider()
+                        SettingsMenuRow("●", "Marker Button", "Tap, long press and feedback") { navigateTo("marker") }
+                        SettingsGroupDivider()
+                        SettingsMenuRow("▣", "Floating Window", "Overlay info, opacity, compact mode and permission") { navigateTo("floating") }
+                    }
+                    SettingsGroup(title = "TEST & REPORT") {
+                        SettingsMenuRow("⌖", "Map Point Details", "Choose information shown for a map point") { navigateTo("map") }
+                        SettingsGroupDivider()
+                        SettingsMenuRow("!", "Issue Types", "Manage built-in and custom issue choices") { navigateTo("issues") }
+                        SettingsGroupDivider()
+                        SettingsMenuRow("≡", "Test Metadata Options", "Customize Scenario, Operator, RAT and Task choices") { navigateTo("metadata") }
+                    }
+                    Spacer(Modifier.height(6.dp))
                 }
             }
         }
@@ -3508,14 +3515,65 @@ private fun Modifier.horizontalSwipe(
 }
 
 @Composable
-private fun SettingsMenuRow(title: String, subtitle: String, onClick: () -> Unit) {
+private fun SettingsGroup(title: String, content: @Composable ColumnScope.() -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            title,
+            modifier = Modifier.padding(start = 6.dp),
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.primary
+        )
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(22.dp),
+            color = MaterialTheme.colorScheme.surface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .10f)),
+            tonalElevation = 1.dp
+        ) {
+            Column(content = content)
+        }
+    }
+}
+
+@Composable
+private fun SettingsGroupDivider() {
+    HorizontalDivider(
+        modifier = Modifier.padding(start = 72.dp, end = 16.dp),
+        color = MaterialTheme.colorScheme.outline.copy(alpha = .12f)
+    )
+}
+
+@Composable
+private fun SettingsMenuRow(icon: String, title: String, subtitle: String, onClick: () -> Unit) {
     Row(
-        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 8.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 15.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Column(Modifier.weight(1f)) { Text(title, style = MaterialTheme.typography.titleMedium); Text(subtitle, style = MaterialTheme.typography.bodySmall) }
-        Text("›", style = MaterialTheme.typography.headlineSmall)
+        Surface(
+            modifier = Modifier.size(40.dp),
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.primary.copy(alpha = .11f)
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Text(
+                    icon,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Medium)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Spacer(Modifier.width(10.dp))
+        Text("›", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -4891,9 +4949,41 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
                 Text("Browse the real MFT report folder first, then pull the exact file you want. Local DUT keeps the existing self-ADB path; USB REF lets a controller phone browse and pull the same MFT path over OTG.",style=MaterialTheme.typography.bodySmall)
                 Field("Remote folder","/sdcard/Android/data/com.transsion.mft/files/Reports")
                 Text("Source device",style=MaterialTheme.typography.labelLarge,fontWeight=FontWeight.SemiBold)
+                val sourceChipColors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = MaterialTheme.colorScheme.primary,
+                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    labelColor = MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
-                    FilterChip(selected=mftTarget=="Local DUT",onClick={mftTarget="Local DUT";AdbToolStore.state.value=AdbToolStore.state.value.copy(mftFiles=emptyList(),mftSelected="")},label={Text("Local DUT")})
-                    FilterChip(selected=mftTarget=="USB REF",onClick={mftTarget="USB REF";CellTrackerAdbEngine.refreshUsbRef(context);AdbToolStore.state.value=AdbToolStore.state.value.copy(mftFiles=emptyList(),mftSelected="")},label={Text("USB REF")})
+                    FilterChip(
+                        selected=mftTarget=="Local DUT",
+                        onClick={mftTarget="Local DUT";AdbToolStore.state.value=AdbToolStore.state.value.copy(mftFiles=emptyList(),mftSelected="")},
+                        label={Text("Local DUT")},
+                        colors=sourceChipColors,
+                        border=FilterChipDefaults.filterChipBorder(
+                            enabled=true,
+                            selected=mftTarget=="Local DUT",
+                            borderColor=MaterialTheme.colorScheme.outline.copy(alpha=.28f),
+                            selectedBorderColor=MaterialTheme.colorScheme.primary,
+                            borderWidth=1.dp,
+                            selectedBorderWidth=1.dp
+                        )
+                    )
+                    FilterChip(
+                        selected=mftTarget=="USB REF",
+                        onClick={mftTarget="USB REF";CellTrackerAdbEngine.refreshUsbRef(context);AdbToolStore.state.value=AdbToolStore.state.value.copy(mftFiles=emptyList(),mftSelected="")},
+                        label={Text("USB REF")},
+                        colors=sourceChipColors,
+                        border=FilterChipDefaults.filterChipBorder(
+                            enabled=true,
+                            selected=mftTarget=="USB REF",
+                            borderColor=MaterialTheme.colorScheme.outline.copy(alpha=.28f),
+                            selectedBorderColor=MaterialTheme.colorScheme.primary,
+                            borderWidth=1.dp,
+                            selectedBorderWidth=1.dp
+                        )
+                    )
                 }
                 Field("Transport",adb.mftTransport.ifBlank { if(mftTarget=="USB REF") "USB ADB" else "Local Wireless ADB" })
                 OutlinedButton(

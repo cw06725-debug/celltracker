@@ -1,3 +1,9 @@
+# v1.2.10
+
+- Unified MFT Report Browser source-device selector styling. `Local DUT` / `USB REF` now use the same clear filled selected state as the REF device / connection chips.
+- Redesigned the Settings root page into grouped rounded cards with blue icon tiles, softer dividers, consistent spacing and CellTracker blue-theme hierarchy.
+- Preserved all existing Settings subpages and behavior; this update changes root-page presentation only.
+
 ## 1.2.9
 - Added a dedicated Home → All Tests subpage. Home "See All" no longer just switches to the Tests bottom tab; the subpage hides bottom navigation and returns to Home.
 - Refreshed Cell Info detail cards with a stronger shared blue card language matching the Home network summary.
