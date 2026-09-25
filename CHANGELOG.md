@@ -1,3 +1,10 @@
+## 1.2.5
+- Fixed a Wireless ADB reconnect regression that could execute a second reconnect even after the first one succeeded.
+- Removed duplicate reconnect delay and shortened bounded discovery/connect verification timeouts.
+- Prevented repeated NSD discovery listeners from stacking during pairing/reconnect, reducing instability and ANR risk.
+- Serialized local ADB pair/reconnect operations so repeated taps cannot start overlapping ADB sessions.
+- Reuse an already discovered Wireless ADB endpoint as the fast path, then rediscover only when needed.
+
 ## 1.2.4
 - Tests is now test-only: removed the duplicated live Cell Info / network status hero from the Tests page.
 - Tests now opens with a focused Tests heading followed directly by Quick Start filters, test tools and Scenario Tests.

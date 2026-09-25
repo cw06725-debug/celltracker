@@ -36,34 +36,75 @@ object CellTrackerAdbEngine {
     private val scope=CoroutineScope(SupervisorJob()+Dispatchers.IO)
     private var logcatJob:Job?=null
     private var exportJob:Job?=null
-    private var discoveredPair:AdbEndpoint?=null
-    private var discoveredConnect:AdbEndpoint?=null
+    @Volatile private var discoveredPair:AdbEndpoint?=null
+    @Volatile private var discoveredConnect:AdbEndpoint?=null
+    @Volatile private var pairDiscoveryListener:NsdManager.DiscoveryListener?=null
+    @Volatile private var connectDiscoveryListener:NsdManager.DiscoveryListener?=null
+    private val adbSessionMutex=kotlinx.coroutines.sync.Mutex()
 
     fun startDiscovery(context:Context) {
-        discover(context,"_adb-tls-pairing._tcp") { ep ->
-            discoveredPair=ep; val old=AdbToolStore.state.value
-            AdbToolStore.state.value=old.copy(localEndpoint=old.localEndpoint.copy(host=ep.host,pairingPort=ep.pairingPort), message="Pairing device found: ${ep.host}:${ep.pairingPort}")
-            // Shizuku-style UX: as soon as Android exposes the temporary pairing service,
-            // show a heads-up notification with inline RemoteInput while Settings stays open.
-            pairingNotification(context,"CellTracker · Pairing device found","${ep.host}:${ep.pairingPort} · Expand notification and enter the 6-digit pairing code",true)
+        startDiscoveryType(context,"_adb-tls-pairing._tcp") { ep ->
+            discoveredPair=ep
+            val old=AdbToolStore.state.value
+            AdbToolStore.state.value=old.copy(
+                localEndpoint=old.localEndpoint.copy(host=ep.host,pairingPort=ep.pairingPort),
+                message="Pairing device found: ${ep.host}:${ep.pairingPort}"
+            )
+            pairingNotification(
+                context,
+                "CellTracker · Pairing device found",
+                "${ep.host}:${ep.pairingPort} · Expand notification and enter the 6-digit pairing code",
+                true
+            )
         }
-        discover(context,"_adb-tls-connect._tcp") { ep ->
-            discoveredConnect=ep; val old=AdbToolStore.state.value
-            AdbToolStore.state.value=old.copy(localEndpoint=old.localEndpoint.copy(host=ep.host,connectPort=ep.connectPort))
+        startDiscoveryType(context,"_adb-tls-connect._tcp") { ep ->
+            discoveredConnect=ep
+            val old=AdbToolStore.state.value
+            AdbToolStore.state.value=old.copy(
+                localEndpoint=old.localEndpoint.copy(host=ep.host,connectPort=ep.connectPort)
+            )
         }
     }
-    private fun discover(context:Context,type:String,onFound:(AdbEndpoint)->Unit) {
+
+    private fun stopDiscoveryQuietly(nsd:NsdManager, listener:NsdManager.DiscoveryListener?) {
+        if(listener==null) return
+        runCatching { nsd.stopServiceDiscovery(listener) }
+    }
+
+    private fun startDiscoveryType(context:Context,type:String,onFound:(AdbEndpoint)->Unit) {
         val nsd=context.getSystemService(NsdManager::class.java)?:return
-        runCatching { nsd.discoverServices(type,NsdManager.PROTOCOL_DNS_SD,object:NsdManager.DiscoveryListener{
-            override fun onDiscoveryStarted(s:String){}; override fun onDiscoveryStopped(s:String){}
-            override fun onStartDiscoveryFailed(s:String,e:Int){ AdbToolStore.state.value=AdbToolStore.state.value.copy(message="ADB discovery failed: $e") }; override fun onStopDiscoveryFailed(s:String,e:Int){}
-            override fun onServiceLost(s:NsdServiceInfo){}
-            override fun onServiceFound(s:NsdServiceInfo){ runCatching { nsd.resolveService(s,object:NsdManager.ResolveListener{
-                override fun onResolveFailed(si:NsdServiceInfo,e:Int){ AdbToolStore.state.value=AdbToolStore.state.value.copy(message="ADB service resolve failed: $e") }
-                override fun onServiceResolved(si:NsdServiceInfo){ val h=si.host?.hostAddress?:return; val p=si.port; onFound(if(type.contains("pairing")) AdbEndpoint(h,p,0) else AdbEndpoint(h,0,p)) }
-            }) } }
-        }) }
+        val oldListener=if(type.contains("pairing")) pairDiscoveryListener else connectDiscoveryListener
+        stopDiscoveryQuietly(nsd,oldListener)
+
+        lateinit var listener:NsdManager.DiscoveryListener
+        listener=object:NsdManager.DiscoveryListener{
+            override fun onDiscoveryStarted(serviceType:String){}
+            override fun onDiscoveryStopped(serviceType:String){}
+            override fun onStartDiscoveryFailed(serviceType:String,errorCode:Int){
+                AdbToolStore.state.value=AdbToolStore.state.value.copy(message="ADB discovery failed: $errorCode")
+                stopDiscoveryQuietly(nsd,listener)
+            }
+            override fun onStopDiscoveryFailed(serviceType:String,errorCode:Int){}
+            override fun onServiceLost(serviceInfo:NsdServiceInfo){}
+            override fun onServiceFound(serviceInfo:NsdServiceInfo){
+                runCatching {
+                    nsd.resolveService(serviceInfo,object:NsdManager.ResolveListener{
+                        override fun onResolveFailed(si:NsdServiceInfo,errorCode:Int){}
+                        override fun onServiceResolved(si:NsdServiceInfo){
+                            val h=si.host?.hostAddress?:return
+                            val p=si.port
+                            if(p<=0) return
+                            onFound(if(type.contains("pairing")) AdbEndpoint(h,p,0) else AdbEndpoint(h,0,p))
+                        }
+                    })
+                }
+            }
+        }
+        if(type.contains("pairing")) pairDiscoveryListener=listener else connectDiscoveryListener=listener
+        runCatching { nsd.discoverServices(type,NsdManager.PROTOCOL_DNS_SD,listener) }
+            .onFailure { AdbToolStore.state.value=AdbToolStore.state.value.copy(message="ADB discovery start failed: ${it.message}") }
     }
+
     private fun pairingNotification(context:Context,title:String,text:String,allowInput:Boolean) {
         val nm=context.getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(NotificationChannel("adb_pair","ADB pairing",NotificationManager.IMPORTANCE_HIGH))
@@ -111,59 +152,60 @@ object CellTrackerAdbEngine {
         return null
     }
 
-    private suspend fun discoverAndConnectLocal(context:Context, timeoutMs:Long=15_000):String {
+    private suspend fun discoverAndConnectLocal(context:Context, timeoutMs:Long=9_000):String {
         val mgr=CellTrackerAdbConnectionManager.getInstance(context)
-        discoveredConnect=null
         val old=AdbToolStore.state.value
-        AdbToolStore.state.value=old.copy(
-            localEndpoint=old.localEndpoint.copy(connectPort=0),
-            message="Discovering current ADB TLS service…"
-        )
-        startDiscovery(context)
+        AdbToolStore.state.value=old.copy(message="Finding Wireless ADB service…")
+
+        // First use an endpoint that mDNS has already resolved. This is the common fast path.
+        var candidate=discoveredConnect?.takeIf{it.connectPort>0}
+        if(candidate==null) startDiscovery(context)
 
         val deadline=System.currentTimeMillis()+timeoutMs
+        var attempted:String?=null
         var lastError="ADB TLS service not discovered"
         while(System.currentTimeMillis()<deadline){
-            val ep=discoveredConnect
-            if(ep!=null && ep.connectPort>0){
-                AdbToolStore.state.value=AdbToolStore.state.value.copy(
-                    message="Connecting ${ep.host}:${ep.connectPort}…"
-                )
-                val connected=runCatching{
-                    withTimeout(5_000){mgr.connect(ep.host,ep.connectPort)}
-                }.getOrElse{
-                    lastError=it.message ?: it.javaClass.simpleName
-                    false
-                }
-                if(connected){
-                    val id=runCatching{
-                        withTimeout(5_000){command(context,"id",5_000).getOrThrow().trim()}
-                    }.getOrElse{
-                        lastError=it.message ?: it.javaClass.simpleName
-                        ""
+            val ep=candidate ?: discoveredConnect?.takeIf{it.connectPort>0}
+            if(ep!=null){
+                val key="${ep.host}:${ep.connectPort}"
+                if(key!=attempted){
+                    attempted=key
+                    AdbToolStore.state.value=AdbToolStore.state.value.copy(message="Connecting $key…")
+                    val connected=runCatching { withTimeout(4_000){ mgr.connect(ep.host,ep.connectPort) } }
+                        .getOrElse { lastError=it.message ?: it.javaClass.simpleName; false }
+                    if(connected){
+                        val id=runCatching { withTimeout(3_500){ command(context,"id",3_500).getOrThrow().trim() } }
+                            .getOrElse { lastError=it.message ?: it.javaClass.simpleName; "" }
+                        if(id.contains("uid=2000")) return id
+                        if(id.isNotBlank()) lastError="Identity is not shell: $id"
+                    } else lastError="Connect failed at $key: $lastError"
+
+                    // Endpoint may rotate after pairing. Restart only the connect discovery once,
+                    // without stacking additional NSD listeners.
+                    discoveredConnect=null
+                    candidate=null
+                    startDiscoveryType(context,"_adb-tls-connect._tcp") { fresh ->
+                        discoveredConnect=fresh
+                        val state=AdbToolStore.state.value
+                        AdbToolStore.state.value=state.copy(localEndpoint=state.localEndpoint.copy(host=fresh.host,connectPort=fresh.connectPort))
                     }
-                    if(id.contains("uid=2000")) return id
-                    if(id.isNotBlank()) lastError="Identity is not shell: $id"
-                } else {
-                    lastError="Connect failed at ${ep.host}:${ep.connectPort}: $lastError"
                 }
-                // HiOS may rotate the connect service/port after pairing.
-                discoveredConnect=null
-                startDiscovery(context)
             }
-            delay(250)
+            delay(120)
         }
-        // Keep the existing manager fallback for ROMs where mDNS connect discovery is unavailable.
-        val fallback=runCatching{withTimeout(5_000){mgr.connectTls(context,5_000)}}.getOrDefault(false)
+
+        // One bounded fallback for ROMs where connect-service mDNS is hidden.
+        val fallback=runCatching { withTimeout(4_000){ mgr.connectTls(context,4_000) } }.getOrDefault(false)
         if(fallback){
-            val id=command(context,"id",5_000).getOrThrow().trim()
+            val id=command(context,"id",3_500).getOrThrow().trim()
             if(id.contains("uid=2000")) return id
         }
         error(lastError)
     }
 
     suspend fun pairLocal(context:Context,code:String):Result<String> = withContext(Dispatchers.IO) {
-        runCatching {
+        adbSessionMutex.lock()
+        try { runCatching {
             require(code.trim().matches(Regex("\\d{6}"))){"Pairing code must be 6 digits"}
             pairingNotification(context,"CellTracker ADB pairing","Code received · discovering pairing service…",false)
             val ep=waitForPairEndpoint(context)
@@ -173,7 +215,7 @@ object CellTrackerAdbEngine {
 
             var pairWarning:String?=null
             val paired=try{
-                withTimeout(15_000){mgr.pair(ep.host,ep.pairingPort,code.trim())}
+                withTimeout(10_000){mgr.pair(ep.host,ep.pairingPort,code.trim())}
             }catch(e:Throwable){
                 // HiOS can accept the host key and then close the pairing socket with IOException.
                 pairWarning=e.message ?: e.javaClass.simpleName
@@ -193,7 +235,7 @@ object CellTrackerAdbEngine {
             }
 
             // Final truth is a working shell, not the pairing socket's final response.
-            val id=discoverAndConnectLocal(context,18_000)
+            val id=discoverAndConnectLocal(context,10_000)
             AdbToolStore.state.value=AdbToolStore.state.value.copy(
                 localStatus="Connected",localIdentity=id,message="Local ADB ready"
             )
@@ -204,7 +246,7 @@ object CellTrackerAdbEngine {
                 else "Connected as uid=2000(shell)",
                 false
             )
-            delay(1800)
+            delay(250)
             context.getSystemService(NotificationManager::class.java).cancel(8801)
             "Connected as shell"
         }.onFailure { e ->
@@ -216,41 +258,47 @@ object CellTrackerAdbEngine {
                 localStatus="Not connected",message="Pair/connect failed: $msg"
             )
             pairingNotification(context,"CellTracker ADB connection failed",msg,false)
-        }
+        } } finally { adbSessionMutex.unlock() }
     }
 
     suspend fun connectLocal(context:Context):Result<String> = withContext(Dispatchers.IO){
-        runCatching {
-            // Never trust a cached Wireless-debugging port. Wi-Fi changes can rotate the TLS service.
-            var last:Throwable?=null
-            var id:String?=null
-            repeat(2){attempt->
-                try{
-                    AdbToolStore.state.value=AdbToolStore.state.value.copy(
-                        localStatus="Reconnecting",
-                        message=if(attempt==0)"Rediscovering Wireless ADB…" else "Retrying ADB discovery…"
-                    )
-                    id=discoverAndConnectLocal(context,15_000)
-                    val verified=command(context,"id",5_000).getOrThrow()
-                    check(verified.contains("uid=2000")){"ADB shell verification failed: $verified"}
-                    id=verified.trim()
-                    return@repeat
-                }catch(e:Throwable){
-                    last=e
-                    if(attempt==0) delay(800)
+        adbSessionMutex.lock()
+        try {
+            runCatching {
+                var last:Throwable?=null
+                var ready:String?=null
+                for(attempt in 0..1){
+                    try{
+                        AdbToolStore.state.value=AdbToolStore.state.value.copy(
+                            localStatus="Reconnecting",
+                            message=if(attempt==0)"Finding Wireless ADB…" else "Retrying once…"
+                        )
+                        val id=discoverAndConnectLocal(context,if(attempt==0)8_000 else 6_000)
+                        val verified=command(context,"id",3_500).getOrThrow().trim()
+                        check(verified.contains("uid=2000")){"ADB shell verification failed: $verified"}
+                        ready=verified
+                        break
+                    }catch(e:Throwable){
+                        last=e
+                        if(attempt==0){
+                            discoveredConnect=null
+                            startDiscoveryType(context,"_adb-tls-connect._tcp") { ep -> discoveredConnect=ep }
+                            delay(300)
+                        }
+                    }
                 }
+                val id=ready ?: throw (last ?: IllegalStateException("ADB reconnect failed"))
+                AdbToolStore.state.value=AdbToolStore.state.value.copy(
+                    localStatus="Connected",localIdentity=id,message="Local ADB ready"
+                )
+                id
+            }.onFailure { e ->
+                AdbToolStore.state.value=AdbToolStore.state.value.copy(
+                    localStatus="Not connected",
+                    message="Reconnect failed: ${e.message ?: e.javaClass.simpleName}"
+                )
             }
-            val ready=id ?: throw (last ?: IllegalStateException("ADB reconnect failed"))
-            AdbToolStore.state.value=AdbToolStore.state.value.copy(
-                localStatus="Connected",localIdentity=ready,message="Local ADB verified · ready"
-            )
-            ready
-        }.onFailure { e ->
-            AdbToolStore.state.value=AdbToolStore.state.value.copy(
-                localStatus="Not connected",
-                message="Reconnect failed safely: ${e.message ?: e.javaClass.simpleName}"
-            )
-        }
+        } finally { adbSessionMutex.unlock() }
     }
     fun refreshUsbRef(context:Context) {
         val h=UsbAdbHost.get(context);val info=h.info()
