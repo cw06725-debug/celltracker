@@ -1403,13 +1403,16 @@ private fun MainScreen(
     var settingsSubpageVisible by remember { mutableStateOf(false) }
     var reportsSubpageVisible by remember { mutableStateOf(false) }
     var homeTikTokTool by remember { mutableStateOf<String?>(null) }
+    var homeAllTestsVisible by remember { mutableStateOf(false) }
 
     val selected = state.sims.firstOrNull { it.subscriptionId == state.selectedSubscriptionId } ?: state.sims.firstOrNull()
     val context = LocalContext.current
     val recordingMetaRepo = remember { TestMetadataRepository(context) }
     var lastExitBackAt by remember { mutableLongStateOf(0L) }
     BackHandler {
-        if (mainTab == "CELL") {
+        if (homeAllTestsVisible) {
+            homeAllTestsVisible = false
+        } else if (mainTab == "CELL") {
             onMainTabChange("HOME")
         } else {
             val now = System.currentTimeMillis()
@@ -1465,7 +1468,7 @@ private fun MainScreen(
     ) { padding ->
         Box(Modifier.padding(padding).fillMaxSize()) {
             AnimatedContent(
-                targetState = mainTab,
+                targetState = if (homeAllTestsVisible) "ALL_TESTS" else mainTab,
                 transitionSpec = {
                     val order = listOf("HOME", "TEST", "CELL", "REPORTS", "SETTINGS")
                     val forward = order.indexOf(targetState) > order.indexOf(initialState)
@@ -1476,9 +1479,41 @@ private fun MainScreen(
                 label = "mainTabs",
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(bottom = if (mainTab == "CELL" || homeTikTokTool != null || (mainTab == "SETTINGS" && settingsSubpageVisible) || (mainTab == "REPORTS" && reportsSubpageVisible)) 0.dp else 73.dp)
+                    .padding(bottom = if (homeAllTestsVisible || mainTab == "CELL" || homeTikTokTool != null || (mainTab == "SETTINGS" && settingsSubpageVisible) || (mainTab == "REPORTS" && reportsSubpageVisible)) 0.dp else 73.dp)
             ) { tab ->
-                if (tab == "MAP") {
+                if (tab == "ALL_TESTS") {
+                    Column(
+                        Modifier.fillMaxSize()
+                            .background(Brush.verticalGradient(listOf(MaterialTheme.colorScheme.primary.copy(alpha = 0.055f), MaterialTheme.colorScheme.background)))
+                            .verticalScroll(rememberRetainedScrollState("home.alltests"))
+                            .padding(horizontal = 16.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        Spacer(Modifier.height(10.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            TextButton(onClick = { homeAllTestsVisible = false }, contentPadding = PaddingValues(horizontal = 0.dp)) { Text("‹ Back") }
+                            Spacer(Modifier.width(8.dp))
+                            Column {
+                                Text("All Tests", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                                Text("All test tools and scenarios", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                        ScenarioTestsV1(
+                            isRecording = state.isRecording,
+                            onStartScenarioRecording = onStartRecording,
+                            onStopScenarioRecording = onStopRecording,
+                            onMarkScenarioEvent = onMarkEvent,
+                            onPingTest = onPingTest,
+                            onVideoLoading = onVideoLoading,
+                            onWhatsAppSend = onWhatsAppSend,
+                            onCallSetup = onCallSetup,
+                            onDeviceLogs = onDeviceLogs,
+                            onWeakCoverage = onBasementTest,
+                            onNetworkRecording = { if (state.isRecording) onStopRecording() else showTaskNameDialog = true }
+                        )
+                        Spacer(Modifier.height(18.dp))
+                    }
+                } else if (tab == "MAP") {
                     LiveMapScreen(
                         state = state,
                         onSelectSim = onSelectSim,
@@ -1491,7 +1526,7 @@ private fun MainScreen(
                 HomeScreenV121(
                     state = state,
                     selected = selected,
-                    onSeeAllTests = { onMainTabChange("TEST") },
+                    onSeeAllTests = { homeAllTestsVisible = true },
                     onTikTokLag = { homeTikTokTool = "LAG" },
                     onCellInfo = { onMainTabChange("CELL") },
                     onReports = { onMainTabChange("REPORTS") },
@@ -1779,7 +1814,7 @@ private fun MainScreen(
                 }
             }
 
-            if (mainTab != "CELL" && homeTikTokTool == null && !((mainTab == "SETTINGS" && settingsSubpageVisible) || (mainTab == "REPORTS" && reportsSubpageVisible))) {
+            if (!homeAllTestsVisible && mainTab != "CELL" && homeTikTokTool == null && !((mainTab == "SETTINGS" && settingsSubpageVisible) || (mainTab == "REPORTS" && reportsSubpageVisible))) {
                 WeChatBottomBar(
                     selected = if (mainTab == "CELL") "HOME" else mainTab,
                     onSelect = onMainTabChange,
@@ -3591,26 +3626,28 @@ private fun CellInfoCardV128(
     symbol: String,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    Card(
+    Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        shape = RoundedCornerShape(24.dp),
+        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.055f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.24f)),
+        tonalElevation = 0.dp
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(9.dp)
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+        Column {
+            Row(
+                modifier = Modifier.fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f))
+                    .padding(horizontal = 16.dp, vertical = 13.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Surface(
                     shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
+                    color = MaterialTheme.colorScheme.primary
                 ) {
                     Text(
                         symbol,
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
-                        color = MaterialTheme.colorScheme.primary,
+                        color = MaterialTheme.colorScheme.onPrimary,
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.Bold
                     )
@@ -3619,11 +3656,15 @@ private fun CellInfoCardV128(
                 Text(
                     title,
                     style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.Bold
                 )
             }
-            HorizontalDivider(color = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f))
-            content()
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(9.dp),
+                content = content
+            )
         }
     }
 }
@@ -4780,6 +4821,7 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
     var dutLogName by rememberSaveable { mutableStateOf("") }
     var mftTaskName by rememberSaveable { mutableStateOf("") }
     var mftSafeCleanup by rememberSaveable { mutableStateOf(true) }
+    var mftTarget by rememberSaveable { mutableStateOf("Local DUT") }
     var compressDutLog by rememberSaveable { mutableStateOf(false) }
     var deleteAfterZip by rememberSaveable { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
@@ -4793,7 +4835,7 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
     var localPairCode by rememberSaveable { mutableStateOf("") }
     var pairDialogDismissedPort by rememberSaveable { mutableStateOf(0) }
     var refType by rememberSaveable { mutableStateOf("vivo") }
-            var refTransport by rememberSaveable { mutableStateOf("USB") }
+    var refTransport by rememberSaveable { mutableStateOf("Auto") }
     var customRefName by rememberSaveable { mutableStateOf("") }
     val refLabel = when(refType){"Samsung"->"Samsung_REF";"vivo"->"vivo_REF";else->customRefName.trim().ifBlank{"Custom_REF"}}
     LaunchedEffect(Unit) { CellTrackerAdbEngine.startDiscovery(context) }
@@ -4845,30 +4887,64 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
                     if(adb.exportPath.isNotBlank()) Field("Saved to",adb.exportPath)
                 }
             }
-            GlassSection("2 · MFT Report") {
-                Text("Pull the newest MFT report from Android/data, rename it to the test task, verify the local copy, then optionally delete only that verified source file.",style=MaterialTheme.typography.bodySmall)
-                Field("MFT source","/sdcard/Android/data/com.transsion.mft/files/Reports/<date>/MFT-Reports-*.xls")
-                OutlinedTextField(mftTaskName,{mftTaskName=it},label={Text("Test task name")},supportingText={Text("Example: HallRoad_TikTok_Lag_X6878")},singleLine=true,modifier=Modifier.fillMaxWidth())
+            GlassSection("2 · MFT Report Browser") {
+                Text("Browse the real MFT report folder first, then pull the exact file you want. Local DUT keeps the existing self-ADB path; USB REF lets a controller phone browse and pull the same MFT path over OTG.",style=MaterialTheme.typography.bodySmall)
+                Field("Remote folder","/sdcard/Android/data/com.transsion.mft/files/Reports")
+                Text("Source device",style=MaterialTheme.typography.labelLarge,fontWeight=FontWeight.SemiBold)
+                Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                    FilterChip(selected=mftTarget=="Local DUT",onClick={mftTarget="Local DUT";AdbToolStore.state.value=AdbToolStore.state.value.copy(mftFiles=emptyList(),mftSelected="")},label={Text("Local DUT")})
+                    FilterChip(selected=mftTarget=="USB REF",onClick={mftTarget="USB REF";CellTrackerAdbEngine.refreshUsbRef(context);AdbToolStore.state.value=AdbToolStore.state.value.copy(mftFiles=emptyList(),mftSelected="")},label={Text("USB REF")})
+                }
+                Field("Transport",adb.mftTransport.ifBlank { if(mftTarget=="USB REF") "USB ADB" else "Local Wireless ADB" })
+                OutlinedButton(
+                    enabled=!busy && !adb.mftRunning,
+                    onClick={scope.launch{busy=true;val r=CellTrackerAdbEngine.refreshMftFiles(context,mftTarget=="USB REF");if(r.isFailure)Toast.makeText(context,r.exceptionOrNull()?.message?:"MFT refresh failed",Toast.LENGTH_LONG).show();busy=false}},
+                    modifier=Modifier.fillMaxWidth()
+                ){Text("REFRESH MFT FILES")}
+                if(adb.mftFiles.isEmpty()){
+                    Text("No file list loaded yet. Refresh to inspect the remote folder.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                } else {
+                    Text("Remote files",style=MaterialTheme.typography.titleSmall,fontWeight=FontWeight.SemiBold)
+                    adb.mftFiles.take(8).forEach { path ->
+                        val selectedFile=adb.mftSelected==path
+                        Surface(
+                            modifier=Modifier.fillMaxWidth().clickable{CellTrackerAdbEngine.selectMftFile(path)},
+                            shape=RoundedCornerShape(14.dp),
+                            color=if(selectedFile) MaterialTheme.colorScheme.primary.copy(alpha=.10f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.55f),
+                            border=BorderStroke(1.dp,if(selectedFile)MaterialTheme.colorScheme.primary.copy(alpha=.45f) else MaterialTheme.colorScheme.outline.copy(alpha=.15f))
+                        ){
+                            Row(Modifier.fillMaxWidth().padding(10.dp),verticalAlignment=Alignment.CenterVertically){
+                                RadioButton(selected=selectedFile,onClick={CellTrackerAdbEngine.selectMftFile(path)})
+                                Column(Modifier.weight(1f)){
+                                    Text(path.substringAfterLast('/'),style=MaterialTheme.typography.bodyMedium,fontWeight=if(selectedFile)FontWeight.SemiBold else FontWeight.Normal)
+                                    Text(path.substringBeforeLast('/').substringAfterLast('/'),style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        }
+                    }
+                }
+                OutlinedTextField(mftTaskName,{mftTaskName=it},label={Text("Save as / task name")},supportingText={Text("Saved directly to Download/CellTracker/MFT/ as one .xls/.xlsx file")},singleLine=true,modifier=Modifier.fillMaxWidth())
                 Surface(shape=RoundedCornerShape(14.dp),color=MaterialTheme.colorScheme.surfaceVariant){
                     Row(Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=8.dp),verticalAlignment=Alignment.CenterVertically){
-                        Column(Modifier.weight(1f)){Text("Safe cleanup",fontWeight=FontWeight.SemiBold);Text("Delete only the successfully pulled + verified MFT source file",style=MaterialTheme.typography.bodySmall)}
+                        Column(Modifier.weight(1f)){Text("Safe cleanup",fontWeight=FontWeight.SemiBold);Text("Delete only the selected source after local verification",style=MaterialTheme.typography.bodySmall)}
                         Switch(checked=mftSafeCleanup,onCheckedChange={mftSafeCleanup=it})
                     }
                 }
                 Button(enabled=!busy && !adb.mftRunning && mftTaskName.isNotBlank(),onClick={scope.launch{
                     busy=true
-                    val r=CellTrackerAdbEngine.exportMftReport(context,mftTaskName,mftSafeCleanup)
+                    val r=if(adb.mftSelected.isNotBlank()) CellTrackerAdbEngine.pullMftFile(context,adb.mftSelected,mftTaskName,mftSafeCleanup,mftTarget=="USB REF")
+                    else CellTrackerAdbEngine.exportMftReport(context,mftTaskName,mftSafeCleanup,mftTarget=="USB REF")
                     if(r.isFailure) Toast.makeText(context,r.exceptionOrNull()?.message?:"MFT pull failed",Toast.LENGTH_LONG).show()
                     busy=false
-                }},modifier=Modifier.fillMaxWidth()){Text(if(adb.mftRunning)"PULLING MFT…" else "PULL MFT REPORT")}
+                }},modifier=Modifier.fillMaxWidth()){Text(if(adb.mftRunning)"PULLING MFT…" else if(adb.mftSelected.isNotBlank())"PULL SELECTED FILE" else "PULL NEWEST FILE")}
                 if(adb.mftPhase.isNotBlank()) Field("Status",adb.mftPhase)
                 if(adb.mftSource.isNotBlank()) Field("Source",adb.mftSource.substringAfterLast('/'))
                 if(adb.mftSavedPath.isNotBlank()) Field("Saved to",adb.mftSavedPath)
                 if(adb.mftCleanup.isNotBlank()) Field("Source cleanup",adb.mftCleanup)
                 if(adb.mftRunning) LinearProgressIndicator(Modifier.fillMaxWidth())
             }
-            GlassSection("3 · Samsung / vivo REF Wireless ADB") {
-                Text("Pair any REF through Android Wireless debugging. Pairing and connection ports are different; enter the values shown by the REF.",style=MaterialTheme.typography.bodySmall)
+            GlassSection("3 · Samsung / vivo REF ADB") {
+                Text("Auto prefers USB ADB when an OTG/data cable is connected. Wireless ADB remains the fallback and only needs pairing when the saved key is no longer accepted.",style=MaterialTheme.typography.bodySmall)
                 Text("REF device")
                 val refChipColors = FilterChipDefaults.filterChipColors(
                     selectedContainerColor = MaterialTheme.colorScheme.primary,
@@ -4882,8 +4958,19 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
                 if(refType=="Custom") OutlinedTextField(customRefName,{customRefName=it},label={Text("Custom REF name")},singleLine=true,modifier=Modifier.fillMaxWidth())
                 Field("Connection",refTransport)
                 Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                    FilterChip(selected=refTransport=="Auto",onClick={refTransport="Auto";CellTrackerAdbEngine.refreshUsbRef(context)},label={Text("Auto")},colors=refChipColors)
                     FilterChip(selected=refTransport=="USB",onClick={refTransport="USB";CellTrackerAdbEngine.refreshUsbRef(context)},label={Text("USB ADB")},colors=refChipColors)
-                    FilterChip(selected=refTransport=="Wireless",onClick={refTransport="Wireless"},label={Text("Wireless ADB")},colors=refChipColors)
+                    FilterChip(selected=refTransport=="Wireless",onClick={refTransport="Wireless"},label={Text("Wireless")},colors=refChipColors)
+                }
+                if(refTransport=="Auto"){
+                    LaunchedEffect(Unit){CellTrackerAdbEngine.refreshUsbRef(context)}
+                    Field("Preferred transport",if(adb.usbStatus=="Connected")"USB ADB · Connected" else if(adb.usbDevice.isNotBlank() && adb.usbDevice!="No USB ADB device")"USB detected · ${adb.usbStatus}" else "Wireless ADB fallback")
+                    if(adb.usbStatus!="Connected" && adb.usbDevice.isNotBlank() && adb.usbDevice!="No USB ADB device"){
+                        Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                            OutlinedButton(onClick={CellTrackerAdbEngine.requestUsbPermission(context)}){Text("USB PERMISSION")}
+                            Button(onClick={scope.launch{CellTrackerAdbEngine.connectUsbRef(context)}}){Text("CONNECT USB")}
+                        }
+                    }
                 }
                 if(refTransport=="USB"){
                     LaunchedEffect(Unit){CellTrackerAdbEngine.refreshUsbRef(context)}
@@ -4902,6 +4989,7 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
                 }
                 if(refTransport=="Wireless") Text("Wireless ADB controls below remain available as fallback.",style=MaterialTheme.typography.bodySmall)
                 Field("Log folder","Download/CellTracker/Logs/$refLabel")
+                if(refTransport=="Wireless" || (refTransport=="Auto" && adb.usbStatus!="Connected")){
                 OutlinedTextField(remoteHost,{remoteHost=it},label={Text("REF IP")},singleLine=true,modifier=Modifier.fillMaxWidth())
                 Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
                     OutlinedTextField(remotePairPort,{remotePairPort=it.filter(Char::isDigit)},label={Text("Pair port")},singleLine=true,modifier=Modifier.weight(1f))
@@ -4923,6 +5011,7 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
                     modifier=Modifier.fillMaxWidth()
                 ){Text("CONNECT")}
                 Field("REF ADB",adb.remoteStatus); Field("REF identity",adb.remoteIdentity)
+                }
             }
             GlassSection("4 · $refType REF AP Log") {
                 Field("REF device",if(refType=="Custom") customRefName.ifBlank{"Custom"} else refType)
@@ -4930,7 +5019,7 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
                 OutlinedTextField(logcatCommand,{logcatCommand=it},label={Text("Logcat command")},modifier=Modifier.fillMaxWidth())
                 Field("Status",if(adb.logcatRunning)"RECORDING" else "Stopped"); Field("Size",String.format(java.util.Locale.US,"%.1f MB",adb.logcatBytes/1048576.0)); if(adb.logcatPath.isNotBlank())Field("File",adb.logcatPath)
                 Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
-                    Button(enabled=!adb.logcatRunning,onClick={scope.launch{if(refTransport=="USB") CellTrackerAdbEngine.startUsbLogcat(context,logcatCommand,refLabel) else CellTrackerAdbEngine.startLogcat(context,logcatCommand,refLabel)}}){Text("START AP LOG")}
+                    Button(enabled=!adb.logcatRunning,onClick={scope.launch{if(refTransport=="USB" || (refTransport=="Auto" && adb.usbStatus=="Connected")) CellTrackerAdbEngine.startUsbLogcat(context,logcatCommand,refLabel) else CellTrackerAdbEngine.startLogcat(context,logcatCommand,refLabel)}}){Text("START AP LOG")}
                     OutlinedButton(enabled=adb.logcatRunning,onClick={CellTrackerAdbEngine.stopLogcat()}){Text("STOP")}
                 }
                 Text("Presets: AP = logcat -v threadtime · Radio = logcat -b radio -v threadtime",style=MaterialTheme.typography.bodySmall)
@@ -4940,12 +5029,12 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
                 Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
                     AssistChip(onClick={shellCommand="logcat -b radio -d -v threadtime"},label={Text("Radio")}); AssistChip(onClick={shellCommand="getprop"},label={Text("Getprop")}); AssistChip(onClick={shellCommand="dumpsys telephony.registry"},label={Text("Telephony")})
                 }
-                Button(onClick={scope.launch{busy=true;val r=CellTrackerAdbEngine.command(context,shellCommand);shellOutput=r.fold({it},{"ERROR: ${it.message}"});busy=false}},modifier=Modifier.fillMaxWidth()){Text("RUN COMMAND")}
+                Button(onClick={scope.launch{busy=true;val r=CellTrackerAdbEngine.commandRef(context,shellCommand);shellOutput=r.fold({it},{"ERROR: ${it.message}"});busy=false}},modifier=Modifier.fillMaxWidth()){Text("RUN COMMAND")}
                 if(shellOutput.isNotBlank()) SelectionContainer{Text(shellOutput.take(12000),style=MaterialTheme.typography.bodySmall)}
             }
-            GlassSection("6 · No-Wi-Fi options") {
-                Text("Wireless debugging normally requires Wi-Fi. After Local ADB connects, you can experimentally run 'tcpip 5555' from Custom Command and then test localhost:5555. Support depends on the OEM ROM. REF devices can later use USB-OTG ADB Host when Wi-Fi is unavailable.",style=MaterialTheme.typography.bodySmall)
-                Text("This build does not fake USB support: USB-OTG transport is marked as the next transport until it is validated on your DUT/REF hardware.",style=MaterialTheme.typography.bodySmall)
+            GlassSection("6 · Connection Strategy") {
+                Text("Recommended: USB ADB for REF devices. It does not need a hotspot, pairing port or connect port. Auto mode prefers USB whenever the REF is connected by OTG/data cable.",style=MaterialTheme.typography.bodySmall)
+                Text("Wireless ADB remains available as fallback. Legacy TCP 5555 can be used only on ROMs where adbd has already been switched to TCP mode; CellTracker does not enable insecure TCP automatically.",style=MaterialTheme.typography.bodySmall)
             }
             if(busy) LinearProgressIndicator(Modifier.fillMaxWidth())
             if(adb.message.isNotBlank()) Text(adb.message,style=MaterialTheme.typography.bodySmall)

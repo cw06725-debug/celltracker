@@ -1,3 +1,14 @@
+## 1.2.9
+- Added a dedicated Home → All Tests subpage. Home "See All" no longer just switches to the Tests bottom tab; the subpage hides bottom navigation and returns to Home.
+- Refreshed Cell Info detail cards with a stronger shared blue card language matching the Home network summary.
+- Added an MFT Report Browser that lists real remote MFT files, lets the tester select the exact report, and supports manual pull when automatic selection is not desired.
+- MFT reports are now saved directly as files under `Download/CellTracker/MFT/` instead of creating one folder per report.
+- Added selectable MFT source device: Local DUT keeps the existing self-ADB path, while USB REF can browse/pull the same MFT path over OTG without Wi-Fi.
+- REF ADB connection UI now provides Auto / USB ADB / Wireless modes. Auto prefers USB when connected.
+- ADB Shell and REF AP Log can use USB ADB as well as Wireless ADB.
+- Local ADB / DUT self-shell remains Wireless Debugging based because a phone cannot USB-host ADB to itself.
+- Version 1.2.9 (versionCode 186).
+
 ## 1.2.8
 - Home Quick Start keeps direct-launch behavior: each card opens its own setup/tool directly; See All is the only path that opens Tests.
 - Cell Info detail UI is unified with the Home network hero style using rounded blue-accent cards for network, serving cell, signal, neighbors and location.

@@ -23,8 +23,8 @@ class AdbSyncPuller(private val context:Context){
  private fun fail(i:InputStream):Nothing{val n=int(i);error("ADB Sync FAIL: "+String(exact(i,n),Charsets.UTF_8))}
  private inline fun <T> session(block:(InputStream,OutputStream)->T):T{val s=CellTrackerAdbConnectionManager.getInstance(context).openStream("sync:");val i=s.openInputStream();val o=s.openOutputStream();try{return block(i,o)}finally{runCatching{s.close()}}}
  private fun list(path:String):List<Entry> = session{i,o->request(o,"LIST",path);val r=ArrayList<Entry>();while(true){when(String(exact(i,4),Charsets.US_ASCII)){"DONE"->{int(i);return@session r};"FAIL"->fail(i);"DENT"->{val mode=int(i);val size=int(i).toLong() and 0xffffffffL;int(i);val n=int(i);val name=String(exact(i,n),Charsets.UTF_8);if(name!="."&&name!="..")r+=Entry(name,mode,size)};else->error("Unexpected ADB Sync LIST response for $path")}};@Suppress("UNREACHABLE_CODE") r}
- private fun createFile(remote:String,dir:String,name:String,onBytes:(Int)->Unit):Uri{
-  val r=context.contentResolver;val v=ContentValues().apply{put(MediaStore.Downloads.DISPLAY_NAME,name);put(MediaStore.Downloads.MIME_TYPE,"application/octet-stream");put(MediaStore.Downloads.RELATIVE_PATH,"${Environment.DIRECTORY_DOWNLOADS}/CellTracker/Logs/DUT/$dir");put(MediaStore.Downloads.IS_PENDING,1)}
+ private fun createFile(remote:String,dir:String,name:String,baseRoot:String="${Environment.DIRECTORY_DOWNLOADS}/CellTracker/Logs/DUT",onBytes:(Int)->Unit):Uri{
+  val r=context.contentResolver;val v=ContentValues().apply{put(MediaStore.Downloads.DISPLAY_NAME,name);put(MediaStore.Downloads.MIME_TYPE,"application/octet-stream");put(MediaStore.Downloads.RELATIVE_PATH, if(dir.isBlank()) baseRoot else "$baseRoot/$dir");put(MediaStore.Downloads.IS_PENDING,1)}
   val uri=r.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI,v)?:error("Cannot create $name")
   try{r.openOutputStream(uri,"w")!!.use{local->session{i,o->request(o,"RECV",remote);while(true){when(String(exact(i,4),Charsets.US_ASCII)){"DONE"->{int(i);return@session};"FAIL"->fail(i);"DATA"->{var left=int(i);val b=ByteArray(65536);while(left>0){val n=i.read(b,0,minOf(left,b.size));if(n<0)throw EOFException("ADB Sync ended during $remote");local.write(b,0,n);left-=n;onBytes(n)}};else->error("Unexpected ADB Sync RECV response for $remote")}}}};v.clear();v.put(MediaStore.Downloads.IS_PENDING,0);r.update(uri,v,null,null);return uri}catch(e:Throwable){r.delete(uri,null,null);throw e}
  }
@@ -153,6 +153,55 @@ class AdbSyncPuller(private val context:Context){
   if(size<=0L){ context.contentResolver.delete(uri,null,null); error("Pulled file is empty") }
   onProgress(SyncPullProgress(1,1,0,size,remote,"Verified"))
   return SyncPulledFile(uri,cleanName)
+ }
+
+
+
+ fun pullSingleFileTo(remote:String, baseRelativePath:String, outputName:String, onProgress:(SyncPullProgress)->Unit):SyncPulledFile {
+  var bytes=0L
+  val cleanName=outputName.replace(Regex("[\\/:*?\"<>|]+"), "_").ifBlank { "MFT_Report.xls" }
+  val baseRoot="${Environment.DIRECTORY_DOWNLOADS}/${baseRelativePath.trim('/')}"
+  onProgress(SyncPullProgress(1,0,0,0,remote,"Pulling file…"))
+  val uri=createFile(remote, "", cleanName, baseRoot){n->
+   bytes+=n
+   onProgress(SyncPullProgress(1,0,0,bytes,remote,"Pulling file…"))
+  }
+  val size=context.contentResolver.openFileDescriptor(uri,"r")?.use{it.statSize}?:0L
+  if(size<=0L){ context.contentResolver.delete(uri,null,null); error("Pulled file is empty") }
+  onProgress(SyncPullProgress(1,1,0,size,remote,"Verified"))
+  return SyncPulledFile(uri,cleanName)
+ }
+
+ fun pullSingleFileUsb(remote:String, baseRelativePath:String, outputName:String, onProgress:(SyncPullProgress)->Unit):SyncPulledFile {
+  val resolver=context.contentResolver
+  val cleanName=outputName.replace(Regex("[\\/:*?\"<>|]+"), "_").ifBlank { "MFT_Report.xls" }
+  val values=ContentValues().apply{
+   put(MediaStore.Downloads.DISPLAY_NAME,cleanName)
+   put(MediaStore.Downloads.MIME_TYPE,"application/octet-stream")
+   put(MediaStore.Downloads.RELATIVE_PATH,"${Environment.DIRECTORY_DOWNLOADS}/${baseRelativePath.trim('/')}")
+   put(MediaStore.Downloads.IS_PENDING,1)
+  }
+  val uri=resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI,values)?:error("Cannot create $cleanName")
+  var bytes=0L
+  try{
+   onProgress(SyncPullProgress(1,0,0,0,remote,"Pulling via USB…"))
+   resolver.openOutputStream(uri,"w")!!.use{out->
+    val esc=remote.replace("'","'\\''")
+    UsbAdbHost.get(context).shell("cat '$esc'"){chunk->
+     out.write(chunk)
+     bytes+=chunk.size
+     onProgress(SyncPullProgress(1,0,0,bytes,remote,"Pulling via USB…"))
+    }
+   }
+   values.clear();values.put(MediaStore.Downloads.IS_PENDING,0);resolver.update(uri,values,null,null)
+   val size=resolver.openFileDescriptor(uri,"r")?.use{it.statSize}?:0L
+   if(size<=0L) error("Pulled file is empty")
+   onProgress(SyncPullProgress(1,1,0,size,remote,"Verified"))
+   return SyncPulledFile(uri,cleanName)
+  }catch(e:Throwable){
+   resolver.delete(uri,null,null)
+   throw e
+  }
  }
 
  data class ZipResult(val path:String,val deleted:Int,val deleteFailed:Int,val zipBytes:Long)

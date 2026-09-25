@@ -28,6 +28,7 @@ data class AdbUiState(
     val exportPath:String="", val exportResult:String="", val exportError:String="",
     val refLabel:String="vivo_REF",
     val mftRunning:Boolean=false, val mftPhase:String="", val mftSource:String="", val mftSavedPath:String="", val mftCleanup:String="",
+    val mftFiles:List<String> = emptyList(), val mftSelected:String="", val mftTransport:String="",
     val message:String=""
 )
 object AdbToolStore { val state=MutableStateFlow(AdbUiState()) }
@@ -360,6 +361,106 @@ object CellTrackerAdbEngine {
         out.toString(Charsets.UTF_8.name()).substringBefore(marker).trimEnd()
     } }
 
+    private suspend fun commandAny(context:Context,cmd:String,timeoutMs:Long=8_000):Result<String> = withContext(Dispatchers.IO) {
+        if(UsbAdbHost.get(context).connected) {
+            runCatching {
+                val out=ByteArrayOutputStream()
+                withTimeout(timeoutMs) {
+                    UsbAdbHost.get(context).shell(cmd) { b -> out.write(b) }
+                }
+                out.toString(Charsets.UTF_8.name()).trimEnd()
+            }
+        } else command(context,cmd,timeoutMs)
+    }
+
+    suspend fun commandRef(context:Context,cmd:String,timeoutMs:Long=8_000):Result<String> =
+        commandAny(context,cmd,timeoutMs)
+
+    private suspend fun commandForMft(context:Context,cmd:String,timeoutMs:Long,useUsbRef:Boolean):Result<String> =
+        if(useUsbRef) {
+            if(!UsbAdbHost.get(context).connected) Result.failure(IllegalStateException("USB REF is not connected"))
+            else commandAny(context,cmd,timeoutMs)
+        } else command(context,cmd,timeoutMs)
+
+    private suspend fun ensureMftReady(context:Context,reason:String,useUsbRef:Boolean):String {
+        if(useUsbRef) {
+            val usb=UsbAdbHost.get(context)
+            check(usb.connected){"USB REF is not connected"}
+            val id=commandForMft(context,"id",4_000,true).getOrElse{throw IllegalStateException("USB ADB shell failed: ${it.message}")}
+            check(id.contains("uid=2000")){"USB ADB shell is not ready: $id"}
+            AdbToolStore.state.value=AdbToolStore.state.value.copy(
+                usbStatus="Connected",mftTransport="USB REF",message="USB ADB ready for $reason"
+            )
+            return id
+        }
+        val id=ensureLocalReady(context,reason)
+        AdbToolStore.state.value=AdbToolStore.state.value.copy(mftTransport="Local DUT · Wireless ADB")
+        return id
+    }
+
+    suspend fun refreshMftFiles(context:Context,useUsbRef:Boolean=false):Result<List<String>> = withContext(Dispatchers.IO) { runCatching {
+        ensureMftReady(context,"MFT browser",useUsbRef)
+        val root="/sdcard/Android/data/com.transsion.mft/files/Reports"
+        AdbToolStore.state.value=AdbToolStore.state.value.copy(mftPhase="Refreshing files…",message="Reading MFT report folder")
+        val esc=root.replace("'","'\\''")
+        val raw=commandForMft(
+            context,
+            "find '$esc' -type f 2>/dev/null | grep -E '/MFT-Reports-.*\\.(xls|xlsx)$' | sort -r | head -50",
+            10_000,
+            useUsbRef
+        ).getOrElse{throw it}
+        val files=raw.lineSequence().map{it.trim()}.filter{it.isNotBlank()}.distinct().toList()
+        val selected=AdbToolStore.state.value.mftSelected.takeIf{it in files} ?: files.firstOrNull().orEmpty()
+        AdbToolStore.state.value=AdbToolStore.state.value.copy(
+            mftFiles=files,mftSelected=selected,mftPhase=if(files.isEmpty())"No reports found" else "${files.size} report(s)",
+            message=if(files.isEmpty())"No MFT reports found" else "MFT file list refreshed"
+        )
+        files
+    }.onFailure{e->
+        AdbToolStore.state.value=AdbToolStore.state.value.copy(mftPhase="Refresh failed",message="MFT browser: ${e.message}")
+    } }
+
+    fun selectMftFile(path:String) {
+        if(path in AdbToolStore.state.value.mftFiles) {
+            AdbToolStore.state.value=AdbToolStore.state.value.copy(mftSelected=path)
+        }
+    }
+
+    suspend fun pullMftFile(context:Context,remotePath:String,taskName:String,deleteRemoteAfterVerified:Boolean=false,useUsbRef:Boolean=false):Result<String> = withContext(Dispatchers.IO) { runCatching {
+        require(remotePath.isNotBlank()){"Select an MFT report first"}
+        ensureMftReady(context,"MFT pull",useUsbRef)
+        val task=taskName.trim().replace(Regex("[^A-Za-z0-9._-]+"),"_").trim('_').ifBlank{"MFT_Report"}
+        val ext=remotePath.substringAfterLast('.', "xls").lowercase(Locale.US).let{if(it=="xlsx")"xlsx" else "xls"}
+        val outName="$task.$ext"
+        AdbToolStore.state.value=AdbToolStore.state.value.copy(
+            mftRunning=true,mftSource=remotePath,mftSavedPath="",mftCleanup="",mftPhase="Pulling…",
+            message="Pulling ${remotePath.substringAfterLast('/')} via ${if(useUsbRef)"USB REF" else "Local DUT Wireless ADB"}"
+        )
+        val puller=AdbSyncPuller(context)
+        if(useUsbRef) {
+            puller.pullSingleFileUsb(remotePath,"CellTracker/MFT",outName){pr->
+                AdbToolStore.state.value=AdbToolStore.state.value.copy(mftPhase=pr.phase,exportBytes=pr.bytesDone)
+            }
+        } else {
+            puller.pullSingleFileTo(remotePath,"CellTracker/MFT",outName){pr->
+                AdbToolStore.state.value=AdbToolStore.state.value.copy(mftPhase=pr.phase,exportBytes=pr.bytesDone)
+            }
+        }
+        val saved="Download/CellTracker/MFT/$outName"
+        var cleanup="Kept on device"
+        if(deleteRemoteAfterVerified){
+            val esc=remotePath.replace("'","'\\''")
+            val result=commandForMft(context,"rm -f '$esc' && if [ -e '$esc' ]; then echo DELETE_FAILED; else echo DELETED; fi",8_000,useUsbRef).getOrNull().orEmpty()
+            cleanup=if(result.contains("DELETED"))"Source deleted after verification" else "Cleanup failed · source kept"
+        }
+        AdbToolStore.state.value=AdbToolStore.state.value.copy(
+            mftRunning=false,mftPhase="Completed",mftSavedPath=saved,mftCleanup=cleanup,message="MFT report ready"
+        )
+        saved
+    }.onFailure{e->
+        AdbToolStore.state.value=AdbToolStore.state.value.copy(mftRunning=false,mftPhase="Failed",message="MFT pull failed: ${e.message}")
+    } }
+
     private suspend fun ensureLocalReady(context:Context,reason:String):String {
         AdbToolStore.state.value=AdbToolStore.state.value.copy(message="Checking ADB before $reason…")
         val first=command(context,"id",4_000).getOrNull()
@@ -375,117 +476,12 @@ object CellTrackerAdbEngine {
         return connected
     }
 
-    suspend fun exportMftReport(context:Context,taskName:String,deleteRemoteAfterVerified:Boolean=true):Result<String> = withContext(Dispatchers.IO){ runCatching {
-        check(exportJob?.isActive!=true){"Another ADB export is already running"}
-        val task=taskName.trim().replace(Regex("[^A-Za-z0-9._-]+"),"_").trim('_').ifBlank{"MFT_Test"}
-        ensureLocalReady(context,"MFT report pull")
-        val reportsRoot="/sdcard/Android/data/com.transsion.mft/files/Reports"
-        val today=SimpleDateFormat("yyyy-MM-dd",Locale.US).format(Date())
-        AdbToolStore.state.value=AdbToolStore.state.value.copy(
-            mftRunning=true,
-            mftPhase="Finding newest report…",
-            mftSource="",
-            mftSavedPath="",
-            mftCleanup="",
-            message="Scanning $reportsRoot"
-        )
-
-        suspend fun scanNewestMft():String? {
-            val rootEsc=reportsRoot.replace("'", "'\\''")
-            val folderListing=command(
-                context,
-                "ls -1 '$rootEsc' 2>/dev/null",
-                8_000
-            ).getOrNull().orEmpty()
-
-            val datedFolders=folderListing.lineSequence()
-                .map{it.trim()}
-                .filter{it.matches(Regex("\\d{4}-\\d{2}-\\d{2}"))}
-                .sortedDescending()
-                .toList()
-
-            val candidates=(listOf(today)+datedFolders).distinct().take(14)
-            for(day in candidates){
-                val dir="$reportsRoot/$day"
-                val dirEsc=dir.replace("'", "'\\''")
-                val listing=command(context,"ls -1t '$dirEsc' 2>/dev/null",8_000).getOrNull().orEmpty()
-                val name=listing.lineSequence()
-                    .map{it.trim()}
-                    .firstOrNull{
-                        it.startsWith("MFT-Reports-",ignoreCase=true) &&
-                            (it.endsWith(".xls",ignoreCase=true) || it.endsWith(".xlsx",ignoreCase=true))
-                    }
-                if(name!=null) return "$dir/$name"
-            }
-            return null
-        }
-
-        var remote=scanNewestMft()
-        if(remote==null){
-            AdbToolStore.state.value=AdbToolStore.state.value.copy(
-                mftPhase="Rescanning…",
-                message="No file returned by first scan · refreshing ADB and retrying"
-            )
-            ensureLocalReady(context,"MFT rescan")
-            delay(250)
-            remote=scanNewestMft()
-        }
-        val remotePath=remote ?: error("No MFT report found under $reportsRoot. If the file is visible on the phone, reconnect ADB and retry.")
-        val sourceDay=remotePath.substringAfter("$reportsRoot/").substringBefore('/')
-        val extension=remotePath.substringAfterLast('.', "xls").lowercase(Locale.US)
-        val outputName="${task}.${if(extension=="xlsx")"xlsx" else "xls"}"
-        val relative="MFT/$sourceDay/$task"
-        AdbToolStore.state.value=AdbToolStore.state.value.copy(
-            mftPhase="Pulling & verifying…",
-            mftSource=remotePath,
-            message="Pulling ${remotePath.substringAfterLast('/')}"
-        )
-        try{
-            AdbSyncPuller(context).pullSingleFile(remotePath,relative,outputName){pr->
-                AdbToolStore.state.value=AdbToolStore.state.value.copy(
-                    mftPhase=pr.phase,
-                    exportBytes=pr.bytesDone,
-                    message="MFT · ${pr.phase}"
-                )
-            }
-        }catch(first:Throwable){
-            ensureLocalReady(context,"MFT pull retry")
-            AdbSyncPuller(context).pullSingleFile(remotePath,relative,outputName){pr->
-                AdbToolStore.state.value=AdbToolStore.state.value.copy(
-                    mftPhase=pr.phase,
-                    exportBytes=pr.bytesDone,
-                    message="MFT retry · ${pr.phase}"
-                )
-            }
-        }
-        val saved="Download/CellTracker/Logs/DUT/$relative/$outputName"
-        var cleanup="Kept on device"
-        if(deleteRemoteAfterVerified){
-            AdbToolStore.state.value=AdbToolStore.state.value.copy(
-                mftPhase="Verified · cleaning source…",
-                message="Local copy verified; deleting only pulled source"
-            )
-            val esc=remotePath.replace("'", "'\\''")
-            command(context,"rm -f '$esc' && if [ -e '$esc' ]; then echo DELETE_FAILED; else echo DELETED; fi",8_000).fold(
-                { cleanup=if(it.contains("DELETED")) "Source deleted after verification" else "Cleanup failed · source kept" },
-                { cleanup="Cleanup failed · source kept (${it.message})" }
-            )
-        }
-        AdbToolStore.state.value=AdbToolStore.state.value.copy(
-            mftRunning=false,
-            mftPhase="Completed",
-            mftSavedPath=saved,
-            mftCleanup=cleanup,
-            message="MFT report ready"
-        )
-        saved
-    }.onFailure{e->
-        AdbToolStore.state.value=AdbToolStore.state.value.copy(
-            mftRunning=false,
-            mftPhase="Failed",
-            message="MFT pull failed: ${e.message ?: e.javaClass.simpleName}"
-        )
-    } }
+    suspend fun exportMftReport(context:Context,taskName:String,deleteRemoteAfterVerified:Boolean=true,useUsbRef:Boolean=false):Result<String> = withContext(Dispatchers.IO) {
+        val files=refreshMftFiles(context,useUsbRef).getOrElse{return@withContext Result.failure(it)}
+        val selected=AdbToolStore.state.value.mftSelected.ifBlank{files.firstOrNull().orEmpty()}
+        if(selected.isBlank()) return@withContext Result.failure(IllegalStateException("No MFT report found"))
+        pullMftFile(context,selected,taskName,deleteRemoteAfterVerified,useUsbRef)
+    }
 
     suspend fun exportDebuglogger(context:Context,path:String="/data/debuglogger",logName:String="",compress:Boolean=false,deleteAfterZip:Boolean=false):Result<String> = withContext(Dispatchers.IO){ runCatching {
         check(exportJob?.isActive!=true){"An export is already running"}
