@@ -1,3 +1,10 @@
+## 1.2.2
+- Home: the top blue live-network card is now the single Cell Info entry point and remains fully clickable.
+- Removed the duplicate light-blue Cell Info card below Quick Start.
+- Bottom navigation simplified to Home / Tests / Reports / Settings; the Cell Info tab was removed.
+- Cell Info now behaves as a Home drill-down: system back returns to Home, and Home remains highlighted in the four-item bottom navigation.
+- Existing Cell Info detail data and test/report functions are preserved.
+
 ## 1.2.1
 - Added a dedicated Home landing page and made Home the default destination.
 - Bottom navigation is now Home / Tests / Cell Info / Reports / Settings.

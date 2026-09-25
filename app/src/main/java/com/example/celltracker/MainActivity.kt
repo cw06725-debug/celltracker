@@ -398,7 +398,6 @@ private fun WeChatBottomBar(
     val items = listOf(
         Triple("HOME", "⌂", "Home"),
         Triple("TEST", "△", "Tests"),
-        Triple("CELL", "◉", "Cell Info"),
         Triple("REPORTS", "▤", "Reports"),
         Triple("SETTINGS", "⚙", "Settings")
     )
@@ -1385,12 +1384,16 @@ private fun MainScreen(
     val recordingMetaRepo = remember { TestMetadataRepository(context) }
     var lastExitBackAt by remember { mutableLongStateOf(0L) }
     BackHandler {
-        val now = System.currentTimeMillis()
-        if (now - lastExitBackAt <= 2000L) {
-            (context as? Activity)?.finish()
+        if (mainTab == "CELL") {
+            onMainTabChange("HOME")
         } else {
-            lastExitBackAt = now
-            Toast.makeText(context, "Swipe back again to exit", Toast.LENGTH_SHORT).show()
+            val now = System.currentTimeMillis()
+            if (now - lastExitBackAt <= 2000L) {
+                (context as? Activity)?.finish()
+            } else {
+                lastExitBackAt = now
+                Toast.makeText(context, "Swipe back again to exit", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
@@ -1787,7 +1790,7 @@ private fun MainScreen(
 
             if (!((mainTab == "SETTINGS" && settingsSubpageVisible) || (mainTab == "REPORTS" && reportsSubpageVisible))) {
                 WeChatBottomBar(
-                    selected = mainTab,
+                    selected = if (mainTab == "CELL") "HOME" else mainTab,
                     onSelect = onMainTabChange,
                     modifier = Modifier.align(Alignment.BottomCenter)
                 )
@@ -5291,18 +5294,6 @@ private fun HomeScreenV121(
             HomeQuickCardV121("Ping", "Test", "◉", MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f), onClick = onPingTest)
             HomeQuickCardV121("Call", "Test", "✆", Color(0xFF16A34A), modifier = Modifier.weight(1f), onClick = onCallSetup)
             HomeQuickCardV121("Network", if (state.isRecording) "Stop" else "Recording", "●", Color(0xFF6D4AFF), modifier = Modifier.weight(1f), onClick = onNetworkRecording)
-        }
-
-        Card(onClick = onCellInfo, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.72f)), border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.12f))) {
-            Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                AppIconTileV1("⌁", MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text("Cell Info", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                    Text("Serving cell, signal, band, CA / NR and neighbors", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Text("›", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.headlineSmall)
-            }
         }
 
         HomeSectionHeaderV121("Recent Tests", "Latest saved network recordings", "See All", onReports)
