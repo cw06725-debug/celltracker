@@ -1,3 +1,8 @@
+## 1.2.6
+- Fixed USB ADB handshake compatibility with modern Android adbd: zero/optional packet checksums are now accepted while non-zero legacy checksums are still validated.
+- Fixed ADB RSA authentication signing to use the SHA-1 DigestInfo + PKCS#1 v1.5 format expected by adbd instead of the previous raw RSA signature path.
+- Connection selector now uses the same blue selected/highlight style as the REF device selector.
+
 ## 1.2.5
 - Fixed a Wireless ADB reconnect regression that could execute a second reconnect even after the first one succeeded.
 - Removed duplicate reconnect delay and shortened bounded discovery/connect verification timeouts.

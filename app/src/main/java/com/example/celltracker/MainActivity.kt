@@ -4725,8 +4725,8 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
                 if(refType=="Custom") OutlinedTextField(customRefName,{customRefName=it},label={Text("Custom REF name")},singleLine=true,modifier=Modifier.fillMaxWidth())
                 Field("Connection",refTransport)
                 Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
-                    FilterChip(selected=refTransport=="USB",onClick={refTransport="USB";CellTrackerAdbEngine.refreshUsbRef(context)},label={Text("USB ADB")})
-                    FilterChip(selected=refTransport=="Wireless",onClick={refTransport="Wireless"},label={Text("Wireless ADB")})
+                    FilterChip(selected=refTransport=="USB",onClick={refTransport="USB";CellTrackerAdbEngine.refreshUsbRef(context)},label={Text("USB ADB")},colors=refChipColors)
+                    FilterChip(selected=refTransport=="Wireless",onClick={refTransport="Wireless"},label={Text("Wireless ADB")},colors=refChipColors)
                 }
                 if(refTransport=="USB"){
                     LaunchedEffect(Unit){CellTrackerAdbEngine.refreshUsbRef(context)}

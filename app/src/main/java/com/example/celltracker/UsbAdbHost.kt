@@ -6,7 +6,7 @@ import android.hardware.usb.*
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import java.security.Signature
+import javax.crypto.Cipher
 import java.security.interfaces.RSAPublicKey
 import java.util.Base64
 import kotlin.math.min
@@ -78,7 +78,11 @@ class UsbAdbHost(private val context:Context) {
         val h=ByteBuffer.wrap(readExact(24,timeout)).order(ByteOrder.LITTLE_ENDIAN)
         val cmd=h.int;val a0=h.int;val a1=h.int;val len=h.int;val sum=h.int;val magic=h.int
         check(magic==(cmd xor -1)){"Invalid ADB packet magic"};check(len in 0..MAX){"Invalid ADB payload $len"}
-        val d=if(len>0)readExact(len,timeout) else byteArrayOf();check(checksum(d)==sum){"ADB checksum mismatch"}
+        val d=if(len>0)readExact(len,timeout) else byteArrayOf()
+        // Since ADB protocol 0x01000001 the checksum field is optional and
+        // modern adbd implementations commonly send 0. Keep validation for
+        // legacy/non-zero checksums, but do not reject a valid modern packet.
+        if(sum != 0) check(checksum(d)==sum){"ADB checksum mismatch (expected=$sum actual=${checksum(d)})"}
         return P(cmd,a0,a1,d)
     }
     fun connect():String{
@@ -100,9 +104,7 @@ class UsbAdbHost(private val context:Context) {
                     tokenCount++
                     if(tokenCount==1){
                         stage="Signing AUTH token"
-                        val sig=Signature.getInstance("NONEwithRSA")
-                        sig.initSign(key.privateKey);sig.update(p.data)
-                        writePacket(A_AUTH,AUTH_SIGNATURE,0,sig.sign())
+                        writePacket(A_AUTH,AUTH_SIGNATURE,0,signAdbToken(key.privateKey,p.data))
                     }else{
                         // adbd asks for another token when the signature key is unknown.
                         // Send the Android adb public-key structure; REF should now show
@@ -115,6 +117,21 @@ class UsbAdbHost(private val context:Context) {
             }
         }
         error("USB ADB authorization timed out at $stage. Check REF screen for 'Allow USB debugging'.")
+    }
+
+    private fun signAdbToken(privateKey:java.security.PrivateKey,token:ByteArray):ByteArray{
+        // adbd expects RSA_sign(NID_sha1, token), where token is already the
+        // 20-byte SHA-1 challenge. SHA1withRSA would hash it a second time,
+        // while NONEwithRSA omits the SHA-1 DigestInfo prefix. Build the
+        // DigestInfo explicitly and apply PKCS#1 v1.5 private-key padding.
+        check(token.size==20){"Unexpected ADB AUTH token length ${token.size}"}
+        val sha1DigestInfoPrefix=byteArrayOf(
+            0x30,0x21,0x30,0x09,0x06,0x05,0x2b,0x0e,0x03,0x02,0x1a,0x05,0x00,0x04,0x14
+        )
+        val digestInfo=sha1DigestInfoPrefix + token
+        val cipher=Cipher.getInstance("RSA/ECB/PKCS1Padding")
+        cipher.init(Cipher.ENCRYPT_MODE,privateKey)
+        return cipher.doFinal(digestInfo)
     }
     private fun adbPublicKey(k:RSAPublicKey):ByteArray{
         // Android RSAPublicKey wire structure: 2048-bit modulus in little endian + exponent.
