@@ -1,3 +1,12 @@
+## 1.2.1
+- Added a dedicated Home landing page and made Home the default destination.
+- Bottom navigation is now Home / Tests / Cell Info / Reports / Settings.
+- Added Home network hero card, Quick Start, Cell Info shortcut, Recent Tests and Scenario Tests with See All navigation.
+- Refined Cell Info cards to the v1.2 visual language.
+- Fixed REF competitor selected-state highlight to CellTracker blue.
+- Restored animated transitions between bottom navigation destinations and added selected-item animation.
+- Fixed Home text hierarchy and Network labels for narrow screens.
+
 ## 1.2.0
 - Major visual refresh for the Tests workspace based on the approved blue/white CellTracker concept.
 - Added a live network hero card with operator, RAT, SIM, RSRP, SINR and band.

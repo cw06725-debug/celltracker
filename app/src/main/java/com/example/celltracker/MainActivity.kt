@@ -173,7 +173,7 @@ class MainActivity : ComponentActivity() {
                 }
                 var showSettings by remember { mutableStateOf(false) } // legacy root destination
                 var settingsVisitId by remember { mutableIntStateOf(0) }
-                var mainTab by rememberSaveable { mutableStateOf("CELL") }
+                var mainTab by rememberSaveable { mutableStateOf("HOME") }
                 var detailPath by remember { mutableStateOf<String?>(null) }
                 var showPingTest by remember { mutableStateOf(false) }
                 var showCallSetup by remember { mutableStateOf(false) }
@@ -396,11 +396,11 @@ private fun WeChatBottomBar(
     modifier: Modifier = Modifier
 ) {
     val items = listOf(
-        Triple("TEST", "◉", "Tests"),
-        Triple("CELL", "▥", "Cell Info"),
-        Triple("MAP", "⌖", "Map"),
-        Triple("SETTINGS", "⚙", "Settings"),
-        Triple("REPORTS", "▤", "Reports")
+        Triple("HOME", "⌂", "Home"),
+        Triple("TEST", "△", "Tests"),
+        Triple("CELL", "◉", "Cell Info"),
+        Triple("REPORTS", "▤", "Reports"),
+        Triple("SETTINGS", "⚙", "Settings")
     )
     val selectedIndex = items.indexOfFirst { it.first == selected }.coerceAtLeast(0)
     var dragX by remember { mutableFloatStateOf(0f) }
@@ -443,6 +443,11 @@ private fun WeChatBottomBar(
             ) {
                 items.forEach { (key, icon, label) ->
                     val isSelected = selected == key
+                    val selectedScale by animateFloatAsState(
+                        targetValue = if (isSelected) 1.08f else 1f,
+                        animationSpec = tween(180),
+                        label = "bottomNavScale"
+                    )
                     Column(
                         modifier = Modifier
                             .weight(1f)
@@ -457,7 +462,7 @@ private fun WeChatBottomBar(
                         ) {
                             Text(
                                 icon,
-                                modifier = Modifier.padding(horizontal = 13.dp, vertical = 4.dp),
+                                modifier = Modifier.padding(horizontal = 13.dp, vertical = 4.dp).scale(selectedScale),
                                 style = MaterialTheme.typography.titleMedium,
                                 color = if (isSelected) MaterialTheme.colorScheme.primary else Color(0xFF94A3B8)
                             )
@@ -1405,14 +1410,13 @@ private fun MainScreen(
 
     Scaffold(
         topBar = {
-            if (mainTab != "TEST" && !((mainTab == "SETTINGS" && settingsSubpageVisible) || (mainTab == "REPORTS" && reportsSubpageVisible))) {
+            if (mainTab != "HOME" && mainTab != "TEST" && !((mainTab == "SETTINGS" && settingsSubpageVisible) || (mainTab == "REPORTS" && reportsSubpageVisible))) {
                 TopAppBar(
                     title = {
                         Text(
                             when (mainTab) {
                                 "TEST" -> "Tests"
-                                "MAP" -> "Map"
-                                "SETTINGS" -> "Setting"
+                                "SETTINGS" -> "Settings"
                                 "REPORTS" -> "Reports"
                                 else -> "Cell Info"
                             },
@@ -1430,11 +1434,11 @@ private fun MainScreen(
             AnimatedContent(
                 targetState = mainTab,
                 transitionSpec = {
-                    val order = listOf("TEST", "CELL", "MAP", "SETTINGS", "REPORTS")
+                    val order = listOf("HOME", "TEST", "CELL", "REPORTS", "SETTINGS")
                     val forward = order.indexOf(targetState) > order.indexOf(initialState)
                     val direction = if (forward) AnimatedContentTransitionScope.SlideDirection.Left else AnimatedContentTransitionScope.SlideDirection.Right
-                    (slideIntoContainer(direction, tween(220)) + fadeIn(tween(160)))
-                        .togetherWith(slideOutOfContainer(direction, tween(220)) + fadeOut(tween(140)))
+                    (slideIntoContainer(direction, tween(300)) + fadeIn(tween(220)))
+                        .togetherWith(slideOutOfContainer(direction, tween(300)) + fadeOut(tween(180)))
                 },
                 label = "mainTabs",
                 modifier = Modifier
@@ -1450,6 +1454,23 @@ private fun MainScreen(
                 } else Column(
                     modifier = Modifier.fillMaxSize()
                 ) mainContent@{
+            if (tab == "HOME") {
+                HomeScreenV121(
+                    state = state,
+                    selected = selected,
+                    onSeeAllTests = { onMainTabChange("TEST") },
+                    onCellInfo = { onMainTabChange("CELL") },
+                    onReports = { onMainTabChange("REPORTS") },
+                    onPingTest = onPingTest,
+                    onVideoLoading = onVideoLoading,
+                    onWhatsAppSend = onWhatsAppSend,
+                    onCallSetup = onCallSetup,
+                    onNetworkRecording = { if (state.isRecording) onStopRecording() else showTaskNameDialog = true },
+                    onBasementTest = onBasementTest
+                )
+                return@mainContent
+            }
+
             if (tab == "TEST") {
                 Column(
                     Modifier
@@ -1548,7 +1569,7 @@ private fun MainScreen(
                     settings = state.settings,
                     visitId = settingsVisitId,
                     onUpdate = onSettingsUpdate,
-                    onBack = { onMainTabChange("CELL") },
+                    onBack = { onMainTabChange("HOME") },
                     embedded = true,
                     onSubpageChanged = { settingsSubpageVisible = it }
                 )
@@ -3507,9 +3528,17 @@ private fun SettingSwitch(title: String, checked: Boolean, onChecked: (Boolean) 
 
 @Composable
 private fun InfoCard(title: String, content: @Composable ColumnScope.() -> Unit) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(22.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.20f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(title, style = MaterialTheme.typography.titleMedium); HorizontalDivider(); content()
+            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.16f))
+            content()
         }
     }
 }
@@ -4724,9 +4753,13 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
                 Text("Pair any REF through Android Wireless debugging. Pairing and connection ports are different; enter the values shown by the REF.",style=MaterialTheme.typography.bodySmall)
                 Text("REF device")
                 Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
-                    FilterChip(selected=refType=="Samsung",onClick={refType="Samsung"},label={Text("Samsung")})
-                    FilterChip(selected=refType=="vivo",onClick={refType="vivo"},label={Text("vivo")})
-                    FilterChip(selected=refType=="Custom",onClick={refType="Custom"},label={Text("Custom")})
+                    val refChipColors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = MaterialTheme.colorScheme.primary,
+                        selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                    )
+                    FilterChip(selected=refType=="Samsung",onClick={refType="Samsung"},label={Text("Samsung")},colors=refChipColors)
+                    FilterChip(selected=refType=="vivo",onClick={refType="vivo"},label={Text("vivo")},colors=refChipColors)
+                    FilterChip(selected=refType=="Custom",onClick={refType="Custom"},label={Text("Custom")},colors=refChipColors)
                 }
                 if(refType=="Custom") OutlinedTextField(customRefName,{customRefName=it},label={Text("Custom REF name")},singleLine=true,modifier=Modifier.fillMaxWidth())
                 Field("Connection",refTransport)
@@ -4957,7 +4990,7 @@ private fun ScenarioTestsV1(
             FilterChip(
                 selected = quickFilter == (if(label=="All") "All Tests" else label),
                 onClick = { quickFilter = if(label=="All") "All Tests" else label },
-                label = { Text(label, maxLines = 1) },
+                label = { Text(label, maxLines = 1, style = MaterialTheme.typography.labelSmall) },
                 modifier = Modifier.weight(1f),
                 shape = RoundedCornerShape(999.dp)
             )
@@ -5190,6 +5223,161 @@ private data class ScenarioStartConfigV1(
     val ref: String,
     val testItems: List<String>
 )
+
+@Composable
+private fun HomeScreenV121(
+    state: AppState,
+    selected: SimCellState?,
+    onSeeAllTests: () -> Unit,
+    onCellInfo: () -> Unit,
+    onReports: () -> Unit,
+    onPingTest: () -> Unit,
+    onVideoLoading: () -> Unit,
+    onWhatsAppSend: () -> Unit,
+    onCallSetup: () -> Unit,
+    onNetworkRecording: () -> Unit,
+    onBasementTest: () -> Unit
+) {
+    val c = selected?.servingCell
+    val operator = c?.operator?.takeIf { it.isNotBlank() && it != "--" } ?: "Waiting for network"
+    val rat = c?.displayRat?.takeIf { it.isNotBlank() && it != "--" } ?: "Network unavailable"
+    val sim = "SIM ${((selected?.simSlotIndex ?: 0) + 1)}"
+
+    Column(
+        modifier = Modifier.fillMaxSize()
+            .background(Brush.verticalGradient(listOf(MaterialTheme.colorScheme.primary.copy(alpha = 0.055f), MaterialTheme.colorScheme.background, MaterialTheme.colorScheme.background)))
+            .verticalScroll(rememberRetainedScrollState("main.home"))
+            .padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        Spacer(Modifier.height(12.dp))
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("CellTracker", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                Text("Stay connected. Test smarter.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Surface(shape = RoundedCornerShape(999.dp), color = if (state.isRecording) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.22f))) {
+                Text(if (state.isRecording) "● Recording" else "● Ready", modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp), style = MaterialTheme.typography.labelMedium, color = if (state.isRecording) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.SemiBold)
+            }
+        }
+
+        Card(onClick = onCellInfo, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(26.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary), elevation = CardDefaults.cardElevation(defaultElevation = 5.dp, pressedElevation = 1.dp)) {
+            Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(13.dp)) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    AppIconTileV1("⌁", MaterialTheme.colorScheme.onPrimary)
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(rat, color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.82f), style = MaterialTheme.typography.labelLarge)
+                        Text(operator, color = MaterialTheme.colorScheme.onPrimary, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, maxLines = 1)
+                        Text(sim, color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.78f), style = MaterialTheme.typography.bodySmall)
+                    }
+                    Text("›", color = MaterialTheme.colorScheme.onPrimary, style = MaterialTheme.typography.headlineMedium)
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    V12MetricChip("RSRP", c?.rsrp ?: "--", Modifier.weight(1f))
+                    V12MetricChip("SINR", c?.sinr ?: "--", Modifier.weight(1f))
+                    V12MetricChip("Band", c?.band ?: "--", Modifier.weight(1f))
+                }
+            }
+        }
+
+        HomeSectionHeaderV121("Quick Start", "Start a test instantly", "See All", onSeeAllTests)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            HomeQuickCardV121("TikTok", "Video Lag", "♪", Color(0xFF111111), listOf("com.zhiliaoapp.musically", "com.ss.android.ugc.trill"), Modifier.weight(1f), onSeeAllTests)
+            HomeQuickCardV121("YouTube", "Loading", "▶", Color(0xFFFF0033), listOf("com.google.android.youtube"), Modifier.weight(1f), onVideoLoading)
+            HomeQuickCardV121("WhatsApp", "Image Send", "☎", Color(0xFF25D366), listOf("com.whatsapp", "com.whatsapp.w4b"), Modifier.weight(1f), onWhatsAppSend)
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            HomeQuickCardV121("Ping", "Test", "◉", MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f), onClick = onPingTest)
+            HomeQuickCardV121("Call", "Test", "✆", Color(0xFF16A34A), modifier = Modifier.weight(1f), onClick = onCallSetup)
+            HomeQuickCardV121("Network", if (state.isRecording) "Stop" else "Recording", "●", Color(0xFF6D4AFF), modifier = Modifier.weight(1f), onClick = onNetworkRecording)
+        }
+
+        Card(onClick = onCellInfo, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.72f)), border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.12f))) {
+            Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                AppIconTileV1("⌁", MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Cell Info", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text("Serving cell, signal, band, CA / NR and neighbors", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Text("›", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.headlineSmall)
+            }
+        }
+
+        HomeSectionHeaderV121("Recent Tests", "Latest saved network recordings", "See All", onReports)
+        if (state.recordings.isEmpty()) {
+            Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f))) {
+                Text("No saved recordings yet", modifier = Modifier.padding(16.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        } else {
+            state.recordings.take(2).forEach { item ->
+                Card(onClick = onReports, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)), elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)) {
+                    Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        AppIconTileV1("▤", MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(item.name.ifBlank { "Network Recording" }, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                            Text(item.simSummary.ifBlank { "Saved recording" }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                        }
+                        Text("›", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.headlineSmall)
+                    }
+                }
+            }
+        }
+
+        HomeSectionHeaderV121("Scenario Tests", "Real-world network experience", "See All", onSeeAllTests)
+        Card(onClick = onBasementTest, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f))) {
+            Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                AppIconTileV1("▥", MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Basement Weak Coverage", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    Text("Test network performance in low signal areas", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Text("›", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.headlineSmall)
+            }
+        }
+        Card(onClick = onSeeAllTests, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f))) {
+            Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                AppIconTileV1("⌂", MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Long Stay", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    Text("School · Residential · Market · Custom", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Text("›", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.headlineSmall)
+            }
+        }
+        Spacer(Modifier.height(14.dp))
+    }
+}
+
+@Composable
+private fun HomeSectionHeaderV121(title: String, subtitle: String, action: String, onAction: () -> Unit) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        TextButton(onClick = onAction, contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)) {
+            Text("$action  ›", style = MaterialTheme.typography.labelMedium)
+        }
+    }
+}
+
+@Composable
+private fun HomeQuickCardV121(title: String, subtitle: String, symbol: String, iconColor: Color, appPackages: List<String> = emptyList(), modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Card(onClick = onClick, modifier = modifier.height(112.dp), shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)), elevation = CardDefaults.cardElevation(defaultElevation = 1.dp, pressedElevation = 0.dp)) {
+        Column(modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 11.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.SpaceBetween) {
+            if (appPackages.isNotEmpty()) InstalledAppIconV1(appPackages, symbol, iconColor) else AppIconTileV1(symbol, iconColor)
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(title, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                Text(subtitle, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+            }
+        }
+    }
+}
 
 @Composable
 private fun V12MetricChip(label: String, value: String, modifier: Modifier = Modifier) {
