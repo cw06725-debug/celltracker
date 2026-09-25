@@ -1378,6 +1378,7 @@ private fun MainScreen(
     var showTaskNameDialog by remember { mutableStateOf(false) }
     var settingsSubpageVisible by remember { mutableStateOf(false) }
     var reportsSubpageVisible by remember { mutableStateOf(false) }
+    var homeTikTokTool by remember { mutableStateOf<String?>(null) }
 
     val selected = state.sims.firstOrNull { it.subscriptionId == state.selectedSubscriptionId } ?: state.sims.firstOrNull()
     val context = LocalContext.current
@@ -1426,6 +1427,11 @@ private fun MainScreen(
                             fontWeight = FontWeight.SemiBold
                         )
                     },
+                    navigationIcon = {
+                        if (mainTab == "CELL") {
+                            TextButton(onClick = { onMainTabChange("HOME") }) { Text("‹ Back") }
+                        }
+                    },
                     actions = {
                         if (mainTab == "MAP" && state.isRecording) TextButton(onClick = { showMarkDialog = true }) { Text("Mark") }
                     }
@@ -1446,7 +1452,7 @@ private fun MainScreen(
                 label = "mainTabs",
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(bottom = if ((mainTab == "SETTINGS" && settingsSubpageVisible) || (mainTab == "REPORTS" && reportsSubpageVisible)) 0.dp else 73.dp)
+                    .padding(bottom = if (mainTab == "CELL" || homeTikTokTool != null || (mainTab == "SETTINGS" && settingsSubpageVisible) || (mainTab == "REPORTS" && reportsSubpageVisible)) 0.dp else 73.dp)
             ) { tab ->
                 if (tab == "MAP") {
                     LiveMapScreen(
@@ -1462,6 +1468,7 @@ private fun MainScreen(
                     state = state,
                     selected = selected,
                     onSeeAllTests = { onMainTabChange("TEST") },
+                    onTikTokLag = { homeTikTokTool = "LAG" },
                     onCellInfo = { onMainTabChange("CELL") },
                     onReports = { onMainTabChange("REPORTS") },
                     onPingTest = onPingTest,
@@ -1788,7 +1795,7 @@ private fun MainScreen(
                 }
             }
 
-            if (!((mainTab == "SETTINGS" && settingsSubpageVisible) || (mainTab == "REPORTS" && reportsSubpageVisible))) {
+            if (mainTab != "CELL" && homeTikTokTool == null && !((mainTab == "SETTINGS" && settingsSubpageVisible) || (mainTab == "REPORTS" && reportsSubpageVisible))) {
                 WeChatBottomBar(
                     selected = if (mainTab == "CELL") "HOME" else mainTab,
                     onSelect = onMainTabChange,
@@ -1797,6 +1804,11 @@ private fun MainScreen(
             }
         }
     }
+
+    TikTokQuickLaunchDialogV123(
+        tool = homeTikTokTool,
+        onDismiss = { homeTikTokTool = null }
+    )
 
     if (showMarkDialog) {
         MarkIssueDialog(
@@ -5218,6 +5230,183 @@ private fun ScenarioTestsV1(
     }
 }
 
+
+@Composable
+private fun TikTokQuickLaunchDialogV123(
+    tool: String?,
+    onDismiss: () -> Unit
+) {
+    if (tool == null) return
+    val context = LocalContext.current
+    var taskName by rememberSaveable(tool) { mutableStateOf("") }
+    var operator by rememberSaveable(tool) { mutableStateOf("") }
+    var operatorHint by remember(tool) { mutableStateOf("Detecting current data SIM…") }
+    var autoSwipe by rememberSaveable(tool) { mutableStateOf(true) }
+    var uploadType by rememberSaveable(tool) { mutableStateOf("Video") }
+    var screenRecord by rememberSaveable(tool) { mutableStateOf(true) }
+    var pendingTool by remember { mutableStateOf<String?>(null) }
+
+    val screenRecordLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val pending = pendingTool
+        val data = result.data
+        if (pending != null && result.resultCode == Activity.RESULT_OK && data != null) {
+            val recordName = "${taskName.trim()}_${operator.trim()}_${if (pending == "LAG") "TikTok_Video_Lag" else "TikTok_Upload"}"
+            ContextCompat.startForegroundService(context, Intent(context, TestScreenRecordingService::class.java).apply {
+                action = TestScreenRecordingService.START
+                putExtra(TestScreenRecordingService.CODE, result.resultCode)
+                putExtra(TestScreenRecordingService.DATA, data)
+                putExtra(TestScreenRecordingService.NAME, recordName)
+            })
+            val launch = context.packageManager.getLaunchIntentForPackage("com.zhiliaoapp.musically")
+                ?: context.packageManager.getLaunchIntentForPackage("com.ss.android.ugc.trill")
+            if (launch != null) {
+                context.startActivity(launch)
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    YouTubeLoadingAccessibilityService.requestTikTokTool(
+                        pending,
+                        autoSwipe,
+                        taskName.trim().ifBlank { "Session" },
+                        operator.trim(),
+                        uploadType
+                    )
+                }, 650)
+            }
+        } else if (pending != null) {
+            Toast.makeText(context, "Screen recording permission cancelled", Toast.LENGTH_SHORT).show()
+        }
+        pendingTool = null
+        onDismiss()
+    }
+
+    LaunchedEffect(tool) {
+        val detected = withContext(Dispatchers.IO) { detectCurrentDataOperatorV1(context) }
+        if (detected != null) {
+            operator = detected.displayName
+            operatorHint = "Auto detected · ${detected.simLabel}"
+        } else {
+            operatorHint = "Auto-detection failed · enter/select manually"
+        }
+    }
+
+    val accessibilityEnabled = isCellTrackerAccessibilityEnabledV1(context)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Column {
+                Text(if (tool == "LAG") "TikTok Video Lag" else "TikTok Upload", fontWeight = FontWeight.SemiBold)
+                Text("Test setup", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedTextField(
+                    value = taskName,
+                    onValueChange = { taskName = it },
+                    label = { Text("Task name") },
+                    placeholder = { Text("e.g. Hall Road / Round 1") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    value = operator,
+                    onValueChange = { operator = it },
+                    label = { Text("Operator") },
+                    supportingText = { Text(operatorHint) },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                listOf(listOf("Jazz", "Zong"), listOf("Ufone", "Telenor")).forEach { ops ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ops.forEach { op ->
+                            FilterChip(
+                                selected = operator.equals(op, true),
+                                onClick = { operator = op; operatorHint = "Selected manually" },
+                                label = { Text(op, maxLines = 1) },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                }
+                if (tool == "LAG") {
+                    Text("Swipe Mode", style = MaterialTheme.typography.titleSmall)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = !autoSwipe, onClick = { autoSwipe = false })
+                        Text("Manual")
+                        Spacer(Modifier.width(18.dp))
+                        RadioButton(selected = autoSwipe, onClick = { autoSwipe = true })
+                        Text("Auto")
+                    }
+                    Text(if (autoSwipe) "NEXT VIDEO records T0 first, then CellTracker performs one upward swipe." else "NEXT VIDEO records T0. Swipe TikTok manually immediately after.")
+                } else {
+                    Text("Upload Type", style = MaterialTheme.typography.titleSmall)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = uploadType == "Video", onClick = { uploadType = "Video" }); Text("Video")
+                        Spacer(Modifier.width(18.dp))
+                        RadioButton(selected = uploadType == "Photo", onClick = { uploadType = "Photo" }); Text("Photo")
+                    }
+                }
+                Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+                    Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Auto screen recording", fontWeight = FontWeight.SemiBold)
+                            Text("Starts with the test and stops at FINISH", style = MaterialTheme.typography.bodySmall)
+                        }
+                        Switch(checked = screenRecord, onCheckedChange = { screenRecord = it })
+                    }
+                }
+                Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), tonalElevation = 2.dp) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Accessibility", fontWeight = FontWeight.SemiBold)
+                                Text(if (accessibilityEnabled) "Enabled · automatic timing is ready" else "Required for automatic timing", style = MaterialTheme.typography.bodySmall)
+                            }
+                            Text(if (accessibilityEnabled) "READY" else "SET UP", color = if (accessibilityEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold)
+                        }
+                        OutlinedButton(
+                            onClick = { context.startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text(if (accessibilityEnabled) "ACCESSIBILITY SETTINGS" else "GRANT ACCESSIBILITY") }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = operator.isNotBlank(),
+                onClick = {
+                    if (!isCellTrackerAccessibilityEnabledV1(context)) {
+                        Toast.makeText(context, "Enable CellTracker Accessibility first", Toast.LENGTH_SHORT).show()
+                        context.startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    } else {
+                        val launch = context.packageManager.getLaunchIntentForPackage("com.zhiliaoapp.musically")
+                            ?: context.packageManager.getLaunchIntentForPackage("com.ss.android.ugc.trill")
+                        if (launch != null) {
+                            if (screenRecord) {
+                                pendingTool = tool
+                                val mgr = context.getSystemService(android.media.projection.MediaProjectionManager::class.java)
+                                screenRecordLauncher.launch(mgr.createScreenCaptureIntent())
+                            } else {
+                                context.startActivity(launch)
+                                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                                    YouTubeLoadingAccessibilityService.requestTikTokTool(tool, autoSwipe, taskName.trim().ifBlank { "Session" }, operator.trim(), uploadType)
+                                }, 650)
+                                onDismiss()
+                            }
+                        } else {
+                            Toast.makeText(context, "TikTok is not installed or not visible", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            ) { Text("START TEST") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
 private data class ScenarioStartConfigV1(
     val scenarioName: String,
     val location: String,
@@ -5232,6 +5421,7 @@ private fun HomeScreenV121(
     state: AppState,
     selected: SimCellState?,
     onSeeAllTests: () -> Unit,
+    onTikTokLag: () -> Unit,
     onCellInfo: () -> Unit,
     onReports: () -> Unit,
     onPingTest: () -> Unit,
@@ -5286,7 +5476,7 @@ private fun HomeScreenV121(
 
         HomeSectionHeaderV121("Quick Start", "Start a test instantly", "See All", onSeeAllTests)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            HomeQuickCardV121("TikTok", "Video Lag", "♪", Color(0xFF111111), listOf("com.zhiliaoapp.musically", "com.ss.android.ugc.trill"), Modifier.weight(1f), onSeeAllTests)
+            HomeQuickCardV121("TikTok", "Video Lag", "♪", Color(0xFF111111), listOf("com.zhiliaoapp.musically", "com.ss.android.ugc.trill"), Modifier.weight(1f), onTikTokLag)
             HomeQuickCardV121("YouTube", "Loading", "▶", Color(0xFFFF0033), listOf("com.google.android.youtube"), Modifier.weight(1f), onVideoLoading)
             HomeQuickCardV121("WhatsApp", "Image Send", "☎", Color(0xFF25D366), listOf("com.whatsapp", "com.whatsapp.w4b"), Modifier.weight(1f), onWhatsAppSend)
         }

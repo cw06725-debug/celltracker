@@ -1,3 +1,9 @@
+## 1.2.3
+- Home Quick Start now opens each test directly; TikTok Video Lag opens its setup immediately instead of routing through Tests.
+- Cell Info opened from the Home network card is now a true drill-down page: bottom navigation is hidden and a Back action returns to Home.
+- Bottom navigation is also hidden while the Home TikTok setup dialog is active, preventing the app shell from showing underneath the test flow.
+- Existing direct launch behavior for YouTube, WhatsApp, Ping, Call and Network Recording is preserved.
+
 ## 1.2.2
 - Home: the top blue live-network card is now the single Cell Info entry point and remains fully clickable.
 - Removed the duplicate light-blue Cell Info card below Quick Start.
