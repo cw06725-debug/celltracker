@@ -1498,63 +1498,9 @@ private fun MainScreen(
                         .verticalScroll(rememberRetainedScrollState("main.tests")),
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    Spacer(Modifier.height(10.dp))
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text("CellTracker", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-                            Text("Network testing workspace", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        Surface(
-                            shape = RoundedCornerShape(999.dp),
-                            color = if (state.isRecording) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surface,
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
-                        ) {
-                            Text(
-                                if (state.isRecording) "● Recording" else "● Ready",
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
-                                style = MaterialTheme.typography.labelMedium,
-                                color = if (state.isRecording) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        }
-                    }
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(26.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
-                    ) {
-                        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                Column(Modifier.weight(1f)) {
-                                    Text(
-                                        selected?.servingCell?.displayRat?.takeIf { it.isNotBlank() && it != "--" } ?: "Network",
-                                        color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.8f),
-                                        style = MaterialTheme.typography.labelLarge
-                                    )
-                                    Text(
-                                        selected?.servingCell?.operator?.takeIf { it.isNotBlank() && it != "--" } ?: "Waiting for network",
-                                        color = MaterialTheme.colorScheme.onPrimary,
-                                        style = MaterialTheme.typography.headlineSmall,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-                                Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.12f)) {
-                                    Text(
-                                        "SIM ${((selected?.simSlotIndex ?: 0) + 1)}",
-                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                                        color = MaterialTheme.colorScheme.onPrimary,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                }
-                            }
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                V12MetricChip("RSRP", selected?.servingCell?.rsrp ?: "--", Modifier.weight(1f))
-                                V12MetricChip("SINR", selected?.servingCell?.sinr ?: "--", Modifier.weight(1f))
-                                V12MetricChip("Band", selected?.servingCell?.band ?: "--", Modifier.weight(1f))
-                            }
-                        }
-                    }
+                    Spacer(Modifier.height(14.dp))
+                    Text("Tests", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                    Text("All testing tools and real-world scenarios", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     ScenarioTestsV1(
                         isRecording = state.isRecording,
                         onStartScenarioRecording = onStartRecording,

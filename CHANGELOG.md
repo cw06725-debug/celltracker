@@ -1,3 +1,9 @@
+## 1.2.4
+- Tests is now test-only: removed the duplicated live Cell Info / network status hero from the Tests page.
+- Tests now opens with a focused Tests heading followed directly by Quick Start filters, test tools and Scenario Tests.
+- Live Cell Info remains available from the clickable blue network card on Home only.
+- Existing test launch behavior and Home / Tests / Reports / Settings navigation are preserved.
+
 ## 1.2.3
 - Home Quick Start now opens each test directly; TikTok Video Lag opens its setup immediately instead of routing through Tests.
 - Cell Info opened from the Home network card is now a true drill-down page: bottom navigation is hidden and a Back action returns to Home.
