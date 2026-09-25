@@ -574,6 +574,7 @@ private fun ReportsHome(
     var basementReports by remember { mutableStateOf(emptyList<BasementReportRow>()) }
     var tikTokLagReports by remember { mutableStateOf(emptyList<TikTokReportRowV1>()) }
     var tikTokUploadReports by remember { mutableStateOf(emptyList<TikTokReportRowV1>()) }
+    var deleteYouTubePath by remember { mutableStateOf<String?>(null) }
     var category by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedPath by rememberSaveable { mutableStateOf<String?>(null) }
     var exportResult by remember { mutableStateOf<ExportResult?>(null) }
@@ -1066,8 +1067,31 @@ private fun ReportsHome(
                         modifier = Modifier.fillMaxWidth(),
                         enabled = !busy
                     ) { Text(if (busy) "PREPARING…" else "EXPORT / SHARE") }
+                    if (cat == "YOUTUBE") {
+                        OutlinedButton(
+                            onClick = { deleteYouTubePath = path },
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = !busy
+                        ) { Text("DELETE REPORT") }
+                    }
                 }
             }
+        }
+        deleteYouTubePath?.let { target ->
+            AlertDialog(
+                onDismissRequest = { deleteYouTubePath = null },
+                title = { Text("Delete YouTube report?") },
+                text = { Text("This permanently deletes the saved YouTube Video Loading report. This action cannot be undone.") },
+                confirmButton = {
+                    Button(onClick = {
+                        VideoLoadingRepository(context).delete(target)
+                        deleteYouTubePath = null
+                        selectedPath = null
+                        reloadReports()
+                    }) { Text("DELETE") }
+                },
+                dismissButton = { TextButton(onClick = { deleteYouTubePath = null }) { Text("Cancel") } }
+            )
         }
         exportResult?.let { ExportSuccessDialog(it) { exportResult = null } }
         return
@@ -1581,7 +1605,9 @@ private fun MainScreen(
                     modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberRetainedScrollState("main.sim.${page}")),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-            InfoCard("Network") {
+            CellInfoSummaryCardV128(c = c, simLabel = "SIM ${((pageSelected?.simSlotIndex ?: 0) + 1)}")
+
+            CellInfoCardV128("Network", "⌁") {
                 Field("Operator", c.operator)
                 Field("RAT", c.displayRat.ifBlank { c.rat })
                 fun plmn(mcc: String, mnc: String): String = if (mcc == "--" || mnc == "--") "--" else "$mcc / $mnc"
@@ -1599,7 +1625,7 @@ private fun MainScreen(
                 Field("Roaming", c.roaming)
                 Field("Registered", if (c.registered) "Yes" else "No")
             }
-            InfoCard("Serving Cell") {
+            CellInfoCardV128("Serving Cell", "◎") {
                 Field("Serving Cell PLMN", if (c.mcc == "--" || c.mnc == "--") "--" else "${c.mcc} / ${c.mnc}")
                 Field("TAC", c.tac)
                 Field(if (c.rat == "NR") "NCI" else "Cell ID", c.cellId)
@@ -1611,7 +1637,7 @@ private fun MainScreen(
             }
             val nrInfo = pageSelected?.nrConnection ?: NrConnectionData()
             if (nrInfo.state != "NOT_ACTIVE" || c.displayRat.contains("5G", ignoreCase = true)) {
-                InfoCard("NR / EN-DC Details") {
+                CellInfoCardV128("NR / EN-DC Details", "5G") {
                     Field("NR State", when (nrInfo.state) {
                         "NSA_CONNECTED" -> "NSA Connected"
                         "SA_CONNECTED" -> "SA Connected"
@@ -1636,7 +1662,13 @@ private fun MainScreen(
                 }
             }
             if (pageSelected?.nrObservations?.isNotEmpty() == true) {
-                Card(modifier = Modifier.fillMaxWidth()) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(22.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                ) {
                     Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
                         Row(
                             modifier = Modifier.fillMaxWidth().clickable { nrDebugExpanded = !nrDebugExpanded },
@@ -1677,7 +1709,7 @@ private fun MainScreen(
                     }
                 }
             }
-            InfoCard("Signal") {
+            CellInfoCardV128("Signal", "▥") {
                 Field(if (c.rat == "NR") "SS-RSRP" else "RSRP", valueWithUnit(c.rsrp, "dBm"))
                 Field(if (c.rat == "NR") "SS-RSRQ" else "RSRQ", valueWithUnit(c.rsrq, "dB"))
                 Field(if (c.rat == "NR") "SS-SINR" else "SINR", valueWithUnit(c.sinr, "dB"))
@@ -1692,7 +1724,13 @@ private fun MainScreen(
                 SignalTrendSection(c, state.signalTrendBySubscription[c.subscriptionId].orEmpty())
             }
 
-            Card(modifier = Modifier.fillMaxWidth()) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(22.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)),
+                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+            ) {
                 Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth().clickable { neighborsExpanded = !neighborsExpanded },
@@ -1727,7 +1765,7 @@ private fun MainScreen(
             }
 
             val l = state.location
-            InfoCard("Location") {
+            CellInfoCardV128("Location", "⌖") {
                 Field("Latitude", l.latitude); Field("Longitude", l.longitude); Field("Altitude", l.altitude)
                 Field("Accuracy", l.accuracy); Field("Speed", l.speedKmh); Field("Bearing", l.bearing)
             }
@@ -3488,6 +3526,109 @@ private fun SettingSwitch(title: String, checked: Boolean, onChecked: (Boolean) 
 }
 
 @Composable
+private fun CellInfoSummaryCardV128(c: CellData, simLabel: String) {
+    val operator = c.operator.takeIf { it.isNotBlank() && it != "--" } ?: "Waiting for network"
+    val rat = c.displayRat.takeIf { it.isNotBlank() && it != "--" }
+        ?: c.rat.takeIf { it.isNotBlank() && it != "--" }
+        ?: "Network unavailable"
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(26.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary),
+        elevation = CardDefaults.cardElevation(defaultElevation = 5.dp)
+    ) {
+        Column(
+            Modifier.padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(13.dp)
+        ) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                AppIconTileV1("⌁", MaterialTheme.colorScheme.onPrimary)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        rat,
+                        color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.78f),
+                        style = MaterialTheme.typography.labelLarge
+                    )
+                    Text(
+                        operator,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1
+                    )
+                    Text(
+                        simLabel,
+                        color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.76f),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.12f)
+                ) {
+                    Text(
+                        if (c.registered) "● Connected" else "● Not registered",
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                V12MetricChip("RSRP", c.rsrp, Modifier.weight(1f))
+                V12MetricChip("SINR", c.sinr, Modifier.weight(1f))
+                V12MetricChip("Band", c.band, Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+@Composable
+private fun CellInfoCardV128(
+    title: String,
+    symbol: String,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(22.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(9.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
+                ) {
+                    Text(
+                        symbol,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                        color = MaterialTheme.colorScheme.primary,
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f))
+            content()
+        }
+    }
+}
+
+@Composable
 private fun InfoCard(title: String, content: @Composable ColumnScope.() -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -3506,8 +3647,24 @@ private fun InfoCard(title: String, content: @Composable ColumnScope.() -> Unit)
 
 @Composable
 private fun Field(name: String, value: String) {
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(name, style = MaterialTheme.typography.bodyMedium); Text(value, style = MaterialTheme.typography.bodyMedium)
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            name,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            value,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 2
+        )
     }
 }
 

@@ -1,3 +1,10 @@
+## 1.2.8
+- Home Quick Start keeps direct-launch behavior: each card opens its own setup/tool directly; See All is the only path that opens Tests.
+- Cell Info detail UI is unified with the Home network hero style using rounded blue-accent cards for network, serving cell, signal, neighbors and location.
+- YouTube Video Loading report detail now exposes a direct DELETE REPORT action.
+- MFT report discovery is more robust: scans recent date folders instead of only today, supports .xls/.xlsx, refreshes the ADB session and retries once when the first scan returns empty.
+- MFT pull still verifies the local copy before optional source cleanup.
+
 ## 1.2.7
 - Fixed Kotlin compile error in Device Logs / ADB Tools caused by the shared REF/Connection FilterChip color definition being scoped inside the first Row.
 - REF device and Connection selected states continue to use the same CellTracker blue highlight.
