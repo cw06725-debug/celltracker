@@ -1,3 +1,8 @@
+## 1.2.7
+- Fixed Kotlin compile error in Device Logs / ADB Tools caused by the shared REF/Connection FilterChip color definition being scoped inside the first Row.
+- REF device and Connection selected states continue to use the same CellTracker blue highlight.
+- Keeps the USB ADB handshake fixes introduced in v1.2.6.
+
 ## 1.2.6
 - Fixed USB ADB handshake compatibility with modern Android adbd: zero/optional packet checksums are now accepted while non-zero legacy checksums are still validated.
 - Fixed ADB RSA authentication signing to use the SHA-1 DigestInfo + PKCS#1 v1.5 format expected by adbd instead of the previous raw RSA signature path.

@@ -4713,11 +4713,11 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
             GlassSection("3 · Samsung / vivo REF Wireless ADB") {
                 Text("Pair any REF through Android Wireless debugging. Pairing and connection ports are different; enter the values shown by the REF.",style=MaterialTheme.typography.bodySmall)
                 Text("REF device")
+                val refChipColors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = MaterialTheme.colorScheme.primary,
+                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                )
                 Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
-                    val refChipColors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = MaterialTheme.colorScheme.primary,
-                        selectedLabelColor = MaterialTheme.colorScheme.onPrimary
-                    )
                     FilterChip(selected=refType=="Samsung",onClick={refType="Samsung"},label={Text("Samsung")},colors=refChipColors)
                     FilterChip(selected=refType=="vivo",onClick={refType="vivo"},label={Text("vivo")},colors=refChipColors)
                     FilterChip(selected=refType=="Custom",onClick={refType="Custom"},label={Text("Custom")},colors=refChipColors)
