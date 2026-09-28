@@ -44,6 +44,27 @@ class AdbSyncPuller(private val context:Context){
    out.toString(Charsets.UTF_8.name()).trim().lineSequence().firstOrNull()?.takeIf{it.startsWith("/")}
   } catch(_:Throwable){ null }
  }
+ data class TreeStats(val files:Long,val bytes:Long)
+ fun scanTreeStats(root:String):TreeStats {
+  data class Node(val remote:String)
+  val q=ArrayDeque<Node>(); q.add(Node(root.trimEnd('/')))
+  val visited=HashSet<String>()
+  var files=0L; var bytes=0L
+  while(q.isNotEmpty()){
+   val node=q.removeFirst(); if(!visited.add(node.remote)) continue
+   val entries=try{list(node.remote)}catch(_:Throwable){continue}
+   for(entry in entries){
+    val remote="${node.remote}/${entry.name}"
+    when{
+     entry.isDir -> q.add(Node(remote))
+     entry.isFile -> { files++; bytes += entry.size.coerceAtLeast(0L) }
+     entry.isLink -> resolveLink(remote)?.let{q.add(Node(it))}
+    }
+   }
+  }
+  return TreeStats(files,bytes)
+ }
+
  fun pullTree(
   root: String,
   sessionDir: String,

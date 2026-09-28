@@ -3626,39 +3626,28 @@ private fun SettingSwitch(title: String, checked: Boolean, onChecked: (Boolean) 
 }
 
 @Composable
-private fun OperatorIconTileV1(contentColor: Color) {
+private fun OperatorIconTileV1(operator: String, contentColor: Color) {
+    val logo = when {
+        operator.contains("jazz", true) || operator.contains("mobilink", true) -> R.drawable.operator_jazz
+        operator.contains("zong", true) || operator.contains("cmpak", true) -> R.drawable.operator_zong
+        else -> null
+    }
     Surface(
-        modifier = Modifier.size(44.dp),
+        modifier = Modifier.size(48.dp),
         shape = RoundedCornerShape(14.dp),
-        color = contentColor.copy(alpha = 0.12f)
+        color = if (logo != null) Color.White else contentColor.copy(alpha = 0.12f)
     ) {
-        Canvas(Modifier.padding(10.dp)) {
-            val stroke = Stroke(width = 2.2.dp.toPx(), cap = StrokeCap.Round)
-            val cx = size.width / 2f
-            val top = size.height * 0.28f
-            val bottom = size.height * 0.82f
-            drawLine(contentColor, Offset(cx, top), Offset(cx, bottom), strokeWidth = stroke.width, cap = StrokeCap.Round)
-            drawLine(contentColor, Offset(cx, bottom), Offset(size.width * 0.32f, size.height * 0.96f), strokeWidth = stroke.width, cap = StrokeCap.Round)
-            drawLine(contentColor, Offset(cx, bottom), Offset(size.width * 0.68f, size.height * 0.96f), strokeWidth = stroke.width, cap = StrokeCap.Round)
-            drawCircle(contentColor, radius = 2.5.dp.toPx(), center = Offset(cx, top))
-            drawArc(
-                color = contentColor,
-                startAngle = 215f,
-                sweepAngle = 110f,
-                useCenter = false,
-                topLeft = Offset(size.width * 0.25f, size.height * 0.05f),
-                size = Size(size.width * 0.50f, size.height * 0.46f),
-                style = stroke
+        if (logo != null) {
+            Image(
+                painter = painterResource(logo),
+                contentDescription = "$operator logo",
+                modifier = Modifier.fillMaxSize().padding(5.dp),
+                contentScale = ContentScale.Fit
             )
-            drawArc(
-                color = contentColor.copy(alpha = 0.82f),
-                startAngle = 215f,
-                sweepAngle = 110f,
-                useCenter = false,
-                topLeft = Offset(size.width * 0.08f, -size.height * 0.08f),
-                size = Size(size.width * 0.84f, size.height * 0.72f),
-                style = stroke
-            )
+        } else {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("SIM", color = contentColor, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+            }
         }
     }
 }
@@ -3680,7 +3669,7 @@ private fun CellInfoSummaryCardV128(c: CellData, simLabel: String) {
             verticalArrangement = Arrangement.spacedBy(13.dp)
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                OperatorIconTileV1(MaterialTheme.colorScheme.onPrimary)
+                OperatorIconTileV1(operator, MaterialTheme.colorScheme.onPrimary)
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text(
@@ -4968,7 +4957,29 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
                     if(adb.exportFiles>0) Field("Pulled","${adb.exportFiles}")
                     Field("Skipped","${adb.exportSkipped}")
                     if(adb.exportRunning && adb.message.startsWith("Pulling ")) Field("Current",adb.message.removePrefix("Pulling "))
-                    if(adb.exportRunning) LinearProgressIndicator(modifier=Modifier.fillMaxWidth())
+                    if(adb.exportRunning) {
+                        val progress = if(adb.exportTotalBytes > 0) (adb.exportBytes.toFloat() / adb.exportTotalBytes.toFloat()).coerceIn(0f,1f) else 0f
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(14.dp),
+                            color = Color(0xFF222222)
+                        ) {
+                            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(adb.exportPhase.ifBlank { "Pulling logs…" }, color = Color.White, fontWeight = FontWeight.SemiBold)
+                                        val counter = if(adb.exportFound > 0) "${adb.exportFiles}/${adb.exportFound} files" else "Preparing…"
+                                        Text(counter, color = Color.White.copy(alpha = .72f), style = MaterialTheme.typography.bodySmall)
+                                    }
+                                    Text(if(adb.exportTotalBytes > 0) "${(progress*100).toInt()}%" else "…", color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                    Spacer(Modifier.width(12.dp))
+                                    TextButton(onClick={CellTrackerAdbEngine.cancelExport()}) { Text("Stop", color = Color.White) }
+                                }
+                                if(adb.exportTotalBytes > 0) LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
+                                else LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                            }
+                        }
+                    }
                     if(adb.exportBytes>0){
                         Field("Transferred",String.format(java.util.Locale.US,"%.1f MB",adb.exportBytes/1048576.0))
                         val speedSeconds=(if(adb.exportPullMs>0) adb.exportPullMs else (System.currentTimeMillis()-adb.exportStartedMs)).coerceAtLeast(100L)/1000.0
@@ -4977,7 +4988,6 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
                     if(adb.exportSymlinks>0) Field("Symlinks","${adb.exportSymlinks}")
                     if(adb.exportListFailed>0) Field("LIST failed","${adb.exportListFailed}")
                     if(adb.exportDeleted>0 || adb.exportDeleteFailed>0) Field("Source cleanup","Deleted ${adb.exportDeleted} · Failed ${adb.exportDeleteFailed}")
-                    if(adb.exportRunning) OutlinedButton(onClick={CellTrackerAdbEngine.cancelExport()},modifier=Modifier.fillMaxWidth()){Text("CANCEL EXPORT")}
                     if(adb.exportPullMs>0) Field("Pull time",String.format(java.util.Locale.US,"%02d:%02d",(adb.exportPullMs/1000)/60,(adb.exportPullMs/1000)%60))
                     if(adb.exportZipMs>0) Field("ZIP time",String.format(java.util.Locale.US,"%02d:%02d",(adb.exportZipMs/1000)/60,(adb.exportZipMs/1000)%60))
                     if(adb.exportStartedMs>0){
@@ -5787,7 +5797,7 @@ private fun HomeScreenV121(
         Card(onClick = onCellInfo, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(26.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary), elevation = CardDefaults.cardElevation(defaultElevation = 5.dp, pressedElevation = 1.dp)) {
             Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(13.dp)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    OperatorIconTileV1(MaterialTheme.colorScheme.onPrimary)
+                    OperatorIconTileV1(operator, MaterialTheme.colorScheme.onPrimary)
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
                         Text(rat, color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.82f), style = MaterialTheme.typography.labelLarge)

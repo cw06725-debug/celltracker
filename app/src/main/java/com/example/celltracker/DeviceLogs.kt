@@ -488,8 +488,12 @@ object CellTrackerAdbEngine {
         ensureLocalReady(context,"DUT log pull")
         val source=path.trim().ifBlank{"/data/debuglogger"};val started=System.currentTimeMillis();val stamp=SimpleDateFormat("yyyyMMdd_HHmmss",Locale.US).format(Date())
         val safe=logName.trim().replace(Regex("[^A-Za-z0-9._-]+"),"_").trim('_').ifBlank{"DUT_debuglogger"};val session="${safe}_$stamp";val folderPath="Download/CellTracker/Logs/DUT/$session/"
-        AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=true,exportPhase="Starting ADB Sync pull…",exportBytes=0,exportFiles=0,exportFound=0,exportSkipped=0,exportStartedMs=started,exportPullMs=0,exportTotalMs=0,exportZipMs=0,exportPullBytes=0,exportDeleted=0,exportDeleteFailed=0,exportSymlinks=0,exportListFailed=0,exportPath="",exportResult="",exportError="")
-        exportJob=scope.launch{try{val puller=AdbSyncPuller(context);val result=puller.pullTree(source,session){pr->AdbToolStore.state.value=AdbToolStore.state.value.copy(exportPhase=pr.phase,exportBytes=pr.bytesDone,exportFiles=pr.filesDone,exportFound=pr.found,exportSkipped=pr.skipped,message="Pulling ${pr.current}")}
+        AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=true,exportPhase="Starting ADB Sync pull…",exportBytes=0,exportTotalBytes=0,exportFiles=0,exportFound=0,exportSkipped=0,exportStartedMs=started,exportPullMs=0,exportTotalMs=0,exportZipMs=0,exportPullBytes=0,exportDeleted=0,exportDeleteFailed=0,exportSymlinks=0,exportListFailed=0,exportPath="",exportResult="",exportError="")
+        exportJob=scope.launch{try{val puller=AdbSyncPuller(context)
+            AdbToolStore.state.value=AdbToolStore.state.value.copy(exportPhase="Scanning files…",message="Calculating total log size")
+            val stats=puller.scanTreeStats(source)
+            AdbToolStore.state.value=AdbToolStore.state.value.copy(exportTotalBytes=stats.bytes,exportFound=stats.files,exportPhase="Pulling logs…",message="Ready to pull ${stats.files} files")
+            val result=puller.pullTree(source,session){pr->AdbToolStore.state.value=AdbToolStore.state.value.copy(exportPhase=pr.phase,exportBytes=pr.bytesDone,exportFiles=pr.filesDone,exportFound=if(stats.files>0)stats.files else pr.found,exportSkipped=pr.skipped,message="Pulling ${pr.current}")}
             check(result.pulled>0){"No files were pulled from $source"}
             val pullDone=System.currentTimeMillis();val pullMs=pullDone-started;var finalPath=folderPath;var zipMs=0L;var deleted=0L;var deleteFailed=0L
             if(compress){

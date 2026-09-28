@@ -1,3 +1,9 @@
+# CellTracker v1.2.12
+
+- Home operator card now shows real Jazz/Zong operator logos when matched, with fallback for unknown operators.
+- DUT log export now pre-scans total file bytes and shows a real-time percentage progress panel with transferred progress and Stop action.
+- Version bumped to 1.2.12 (189).
+
 # v1.2.11
 
 - Replaced the lightning-like Home network hero symbol with a dedicated cellular operator / tower icon.
