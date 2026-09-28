@@ -1,3 +1,8 @@
+# v1.2.11
+
+- Replaced the lightning-like Home network hero symbol with a dedicated cellular operator / tower icon.
+- Made the MFT Report Browser section more compact: narrower centered card and non-stretched refresh action.
+
 # v1.2.10
 
 - Unified MFT Report Browser source-device selector styling. `Local DUT` / `USB REF` now use the same clear filled selected state as the REF device / connection chips.

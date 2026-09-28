@@ -58,6 +58,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
@@ -480,9 +483,13 @@ private fun WeChatBottomBar(
 }
 
 @Composable
-private fun GlassSection(title: String, content: @Composable ColumnScope.() -> Unit) {
+private fun GlassSection(
+    title: String,
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit
+) {
     Surface(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(18.dp),
         color = MaterialTheme.colorScheme.surface,
         tonalElevation = 1.dp,
@@ -3619,6 +3626,44 @@ private fun SettingSwitch(title: String, checked: Boolean, onChecked: (Boolean) 
 }
 
 @Composable
+private fun OperatorIconTileV1(contentColor: Color) {
+    Surface(
+        modifier = Modifier.size(44.dp),
+        shape = RoundedCornerShape(14.dp),
+        color = contentColor.copy(alpha = 0.12f)
+    ) {
+        Canvas(Modifier.padding(10.dp)) {
+            val stroke = Stroke(width = 2.2.dp.toPx(), cap = StrokeCap.Round)
+            val cx = size.width / 2f
+            val top = size.height * 0.28f
+            val bottom = size.height * 0.82f
+            drawLine(contentColor, Offset(cx, top), Offset(cx, bottom), strokeWidth = stroke.width, cap = StrokeCap.Round)
+            drawLine(contentColor, Offset(cx, bottom), Offset(size.width * 0.32f, size.height * 0.96f), strokeWidth = stroke.width, cap = StrokeCap.Round)
+            drawLine(contentColor, Offset(cx, bottom), Offset(size.width * 0.68f, size.height * 0.96f), strokeWidth = stroke.width, cap = StrokeCap.Round)
+            drawCircle(contentColor, radius = 2.5.dp.toPx(), center = Offset(cx, top))
+            drawArc(
+                color = contentColor,
+                startAngle = 215f,
+                sweepAngle = 110f,
+                useCenter = false,
+                topLeft = Offset(size.width * 0.25f, size.height * 0.05f),
+                size = Size(size.width * 0.50f, size.height * 0.46f),
+                style = stroke
+            )
+            drawArc(
+                color = contentColor.copy(alpha = 0.82f),
+                startAngle = 215f,
+                sweepAngle = 110f,
+                useCenter = false,
+                topLeft = Offset(size.width * 0.08f, -size.height * 0.08f),
+                size = Size(size.width * 0.84f, size.height * 0.72f),
+                style = stroke
+            )
+        }
+    }
+}
+
+@Composable
 private fun CellInfoSummaryCardV128(c: CellData, simLabel: String) {
     val operator = c.operator.takeIf { it.isNotBlank() && it != "--" } ?: "Waiting for network"
     val rat = c.displayRat.takeIf { it.isNotBlank() && it != "--" }
@@ -3635,7 +3680,7 @@ private fun CellInfoSummaryCardV128(c: CellData, simLabel: String) {
             verticalArrangement = Arrangement.spacedBy(13.dp)
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                AppIconTileV1("⌁", MaterialTheme.colorScheme.onPrimary)
+                OperatorIconTileV1(MaterialTheme.colorScheme.onPrimary)
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text(
@@ -4945,7 +4990,10 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
                     if(adb.exportPath.isNotBlank()) Field("Saved to",adb.exportPath)
                 }
             }
-            GlassSection("2 · MFT Report Browser") {
+            GlassSection(
+                "2 · MFT Report Browser",
+                modifier = Modifier.fillMaxWidth(0.94f).align(Alignment.CenterHorizontally)
+            ) {
                 Text("Browse the real MFT report folder first, then pull the exact file you want. Local DUT keeps the existing self-ADB path; USB REF lets a controller phone browse and pull the same MFT path over OTG.",style=MaterialTheme.typography.bodySmall)
                 Field("Remote folder","/sdcard/Android/data/com.transsion.mft/files/Reports")
                 Text("Source device",style=MaterialTheme.typography.labelLarge,fontWeight=FontWeight.SemiBold)
@@ -4989,7 +5037,7 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
                 OutlinedButton(
                     enabled=!busy && !adb.mftRunning,
                     onClick={scope.launch{busy=true;val r=CellTrackerAdbEngine.refreshMftFiles(context,mftTarget=="USB REF");if(r.isFailure)Toast.makeText(context,r.exceptionOrNull()?.message?:"MFT refresh failed",Toast.LENGTH_LONG).show();busy=false}},
-                    modifier=Modifier.fillMaxWidth()
+                    modifier=Modifier.align(Alignment.Start)
                 ){Text("REFRESH MFT FILES")}
                 if(adb.mftFiles.isEmpty()){
                     Text("No file list loaded yet. Refresh to inspect the remote folder.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
@@ -5739,7 +5787,7 @@ private fun HomeScreenV121(
         Card(onClick = onCellInfo, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(26.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary), elevation = CardDefaults.cardElevation(defaultElevation = 5.dp, pressedElevation = 1.dp)) {
             Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(13.dp)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    AppIconTileV1("⌁", MaterialTheme.colorScheme.onPrimary)
+                    OperatorIconTileV1(MaterialTheme.colorScheme.onPrimary)
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
                         Text(rat, color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.82f), style = MaterialTheme.typography.labelLarge)
