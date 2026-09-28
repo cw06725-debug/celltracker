@@ -3630,6 +3630,8 @@ private fun OperatorIconTileV1(operator: String, contentColor: Color) {
     val logo = when {
         operator.contains("jazz", true) || operator.contains("mobilink", true) -> R.drawable.operator_jazz
         operator.contains("zong", true) || operator.contains("cmpak", true) -> R.drawable.operator_zong
+        operator.contains("ufone", true) || operator.contains("ptml", true) -> R.drawable.operator_ufone
+        operator.contains("telenor", true) -> R.drawable.operator_telenor
         else -> null
     }
     Surface(
@@ -5004,8 +5006,23 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
                 "2 · MFT Report Browser",
                 modifier = Modifier.fillMaxWidth(0.94f).align(Alignment.CenterHorizontally)
             ) {
-                Text("Browse the real MFT report folder first, then pull the exact file you want. Local DUT keeps the existing self-ADB path; USB REF lets a controller phone browse and pull the same MFT path over OTG.",style=MaterialTheme.typography.bodySmall)
-                Field("Remote folder","/sdcard/Android/data/com.transsion.mft/files/Reports")
+                Text("Browse the MFT report folder and pull the exact report you need.", style = MaterialTheme.typography.bodySmall)
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.14f))
+                ) {
+                    Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("Remote folder", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            "/sdcard/Android/data/com.transsion.mft/files/Reports",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 2
+                        )
+                    }
+                }
                 Text("Source device",style=MaterialTheme.typography.labelLarge,fontWeight=FontWeight.SemiBold)
                 val sourceChipColors = FilterChipDefaults.filterChipColors(
                     selectedContainerColor = MaterialTheme.colorScheme.primary,

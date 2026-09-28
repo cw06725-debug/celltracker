@@ -1,3 +1,8 @@
+## 1.2.13
+- Add Ufone and Telenor operator logo assets and mapping on the Home network card.
+- Make the MFT Report Browser header area compact by replacing the long remote-folder row with a small info card.
+- Keep the existing real-time DUT log pull progress UI from v1.2.12.
+
 # CellTracker v1.2.12
 
 - Home operator card now shows real Jazz/Zong operator logos when matched, with fallback for unknown operators.
