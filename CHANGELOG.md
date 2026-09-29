@@ -1,3 +1,10 @@
+# v1.2.24
+
+- Replace test screen recording MediaRecorder path with MediaCodec + MediaMuxer.
+- Prefer AOSP/Google software AVC encoder to avoid OEM vendor encoders that silently generate 3 KB / 0x0 MP4 files.
+- Use a conservative 540p-class / 20 fps profile for cross-device compatibility and report calibration.
+- Keep output validation before publishing the recording to Downloads.
+
 # v1.2.23
 - Screen recording now writes to an app-owned temporary MP4 first, validates duration/resolution, then publishes to Downloads.
 - Reduced capture size to a conservative 720p-class profile for OEM encoder compatibility.

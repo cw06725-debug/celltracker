@@ -9,8 +9,12 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
+import android.media.MediaCodec
+import android.media.MediaCodecInfo
+import android.media.MediaCodecList
+import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
-import android.media.MediaRecorder
+import android.media.MediaMuxer
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
@@ -20,6 +24,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.provider.MediaStore
 import android.util.DisplayMetrics
+import android.view.Surface
 import android.view.WindowManager
 import androidx.core.app.NotificationCompat
 import java.io.File
@@ -28,10 +33,11 @@ import kotlin.math.roundToInt
 
 class TestScreenRecordingService : Service() {
     private var projection: MediaProjection? = null
-    private var recorder: MediaRecorder? = null
+    private var codecRecorder: CodecRecorder? = null
     private var virtualDisplay: VirtualDisplay? = null
     private var tempFile: File? = null
     private var recorderStarted = false
+    @Volatile private var stoppingRecording = false
 
     override fun onCreate() {
         super.onCreate()
@@ -74,9 +80,6 @@ class TestScreenRecordingService : Service() {
                 .format(java.util.Date(now)) + ".mp4"
 
         try {
-            // Record to a real app-owned file first. A few OEM MediaRecorder implementations
-            // silently write only a ~3 KB MP4 header when the output target is a MediaStore fd.
-            // Publishing to Downloads happens only after stop() and validation succeed.
             val tmpDir = File(getExternalFilesDir(null), "screen_recording_tmp").apply { mkdirs() }
             tempFile = File(tmpDir, name).also { if (it.exists()) it.delete() }
 
@@ -84,27 +87,6 @@ class TestScreenRecordingService : Service() {
             @Suppress("DEPRECATION")
             (getSystemService(WINDOW_SERVICE) as WindowManager).defaultDisplay.getRealMetrics(metrics)
             val (width, height) = compatibleCaptureSize(metrics.widthPixels, metrics.heightPixels)
-
-            recorder = if (Build.VERSION.SDK_INT >= 31) {
-                MediaRecorder(this)
-            } else {
-                @Suppress("DEPRECATION") MediaRecorder()
-            }
-            recorder!!.apply {
-                setVideoSource(MediaRecorder.VideoSource.SURFACE)
-                setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-                setVideoEncoder(MediaRecorder.VideoEncoder.H264)
-                setVideoSize(width, height)
-                setVideoFrameRate(30)
-                val pixels = width.toLong() * height.toLong()
-                setVideoEncodingBitRate(if (pixels >= 700_000L) 3_500_000 else 2_500_000)
-                setOutputFile(tempFile!!.absolutePath)
-                setOnErrorListener { _, what, extra ->
-                    lastError = "MediaRecorder error ($what/$extra)"
-                    Handler(Looper.getMainLooper()).post { stopRecording() }
-                }
-                prepare()
-            }
 
             val notification = NotificationCompat.Builder(this, CH)
                 .setSmallIcon(android.R.drawable.presence_video_online)
@@ -126,18 +108,23 @@ class TestScreenRecordingService : Service() {
                 }
             }, Handler(mainLooper))
 
+            // MediaCodec + MediaMuxer is used instead of MediaRecorder. Some OEM builds accept
+            // MediaRecorder.start() but never deliver projection frames, leaving a ~3 KB MP4.
+            // The lower-level surface encoder is more predictable and lets us verify actual output.
+            codecRecorder = createCodecRecorder(tempFile!!, width, height)
+            codecRecorder!!.start()
+
             virtualDisplay = projection?.createVirtualDisplay(
                 "CellTrackerTestRecording",
                 width,
                 height,
                 metrics.densityDpi,
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                recorder!!.surface,
+                codecRecorder!!.inputSurface,
                 null,
                 null
             ) ?: error("Unable to create screen capture display")
 
-            recorder!!.start()
             recorderStarted = true
             isRecording = true
             currentName = name
@@ -150,24 +137,46 @@ class TestScreenRecordingService : Service() {
         }
     }
 
+    private fun createCodecRecorder(file: File, width: Int, height: Int): CodecRecorder {
+        // Try a few conservative AVC configurations. The first one is normally enough; the
+        // lower variants cover devices whose vendor codec rejects a nominally supported size.
+        val candidates = listOf(
+            Triple(width, height, if (width.toLong() * height >= 450_000L) 1_800_000 else 1_200_000),
+            Triple((width * 0.75f).roundToInt().coerceAtLeast(320) / 16 * 16,
+                (height * 0.75f).roundToInt().coerceAtLeast(320) / 16 * 16, 1_200_000),
+            Triple(if (width <= height) 480 else 854, if (width <= height) 854 else 480, 900_000)
+        ).distinct()
+
+        var last: Throwable? = null
+        for ((w, h, bitrate) in candidates) {
+            try {
+                return CodecRecorder(file, w, h, bitrate)
+            } catch (t: Throwable) {
+                last = t
+                runCatching { file.delete() }
+            }
+        }
+        throw IllegalStateException("No usable AVC encoder configuration", last)
+    }
+
     private fun stopRecording() {
+        if (stoppingRecording) return
         if (!isRecording && !recorderStarted) {
             stopSelf()
             return
         }
+        stoppingRecording = true
         isRecording = false
 
         var stopOk = true
         if (recorderStarted) {
-            runCatching { recorder?.stop() }.onFailure {
+            runCatching { codecRecorder?.stopAndRelease() }.onFailure {
                 stopOk = false
                 lastError = "Screen recording produced no valid frames: ${it.message ?: it.javaClass.simpleName}"
             }
         }
         recorderStarted = false
-        runCatching { recorder?.reset() }
-        runCatching { recorder?.release() }
-        recorder = null
+        codecRecorder = null
         runCatching { virtualDisplay?.release() }
         virtualDisplay = null
         val oldProjection = projection
@@ -203,6 +212,7 @@ class TestScreenRecordingService : Service() {
         currentUri = ""
         currentStartedAt = 0L
         runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
+        stoppingRecording = false
         stopSelf()
     }
 
@@ -249,9 +259,9 @@ class TestScreenRecordingService : Service() {
     private fun cleanupFailedStart() {
         isRecording = false
         recorderStarted = false
-        runCatching { recorder?.reset() }
-        runCatching { recorder?.release() }
-        recorder = null
+        stoppingRecording = false
+        runCatching { codecRecorder?.abort() }
+        codecRecorder = null
         runCatching { virtualDisplay?.release() }
         virtualDisplay = null
         val oldProjection = projection
@@ -272,8 +282,8 @@ class TestScreenRecordingService : Service() {
     }
 
     /**
-     * Use a conservative 720p-class portrait/landscape size. Some OEM AVC encoders advertise
-     * larger sizes but MediaRecorder then starts without ever emitting frames. 720p-class output
+     * Use a conservative 540p-class portrait/landscape size. Some OEM AVC encoders advertise
+     * larger sizes but MediaRecorder then starts without ever emitting frames. 540p-class output
      * is enough for report calibration and is broadly supported by hardware encoders.
      */
     private fun compatibleCaptureSize(rawWidth: Int, rawHeight: Int): Pair<Int, Int> {
@@ -281,9 +291,143 @@ class TestScreenRecordingService : Service() {
         val safeH = rawHeight.coerceAtLeast(320)
         val longSide = maxOf(safeW, safeH).toFloat()
         val shortSide = minOf(safeW, safeH).toFloat()
-        val scale = min(1f, min(1280f / longSide, 720f / shortSide))
+        val scale = min(1f, min(960f / longSide, 540f / shortSide))
         fun align16(value: Float): Int = ((value.roundToInt().coerceAtLeast(320)) / 16 * 16).coerceAtLeast(320)
         return align16(safeW * scale) to align16(safeH * scale)
+    }
+
+    private class CodecRecorder(
+        private val outputFile: File,
+        width: Int,
+        height: Int,
+        bitrate: Int
+    ) {
+        private val codec: MediaCodec
+        private val muxer: MediaMuxer
+        val inputSurface: Surface
+        @Volatile private var stopping = false
+        @Volatile private var released = false
+        @Volatile private var drainFailure: Throwable? = null
+        private var trackIndex = -1
+        private var muxerStarted = false
+        private lateinit var drainThread: Thread
+
+        private fun createPreferredAvcEncoder(): MediaCodec {
+            val infos = MediaCodecList(MediaCodecList.ALL_CODECS).codecInfos
+                .filter { info ->
+                    info.isEncoder && runCatching {
+                        info.supportedTypes.any { it.equals(MediaFormat.MIMETYPE_VIDEO_AVC, ignoreCase = true) }
+                    }.getOrDefault(false)
+                }
+            // Prefer the AOSP/Google software encoder. Several OEM vendor AVC encoders accept a
+            // MediaProjection surface but silently emit no frames, producing the familiar ~3 KB
+            // MP4. For calibration video, a conservative software encode is more reliable and the
+            // lower 540p-class resolution keeps CPU load reasonable.
+            val preferred = infos.sortedBy { info ->
+                val n = info.name.lowercase()
+                when {
+                    n.contains("c2.android") || n.contains("omx.google") -> 0
+                    Build.VERSION.SDK_INT >= 29 && info.isSoftwareOnly -> 1
+                    else -> 2
+                }
+            }
+            var last: Throwable? = null
+            for (info in preferred) {
+                try {
+                    return MediaCodec.createByCodecName(info.name)
+                } catch (t: Throwable) {
+                    last = t
+                }
+            }
+            return runCatching { MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC) }
+                .getOrElse { throw IllegalStateException("No AVC encoder available", last ?: it) }
+        }
+
+        init {
+            val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height).apply {
+                setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
+                setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
+                setInteger(MediaFormat.KEY_FRAME_RATE, 20)
+                setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
+                if (Build.VERSION.SDK_INT >= 23) {
+                    setInteger(MediaFormat.KEY_PRIORITY, 0)
+                }
+            }
+            codec = createPreferredAvcEncoder()
+            try {
+                codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+                inputSurface = codec.createInputSurface()
+                muxer = MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            } catch (t: Throwable) {
+                runCatching { codec.release() }
+                throw t
+            }
+        }
+
+        fun start() {
+            codec.start()
+            drainThread = Thread({ drainLoop() }, "CellTrackerScreenEncoder").also { it.start() }
+        }
+
+        private fun drainLoop() {
+            val info = MediaCodec.BufferInfo()
+            try {
+                while (true) {
+                    val index = codec.dequeueOutputBuffer(info, 10_000)
+                    when {
+                        index == MediaCodec.INFO_TRY_AGAIN_LATER -> {
+                            if (stopping) continue
+                        }
+                        index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                            if (muxerStarted) error("Encoder output format changed twice")
+                            trackIndex = muxer.addTrack(codec.outputFormat)
+                            muxer.start()
+                            muxerStarted = true
+                        }
+                        index >= 0 -> {
+                            val buffer = codec.getOutputBuffer(index)
+                            if (buffer != null && info.size > 0 && muxerStarted) {
+                                buffer.position(info.offset)
+                                buffer.limit(info.offset + info.size)
+                                muxer.writeSampleData(trackIndex, buffer, info)
+                            }
+                            val eos = info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
+                            codec.releaseOutputBuffer(index, false)
+                            if (eos) break
+                        }
+                    }
+                }
+            } catch (t: Throwable) {
+                drainFailure = t
+            }
+        }
+
+        fun stopAndRelease() {
+            if (released) return
+            stopping = true
+            runCatching { codec.signalEndOfInputStream() }.getOrElse { throw it }
+            if (::drainThread.isInitialized) drainThread.join(4000)
+            val failure = drainFailure
+            releaseInternal()
+            if (failure != null) throw failure
+            if (!muxerStarted) error("Encoder produced no output format / no frames")
+        }
+
+        fun abort() {
+            if (released) return
+            stopping = true
+            releaseInternal()
+        }
+
+        private fun releaseInternal() {
+            if (released) return
+            released = true
+            runCatching { inputSurface.release() }
+            runCatching { codec.stop() }
+            runCatching { codec.release() }
+            if (muxerStarted) runCatching { muxer.stop() }
+            runCatching { muxer.release() }
+        }
     }
 
     private fun safe(s: String) = s
