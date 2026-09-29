@@ -1,3 +1,10 @@
+# CellTracker v1.2.20
+
+- Fixed TikTok Upload/Lag Excel per-event sheets so each `Upload N` / `Lag N` sheet now includes the Cell Info samples captured inside its exact T0–T1 window.
+- Replaced fragile date parsing with a timezone-independent time-of-day parser that accepts full `yyyy-MM-dd HH:mm:ss.SSS` timestamps and event `HH:mm:ss.SSS` timestamps.
+- Added tolerant Cell Info header matching (trim/BOM/case normalization) and correct handling for event windows crossing midnight.
+- The same corrected correlation logic is used by TikTok report analysis and KML event matching.
+
 # CellTracker v1.2.19
 
 - When a full DUT debuglogger export fails and the user chooses the modem-log fallback, CellTracker now deletes the partial failed export before starting the fallback.

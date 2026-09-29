@@ -38,12 +38,14 @@ object TikTokReportExporter {
         val cellData=cellRows.drop(1)
 
         fun windowRows(e:Event):List<List<String>> {
-            val a=parseClock(e.t0); val b=parseClock(e.t1)
-            if(a<=0||b<=0||cellHeader.isEmpty()) return emptyList()
-            val ti=cellHeader.indexOf("timestamp")
+            val a=timeOfDayMs(e.t0)
+            val b=timeOfDayMs(e.t1)
+            if(a<0L||b<0L||cellHeader.isEmpty()) return emptyList()
+            val ti=cellHeader.indexOfFirst { normalizeHeader(it) == "timestamp" }
+            if(ti<0) return emptyList()
             return cellData.filter { row ->
-                val x=row.getOrNull(ti)?.let(::parseFullTime) ?: 0L
-                x in a..b
+                val x=row.getOrNull(ti)?.let(::timeOfDayMs) ?: -1L
+                if(x<0L) false else if(b>=a) x in a..b else x>=a || x<=b
             }
         }
 
@@ -159,11 +161,15 @@ object TikTokReportExporter {
     private fun analysis(p:Parsed,h:List<String>,rows:List<List<String>>):String{
         if(p.events.isEmpty()) return if(p.isLag)"No perceived lag event was recorded." else "No completed upload attempt is available."
         if(h.isEmpty()) return "Cell Info was not available for this session; event timing is available but radio correlation cannot be concluded."
-        val ti=h.indexOf("timestamp"); val rat=h.indexOf("display_rat"); val pci=h.indexOf("pci"); val rsrp=h.indexOf("rsrp"); val sinr=h.indexOf("sinr")
+        val ti=h.indexOfFirst{normalizeHeader(it)=="timestamp"}; val rat=h.indexOfFirst{normalizeHeader(it)=="display_rat"}; val pci=h.indexOfFirst{normalizeHeader(it)=="pci"}; val rsrp=h.indexOfFirst{normalizeHeader(it)=="rsrp"}; val sinr=h.indexOfFirst{normalizeHeader(it)=="sinr"}
+        if(ti<0) return "Cell Info timestamp column was not found, so event-window radio correlation could not be generated."
         var weak=0;var cellChange=0;var ratChange=0
         p.events.forEach{e->
-            val a=parseClock(e.t0);val b=parseClock(e.t1)
-            val w=rows.filter{r->(r.getOrNull(ti)?.let(::parseFullTime)?:0L) in a..b}
+            val a=timeOfDayMs(e.t0);val b=timeOfDayMs(e.t1)
+            val w=if(a<0L||b<0L) emptyList() else rows.filter{r->
+                val x=r.getOrNull(ti)?.let(::timeOfDayMs)?:-1L
+                x>=0L && (if(b>=a) x in a..b else x>=a || x<=b)
+            }
             val rv=w.mapNotNull{it.getOrNull(rsrp)?.filter{ch->ch=='-'||ch.isDigit()}?.toIntOrNull()}
             val sv=w.mapNotNull{it.getOrNull(sinr)?.filter{ch->ch=='-'||ch.isDigit()}?.toIntOrNull()}
             if(rv.any{it<=-110}||sv.any{it<0}) weak++
@@ -190,7 +196,7 @@ object TikTokReportExporter {
     }
 
     private fun kml(h:List<String>,rows:List<List<String>>,events:List<Event>):String{
-        val lati=h.indexOf("latitude");val loni=h.indexOf("longitude");val ti=h.indexOf("timestamp")
+        val lati=h.indexOfFirst{normalizeHeader(it)=="latitude"};val loni=h.indexOfFirst{normalizeHeader(it)=="longitude"};val ti=h.indexOfFirst{normalizeHeader(it)=="timestamp"}
         val valid=rows.mapNotNull{r->
             val lat=r.getOrNull(lati)?.toDoubleOrNull();val lon=r.getOrNull(loni)?.toDoubleOrNull()
             if(lat!=null&&lon!=null&&lat!=0.0&&lon!=0.0) Triple(r.getOrNull(ti).orEmpty(),lat,lon) else null
@@ -199,8 +205,8 @@ object TikTokReportExporter {
             append("<?xml version='1.0' encoding='UTF-8'?><kml xmlns='http://www.opengis.net/kml/2.2'><Document><name>TikTok Track</name>")
             if(valid.isNotEmpty()){append("<Placemark><name>Track</name><LineString><coordinates>");valid.forEach{append("${it.third},${it.second},0 ")};append("</coordinates></LineString></Placemark>")}
             events.forEachIndexed{i,e->
-                val target=parseClock(e.t0)
-                val near=valid.minByOrNull{kotlin.math.abs(parseFullTime(it.first)-target)}
+                val target=timeOfDayMs(e.t0)
+                val near=if(target<0L) null else valid.minByOrNull{kotlin.math.abs(timeOfDayMs(it.first)-target)}
                 if(near!=null){append("<Placemark><name>${if(e.type=="UPLOAD")"Upload" else "Lag"} #${i+1} T0</name><description>${esc(e.t0)} - ${esc(e.t1)}</description><Point><coordinates>${near.third},${near.second},0</coordinates></Point></Placemark>")}
             }
             append("</Document></kml>")
@@ -209,8 +215,19 @@ object TikTokReportExporter {
 
     private fun readCsv(f:File)=f.readLines().filter{it.isNotBlank()}.map(::parseCsv)
     private fun parseCsv(s:String):List<String>{val o=mutableListOf<String>();val b=StringBuilder();var q=false;var i=0;while(i<s.length){val c=s[i];if(c=='"'&&q&&i+1<s.length&&s[i+1]=='"'){b.append('"');i++}else if(c=='"')q=!q else if(c==','&&!q){o+=b.toString();b.setLength(0)}else b.append(c);i++};o+=b.toString();return o}
-    private fun parseClock(s:String):Long=runCatching{SimpleDateFormat("HH:mm:ss.SSS",Locale.US).parse(s)?.time?:0L}.getOrDefault(0L)
-    private fun parseFullTime(s:String):Long=parseClock(s.substringAfter(' ',s))
+    private fun normalizeHeader(s:String)=s.trim().removePrefix("\uFEFF").lowercase(Locale.US)
+    private fun timeOfDayMs(s:String):Long {
+        val m=Regex("(?:^|[ T])(\\d{1,2}):(\\d{2}):(\\d{2})(?:[.,](\\d{1,3}))?").find(s.trim()) ?: return -1L
+        val h=m.groupValues[1].toIntOrNull() ?: return -1L
+        val min=m.groupValues[2].toIntOrNull() ?: return -1L
+        val sec=m.groupValues[3].toIntOrNull() ?: return -1L
+        if(h !in 0..23 || min !in 0..59 || sec !in 0..59) return -1L
+        val frac=m.groupValues[4]
+        val ms=when(frac.length){0->0;1->frac.toInt()*100;2->frac.toInt()*10;else->frac.take(3).toInt()}
+        return (((h*60L+min)*60L+sec)*1000L)+ms
+    }
+    private fun parseClock(s:String):Long=timeOfDayMs(s).coerceAtLeast(0L)
+    private fun parseFullTime(s:String):Long=timeOfDayMs(s).coerceAtLeast(0L)
     private fun parseDateTime(s:String):Long=runCatching{SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS",Locale.US).parse(s)?.time?:0L}.getOrDefault(0L)
     private fun esc(s:String)=s.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
     private fun save(c:Context,name:String,mime:String,bytes:ByteArray,started:Long):Uri{
