@@ -487,7 +487,10 @@ object CellTrackerAdbEngine {
         check(exportJob?.isActive!=true){"An export is already running"}
         ensureLocalReady(context,"DUT log pull")
         val source=path.trim().ifBlank{"/data/debuglogger"};val started=System.currentTimeMillis();val stamp=SimpleDateFormat("yyyyMMdd_HHmmss",Locale.US).format(Date())
-        val safe=logName.trim().replace(Regex("[^A-Za-z0-9._-]+"),"_").trim('_').ifBlank{"DUT_debuglogger"};val session="${safe}_$stamp";val folderPath="Download/CellTracker/Logs/DUT/$session/"
+        val isModemLog=source.trimEnd('/')=="/data/debuglogger/diag_mdlog"
+        val remark=logName.trim().replace(Regex("[^A-Za-z0-9._-]+"),"_").trim('_').ifBlank{if(isModemLog) "DUT" else "DUT_debuglogger"}
+        val safe=if(isModemLog && !remark.contains("MODEM_LOG",ignoreCase=true)) "${remark}_MODEM_LOG" else remark
+        val session="${safe}_$stamp";val folderPath="Download/CellTracker/Logs/DUT/$session/"
         AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=true,exportPhase="Starting ADB Sync pull…",exportBytes=0,exportTotalBytes=0,exportFiles=0,exportFound=0,exportSkipped=0,exportStartedMs=started,exportPullMs=0,exportTotalMs=0,exportZipMs=0,exportPullBytes=0,exportDeleted=0,exportDeleteFailed=0,exportSymlinks=0,exportListFailed=0,exportPath="",exportResult="",exportError="")
         exportJob=scope.launch{try{val puller=AdbSyncPuller(context)
             // Avoid a full recursive ADB Sync scan before the actual pull. On large debuglogger
@@ -524,6 +527,9 @@ object CellTrackerAdbEngine {
                 exportZipMs=zipMs,exportTotalMs=totalMs,exportDeleted=deleted,exportDeleteFailed=deleteFailed,
                 exportSymlinks=result.symlinks,exportListFailed=result.listFailed,exportPath=finalPath,
                 exportResult=when {
+                    isModemLog && deleteFailed>0 -> "MODEM LOG SUCCESS · CLEANUP PARTIAL"
+                    isModemLog && partial -> "MODEM LOG PARTIAL SUCCESS"
+                    isModemLog -> "MODEM LOG SUCCESS"
                     deleteFailed>0 -> "SUCCESS · CLEANUP PARTIAL"
                     partial -> "PARTIAL SUCCESS"
                     else -> "SUCCESS"
@@ -531,8 +537,20 @@ object CellTrackerAdbEngine {
                 exportError=detail,
                 message=if(partial)"Export completed with ${result.skipped} skipped item(s)" else "Export completed"
             )
-        }catch(e:CancellationException){AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=false,exportPhase="Cancelled",exportResult="CANCELLED",exportPath="")}catch(e:Throwable){AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=false,exportPhase="Failed",exportResult="FAILED",exportPath="",exportError=e.message?:e.javaClass.simpleName)}};"Export started"
+        }catch(e:CancellationException){AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=false,exportPhase="Cancelled",exportResult="CANCELLED",exportPath=folderPath)}catch(e:Throwable){AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=false,exportPhase="Failed",exportResult="FAILED",exportPath=folderPath,exportError=e.message?:e.javaClass.simpleName)}};"Export started"
     }.onFailure{e->AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=false,exportPhase="Failed",exportResult="FAILED",exportPath="",exportError=e.message?:e.javaClass.simpleName)} }
+    suspend fun deleteLocalExportOutput(context:Context,publicPath:String):Result<Int> = withContext(Dispatchers.IO) { runCatching {
+        val normalized=publicPath.trim().trimStart('/').let{if(it.endsWith('/')) it else "$it/"}
+        require(normalized.startsWith("Download/CellTracker/Logs/DUT/")){"Refusing to delete outside CellTracker DUT log folder"}
+        val resolver=context.contentResolver
+        val deleted=resolver.delete(
+            MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+            "${MediaStore.Downloads.RELATIVE_PATH} LIKE ?",
+            arrayOf("$normalized%")
+        )
+        deleted
+    } }
+
     fun cancelExport(){ exportJob?.cancel(); exportJob=null }
 
     fun startLogcat(context:Context,command:String="logcat -v threadtime",refLabel:String="vivo_REF") {

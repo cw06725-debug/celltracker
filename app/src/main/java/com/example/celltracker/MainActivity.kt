@@ -5499,13 +5499,26 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
             confirmButton = {
                 Button(onClick = {
                     showModemFallbackDialog = false
+                    val failedFullExportPath = adb.exportPath
                     lastDutExportPath = modemFallbackPath
                     scope.launch {
                         busy = true
+                        if (failedFullExportPath.isNotBlank()) {
+                            val cleanup = CellTrackerAdbEngine.deleteLocalExportOutput(context, failedFullExportPath)
+                            cleanup.onSuccess { deleted ->
+                                AdbToolStore.state.value = AdbToolStore.state.value.copy(
+                                    message = "Removed failed full-log export ($deleted file${if (deleted == 1) "" else "s"}) before modem fallback"
+                                )
+                            }.onFailure { error ->
+                                AdbToolStore.state.value = AdbToolStore.state.value.copy(
+                                    message = "Could not remove failed full-log export: ${error.message ?: error.javaClass.simpleName}"
+                                )
+                            }
+                        }
                         CellTrackerAdbEngine.exportDebuglogger(
                             context,
                             modemFallbackPath,
-                            dutLogName.trim().ifBlank { "DUT_modem_diag" },
+                            dutLogName.trim().ifBlank { "DUT" },
                             compressDutLog,
                             deleteAfterZip
                         )

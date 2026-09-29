@@ -1,3 +1,9 @@
+# CellTracker v1.2.19
+
+- When a full DUT debuglogger export fails and the user chooses the modem-log fallback, CellTracker now deletes the partial failed export before starting the fallback.
+- Modem-log fallback folders are explicitly labeled with `_MODEM_LOG_` in the saved folder name.
+- Successful modem fallback exports are labeled `MODEM LOG SUCCESS` in the export result.
+
 # v1.2.18 (versionCode 195)
 
 - Unified YouTube report details between Reports and YouTube Video Loading history: Attempts now supports direct review/calibration with highlighted REVIEW VIDEO and EDIT T0/T1 actions.
