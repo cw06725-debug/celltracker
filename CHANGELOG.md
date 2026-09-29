@@ -1,3 +1,8 @@
+# v1.2.25 (versionCode 202)
+- Restore YouTube semi-auto T0 semantics: START only arms the test; only an actual YouTube media-card click can create T0.
+- Removed WINDOW_STATE_CHANGED and WINDOW_CONTENT_CHANGED T0 fallbacks that could treat generic post-START screen interactions as T0.
+- Added media-area / non-miniplayer validation for accessibility click events to reduce false attempts.
+
 # v1.2.24
 
 - Replace test screen recording MediaRecorder path with MediaCodec + MediaMuxer.
