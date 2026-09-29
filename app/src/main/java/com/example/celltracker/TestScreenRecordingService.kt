@@ -24,7 +24,7 @@ import android.util.Log
 import android.view.WindowManager
 import androidx.core.app.NotificationCompat
 import java.io.File
-import java.io.ParcelFileDescriptor
+import android.os.ParcelFileDescriptor
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale

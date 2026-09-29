@@ -1,3 +1,8 @@
+# v1.2.28 (205)
+
+- Fix compile error in TestScreenRecordingService by importing android.os.ParcelFileDescriptor.
+- Keep v1.2.27 behavior unchanged: YouTube/TikTok timing remains rolled back to v1.2.21 baseline and screen-recording diagnostics remain enabled.
+
 # v1.2.27 (204)
 
 - Restored the project behavior baseline to v1.2.21 for YouTube/TikTok timing, including the v1.2.21 T0 event logic.
