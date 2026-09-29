@@ -498,7 +498,7 @@ object CellTrackerAdbEngine {
             val escaped=source.replace("'", "'\\''")
             val approxBytes=withTimeoutOrNull(3_000){
                 command(context,"du -sk '$escaped' 2>/dev/null | head -n 1",2_500).getOrNull()
-                    ?.trim()?.substringBefore(Regex("\\s+"))?.toLongOrNull()?.times(1024L)
+                    ?.trim()?.split(Regex("\\s+"), limit = 2)?.firstOrNull()?.toLongOrNull()?.times(1024L)
             } ?: 0L
             AdbToolStore.state.value=AdbToolStore.state.value.copy(exportTotalBytes=approxBytes,exportPhase="Pulling logs…",message="Starting log pull")
             val result=puller.pullTree(source,session){pr->AdbToolStore.state.value=AdbToolStore.state.value.copy(exportPhase=pr.phase,exportBytes=pr.bytesDone,exportFiles=pr.filesDone,exportFound=pr.found,exportSkipped=pr.skipped,message="Pulling ${pr.current}")}
