@@ -1,3 +1,9 @@
+# v1.2.21
+
+- Fixed TikTok Upload/Lag network recording ownership so reports no longer bind to a stale previous `latestPath`.
+- Fixed RecordingService SIM resolution: if the requested data subscription is temporarily invalid (`-1`) or unavailable, recording now falls back to the default/active SIM instead of producing a header-only CSV.
+- Added per-cycle active-SIM fallback so transient subscription changes do not silently create empty Cell Info recordings.
+
 # CellTracker v1.2.20
 
 - Fixed TikTok Upload/Lag Excel per-event sheets so each `Upload N` / `Lag N` sheet now includes the Cell Info samples captured inside its exact T0–T1 window.

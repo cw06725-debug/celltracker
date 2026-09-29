@@ -2168,10 +2168,27 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                         if(!recordingStartOk) status.text="Network recording unavailable · test can continue"
                     }
                     scope.launch{
-                        repeat(20){
+                        // Bind the TikTok report only to the recording created for THIS test.
+                        // latestPath may still point at a previous recording for a short time after
+                        // the foreground service is started, so accepting any non-empty path can
+                        // correlate attempts with the wrong CSV and produce 0 Cell samples.
+                        repeat(60){
                             delay(100)
-                            val p=RecordingState.status.value.latestPath.orEmpty()
-                            if(p.isNotBlank()){recordingPath=p;return@launch}
+                            val rs=RecordingState.status.value
+                            val p=rs.latestPath.orEmpty()
+                            val belongsToThisSession = rs.isRecording &&
+                                p.isNotBlank() &&
+                                rs.taskName == taskName &&
+                                rs.startedAt >= sessionStartWall - 1500L
+                            if(belongsToThisSession){
+                                recordingPath=p
+                                return@launch
+                            }
+                        }
+                        status.post {
+                            if (recordingPath.isBlank() && running) {
+                                status.text="Running · network recording path not ready"
+                            }
                         }
                     }
                     if(isLag) b1.text="NEXT VIDEO" else { b1.text="RUNNING"; b1.isEnabled=false }

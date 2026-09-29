@@ -62,6 +62,22 @@ class RecordingService : Service() {
             val dir = File(getExternalFilesDir(null), "recordings").apply { mkdirs() }
             val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
             val initialSims = runCatching { cellular.readAllSims() }.getOrDefault(emptyList())
+            if (!bothSims) {
+                // Some test entry points can briefly see dataSimSubscriptionId == -1 while the
+                // telephony state is still settling.  Recording with -1 used to create a CSV
+                // containing only the header, which later made TikTok per-attempt sheets empty.
+                val defaultDataSub = runCatching { SubscriptionManager.getDefaultDataSubscriptionId() }.getOrDefault(-1)
+                val resolvedSub = when {
+                    initialSims.any { it.subscriptionId == targetSubscriptionId } -> targetSubscriptionId
+                    initialSims.any { it.subscriptionId == defaultDataSub } -> defaultDataSub
+                    initialSims.isNotEmpty() -> initialSims.first().subscriptionId
+                    else -> targetSubscriptionId
+                }
+                targetSubscriptionId = resolvedSub
+                if (markTargetSubscriptionId < 0 || initialSims.none { it.subscriptionId == markTargetSubscriptionId }) {
+                    markTargetSubscriptionId = resolvedSub
+                }
+            }
             val scopeName = if (bothSims) {
                 "DualSIM"
             } else {
@@ -89,7 +105,13 @@ class RecordingService : Service() {
             while (isActive) {
                 val cycleStart = System.currentTimeMillis()
                 val all = cellular.readAllSims()
-                val sims = if (bothSims) all else all.filter { it.subscriptionId == targetSubscriptionId }
+                val sims = if (bothSims) {
+                    all
+                } else {
+                    // Never silently write an empty cycle just because the requested subscription
+                    // is temporarily unavailable. Fall back to the current first active SIM.
+                    all.filter { it.subscriptionId == targetSubscriptionId }.ifEmpty { all.take(1) }
+                }
                 val locationSnapshot = LocationStore.latest.value
                 FileWriter(file, true).use { w -> sims.forEach { sim ->
                     val c=sim.servingCell; w.appendLine(csvLine(cycleStart,c,locationSnapshot,false,"","")); perSim[c.subscriptionId]=(perSim[c.subscriptionId]?:0)+1
