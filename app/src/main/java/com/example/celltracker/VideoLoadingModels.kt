@@ -13,4 +13,13 @@ data class VideoLoadingSample(
     val result:String, val detection:String, val snapshot:PingNetworkSnapshot=PingNetworkSnapshot(),
     val startElapsedMs:Long=0L, val loadedElapsedMs:Long=0L, val t0Source:String=""
 )
-data class VideoLoadingDetail(val path:String,val startedAt:Long,val endedAt:Long,val status:String,val samples:List<VideoLoadingSample>,val recordingPath:String?)
+data class VideoLoadingDetail(
+    val path:String,
+    val startedAt:Long,
+    val endedAt:Long,
+    val status:String,
+    val samples:List<VideoLoadingSample>,
+    val recordingPath:String?,
+    val screenRecordingUri:String?=null,
+    val screenRecordingStartMs:Long=0L
+)

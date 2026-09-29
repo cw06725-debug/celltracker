@@ -6,5 +6,6 @@ data class ReviewPlayerRequest(
     val videoUri:String,
     val recordingStartMs:Long,
     val initialPositionMs:Long,
-    val eventLabel:String
+    val eventLabel:String,
+    val sourceType:String="TIKTOK"
 )

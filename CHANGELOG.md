@@ -1,3 +1,10 @@
+# v1.2.14 (versionCode 191)
+
+- YouTube Video Loading reports now support TikTok-style review/calibration: per-attempt T0/T1 review, video frame calibration, invalid-attempt marking, review confirmation, and reviewed timing in exported summaries/workbooks.
+- New YouTube tests persist the linked screen-recording URI and recording start time so report calibration can jump to the correct frame. Older reports without a saved screen recording remain readable but cannot use frame review.
+- DUT debuglogger export no longer performs a full recursive ADB Sync pre-scan before pulling. A short remote size probe is used for progress when available, reducing duplicate traversal and long startup delays on large log trees.
+- TikTok Upload START flow hardened with duplicate-start protection and guarded overlay/network-recording startup so transient foreground-service or overlay failures show an error instead of crashing CellTracker.
+
 ## 1.2.13
 - Add Ufone and Telenor operator logo assets and mapping on the Home network card.
 - Make the MFT Report Browser header area compact by replacing the long remote-folder row with a small info card.

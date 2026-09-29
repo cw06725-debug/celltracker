@@ -92,8 +92,8 @@ class VideoLoadingRepository(private val context: Context) {
         }
     }
 
-    fun finish(file: File, start: Long, end: Long, status: String, recording: String?) {
-        meta(file, start, end, status, recording)
+    fun finish(file: File, start: Long, end: Long, status: String, recording: String?, screenRecordingUri:String?=null, screenRecordingStartMs:Long=0L) {
+        meta(file, start, end, status, recording, screenRecordingUri, screenRecordingStartMs)
     }
 
     fun delete(path: String): Boolean {
@@ -177,6 +177,8 @@ class VideoLoadingRepository(private val context: Context) {
             ?: 0L
         val status = props.getProperty("status", "Completed")
         val recordingPath = props.getProperty("recording")?.takeIf { it.isNotBlank() }
+        val screenRecordingUri = props.getProperty("screen_recording_uri")?.takeIf { it.isNotBlank() }
+        val screenRecordingStartMs = props.getProperty("screen_recording_start_ms")?.toLongOrNull() ?: 0L
 
         return VideoLoadingDetail(
             path = path,
@@ -184,16 +186,20 @@ class VideoLoadingRepository(private val context: Context) {
             endedAt = endedAt,
             status = status,
             samples = samples,
-            recordingPath = recordingPath
+            recordingPath = recordingPath,
+            screenRecordingUri = screenRecordingUri,
+            screenRecordingStartMs = screenRecordingStartMs
         )
     }
 
-    private fun meta(file: File, start: Long, end: Long, status: String, recording: String?) {
+    private fun meta(file: File, start: Long, end: Long, status: String, recording: String?, screenRecordingUri:String?=null, screenRecordingStartMs:Long=0L) {
         Properties().apply {
             setProperty("started", start.toString())
             setProperty("ended", end.toString())
             setProperty("status", status)
             setProperty("recording", recording.orEmpty())
+            setProperty("screen_recording_uri", screenRecordingUri.orEmpty())
+            setProperty("screen_recording_start_ms", screenRecordingStartMs.toString())
         }.store(
             File(file.parentFile, file.nameWithoutExtension + ".meta").outputStream(),
             "CellTracker YouTube Video Loading"

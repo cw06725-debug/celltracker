@@ -53,10 +53,16 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         }
 
         fun requestTikTokTool(mode: String, autoSwipe: Boolean, taskName: String, operator: String, uploadType: String) {
-            activeInstance?.scope?.launch {
-                activeInstance?.dismissOverlay()
-                activeInstance?.dismissWhatsAppOverlay()
-                activeInstance?.showTikTokOverlay(mode, autoSwipe, taskName, operator, uploadType)
+            val instance=activeInstance ?: return
+            instance.scope.launch {
+                runCatching {
+                    instance.dismissOverlay()
+                    instance.dismissWhatsAppOverlay()
+                    instance.showTikTokOverlay(mode, autoSwipe, taskName, operator, uploadType)
+                }.onFailure { e ->
+                    android.util.Log.e("CellTrackerTikTok", "Unable to open TikTok tool", e)
+                    instance.dismissTikTokOverlay()
+                }
             }
         }
     }
@@ -1176,13 +1182,16 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             }
         }
         runCatching { repo.disarm() }
+        val screenRecordingUri = TestScreenRecordingService.currentUri.ifBlank { TestScreenRecordingService.lastUri }
+        val screenRecordingStartMs = TestScreenRecordingService.currentStartedAt.takeIf { it > 0L }
+            ?: TestScreenRecordingService.lastStartedAt
         if(TestScreenRecordingService.isRecording) runCatching{
             startService(Intent(this,TestScreenRecordingService::class.java).apply{action=TestScreenRecordingService.STOP})
         }
         status.text = "YouTube Test · $state · results saved"
         if (f != null) {
             scope.launch(Dispatchers.IO) {
-                runCatching { repo.finish(f, startedAtForFinish, finishedAt, state, recordingPath) }
+                runCatching { repo.finish(f, startedAtForFinish, finishedAt, state, recordingPath, screenRecordingUri, screenRecordingStartMs) }
             }
         }
     }
@@ -2041,7 +2050,15 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                 true
             } else false
         }
-        wm.addView(box,lp);ttOverlay=box
+        try {
+            wm.addView(box,lp)
+            ttOverlay=box
+        } catch (e:Throwable) {
+            android.util.Log.e("CellTrackerTikTok", "Unable to attach TikTok overlay", e)
+            ttUploadAwaitingExternalTouch=false
+            ttUploadExternalTouchCallback=null
+            return
+        }
 
         val fmt=java.text.SimpleDateFormat("HH:mm:ss.SSS",java.util.Locale.US)
         val lines=mutableListOf<String>()
@@ -2139,37 +2156,55 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             }
         }
 
+        var startGuard=false
         b1.setOnClickListener{
-            if(!running){
-                running=true;sessionStartWall=System.currentTimeMillis();sessionStartElapsed=SystemClock.elapsedRealtime()
-                val before=RecordingState.status.value
-                if(!before.isRecording){
-                    val subId=NetworkStore.dataSimSubscriptionId
-                    val recIntent=Intent(this,RecordingService::class.java).apply{
-                        putExtra(RecordingService.EXTRA_SUBSCRIPTION_ID,subId)
-                        putExtra(RecordingService.EXTRA_MARK_SUBSCRIPTION_ID,subId)
-                        putExtra(RecordingService.EXTRA_BOTH_SIMS,false)
-                        putExtra(RecordingService.EXTRA_TASK_NAME,taskName)
+            if(startGuard)return@setOnClickListener
+            startGuard=true
+            runCatching {
+                if(!running){
+                    running=true;sessionStartWall=System.currentTimeMillis();sessionStartElapsed=SystemClock.elapsedRealtime()
+                    val before=RecordingState.status.value
+                    if(!before.isRecording){
+                        val subId=NetworkStore.dataSimSubscriptionId
+                        val recIntent=Intent(this,RecordingService::class.java).apply{
+                            putExtra(RecordingService.EXTRA_SUBSCRIPTION_ID,subId)
+                            putExtra(RecordingService.EXTRA_MARK_SUBSCRIPTION_ID,subId)
+                            putExtra(RecordingService.EXTRA_BOTH_SIMS,false)
+                            putExtra(RecordingService.EXTRA_TASK_NAME,taskName)
+                        }
+                        val recordingStartOk=runCatching {
+                            if(android.os.Build.VERSION.SDK_INT>=26) ContextCompat.startForegroundService(this,recIntent) else startService(recIntent)
+                        }.isSuccess
+                        ownsRecording=recordingStartOk
+                        if(!recordingStartOk) status.text="Network recording unavailable · test can continue"
                     }
-                    if(android.os.Build.VERSION.SDK_INT>=26) startForegroundService(recIntent) else startService(recIntent)
-                    ownsRecording=true
-                }
-                scope.launch{
-                    repeat(20){
-                        delay(100)
-                        val p=RecordingState.status.value.latestPath.orEmpty()
-                        if(p.isNotBlank()){recordingPath=p;return@launch}
+                    scope.launch{
+                        repeat(20){
+                            delay(100)
+                            val p=RecordingState.status.value.latestPath.orEmpty()
+                            if(p.isNotBlank()){recordingPath=p;return@launch}
+                        }
                     }
+                    if(isLag) b1.text="NEXT VIDEO" else { b1.text="RUNNING"; b1.isEnabled=false }
+                    b2.visibility=View.VISIBLE;b3.visibility=View.VISIBLE;stop.visibility=View.VISIBLE
+                    status.text=if(isLag) "Running · ${if(autoSwipe)"NEXT VIDEO = T0 + auto swipe" else "NEXT VIDEO = T0, then swipe manually"}" else "Running · POST = T0"
+                }else if(isLag){
+                    if(pendingType=="INITIAL") clearPending()
+                    video++;setPending("INITIAL")
+                    status.text="Video #$video · T0 ${nowText(pendingWall)}"+if(autoSwipe)" · auto swiping…" else " · swipe now"
+                    if(autoSwipe) swipe()
                 }
-                if(isLag) b1.text="NEXT VIDEO" else { b1.text="RUNNING"; b1.isEnabled=false }
-                b2.visibility=View.VISIBLE;b3.visibility=View.VISIBLE;stop.visibility=View.VISIBLE
-                status.text=if(isLag) "Running · ${if(autoSwipe)"NEXT VIDEO = T0 + auto swipe" else "NEXT VIDEO = T0, then swipe manually"}" else "Running · POST = T0"
-            }else if(isLag){
-                if(pendingType=="INITIAL") clearPending()
-                video++;setPending("INITIAL")
-                status.text="Video #$video · T0 ${nowText(pendingWall)}"+if(autoSwipe)" · auto swiping…" else " · swipe now"
-                if(autoSwipe) swipe()
+            }.onFailure { e ->
+                android.util.Log.e("CellTrackerTikTok", "TikTok START failed", e)
+                running=false
+                b1.isEnabled=true
+                b1.text="START"
+                b2.visibility=View.GONE;b3.visibility=View.GONE;stop.visibility=View.GONE
+                status.text="Start failed · ${e.message ?: e.javaClass.simpleName}"
+                if(ownsRecording) runCatching{stopService(Intent(this,RecordingService::class.java))}
+                ownsRecording=false
             }
+            b1.postDelayed({startGuard=false},650)
         }
         b2.setOnClickListener{
             if(!running)return@setOnClickListener

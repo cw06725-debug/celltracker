@@ -18,6 +18,31 @@ object ReportReviewV1 {
             })
         }.getOrElse{ReviewStateV1(events=original.mapIndexed{i,e->ReviewedEventV1(i,true,e.t0,e.t1)})}
     }
+
+    fun loadYouTube(c:Context,key:String,samples:List<VideoLoadingSample>):ReviewStateV1{
+        val fmt=java.text.SimpleDateFormat("HH:mm:ss.SSS",java.util.Locale.US)
+        val original=samples.mapIndexed{i,e->
+            ReviewedEventV1(
+                i,
+                e.loadedMs>0L,
+                if(e.startMs>0)fmt.format(java.util.Date(e.startMs)) else "",
+                if(e.loadedMs>0)fmt.format(java.util.Date(e.loadedMs)) else "",
+                ""
+            )
+        }
+        val raw=c.getSharedPreferences(PREF,0).getString(key,null)
+        if(raw.isNullOrBlank()) return ReviewStateV1(events=original)
+        return runCatching{
+            val o=JSONObject(raw);val a=o.optJSONArray("events")?:JSONArray()
+            ReviewStateV1(o.optBoolean("confirmed"),o.optLong("confirmedAt"),(0 until a.length()).map{i->
+                val x=a.getJSONObject(i);ReviewedEventV1(x.optInt("index",i),x.optBoolean("valid",true),x.optString("t0"),x.optString("t1"),x.optString("note"))
+            })
+        }.getOrElse{ReviewStateV1(events=original)}
+    }
+    fun durationMs(t0:String,t1:String):Long?{
+        fun p(x:String)=runCatching{java.text.SimpleDateFormat("HH:mm:ss.SSS",java.util.Locale.US).parse(x)?.time}.getOrNull()
+        val a=p(t0)?:return null;var b=p(t1)?:return null;if(b<a)b+=24*60*60*1000L;return (b-a).coerceAtLeast(0L)
+    }
     fun save(c:Context,key:String,s:ReviewStateV1){
         val o=JSONObject().put("confirmed",s.confirmed).put("confirmedAt",s.confirmedAt).put("events",JSONArray().apply{s.events.forEach{e->put(JSONObject().put("index",e.index).put("valid",e.valid).put("t0",e.t0).put("t1",e.t1).put("note",e.note))}})
         c.getSharedPreferences(PREF,0).edit().putString(key,o.toString()).apply()

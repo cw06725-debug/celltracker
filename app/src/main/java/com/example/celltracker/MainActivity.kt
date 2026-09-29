@@ -565,6 +565,7 @@ private fun loadTikTokReportsV1(context: Context): Pair<List<TikTokReportRowV1>,
 }
 
 private data class BasementReportRow(val uri: Uri, val name: String, val relativePath: String, val addedMs: Long)
+private data class ReviewEditRequestV1(val category:String,val reportKey:String,val index:Int,val initial:ReviewedEventV1)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -587,7 +588,7 @@ private fun ReportsHome(
     var exportResult by remember { mutableStateOf<ExportResult?>(null) }
     var busy by remember { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<Pair<String,String>?>(null) }
-    var reviewEdit by remember { mutableStateOf<Triple<String,Int,ReviewedEventV1>?>(null) }
+    var reviewEdit by remember { mutableStateOf<ReviewEditRequestV1?>(null) }
     var reviewPlayer by remember { mutableStateOf<ReviewPlayerRequest?>(null) }
 
     fun reloadReports() {
@@ -740,18 +741,25 @@ private fun ReportsHome(
                 Button(
                     enabled=markedT0!=null&&markedT1!=null,
                     onClick={
-                        val catNow=category
-                        val rows=if(catNow=="TIKTOK_LAG")tikTokLagReports else tikTokUploadReports
-                        val rr=rows.firstOrNull{it.uri==req.reportUri}
-                        val parsed=rr?.let{runCatching{context.contentResolver.openInputStream(Uri.parse(it.uri))?.bufferedReader()?.use{x->TikTokReportExporter.parse(x.readText())}}.getOrNull()}
-                        if(parsed!=null&&markedT0!=null&&markedT1!=null){
-                            val state=ReportReviewV1.load(context,req.reportUri,parsed.events)
-                            val nt0=clockFmt.format(Date(req.recordingStartMs+markedT0!!))
-                            val nt1=clockFmt.format(Date(req.recordingStartMs+markedT1!!))
-                            val updated=state.events.mapIndexed{i,x->if(i==req.eventIndex)x.copy(t0=nt0,t1=nt1,valid=true) else x}
-                            ReportReviewV1.save(context,req.reportUri,state.copy(confirmed=false,confirmedAt=0L,events=updated))
-                            Toast.makeText(context,"T0/T1 calibrated from recording",Toast.LENGTH_SHORT).show()
-                            reviewPlayer=null
+                        if(markedT0!=null&&markedT1!=null){
+                            val state=if(req.sourceType=="YOUTUBE") {
+                                val detail=videoReports.firstOrNull{it.path==req.reportUri}
+                                detail?.let{ReportReviewV1.loadYouTube(context,req.reportUri,it.samples)}
+                            } else {
+                                val catNow=category
+                                val rows=if(catNow=="TIKTOK_LAG")tikTokLagReports else tikTokUploadReports
+                                val rr=rows.firstOrNull{it.uri==req.reportUri}
+                                val parsed=rr?.let{runCatching{context.contentResolver.openInputStream(Uri.parse(it.uri))?.bufferedReader()?.use{x->TikTokReportExporter.parse(x.readText())}}.getOrNull()}
+                                parsed?.let{ReportReviewV1.load(context,req.reportUri,it.events)}
+                            }
+                            if(state!=null){
+                                val nt0=clockFmt.format(Date(req.recordingStartMs+markedT0!!))
+                                val nt1=clockFmt.format(Date(req.recordingStartMs+markedT1!!))
+                                val updated=state.events.mapIndexed{i,x->if(i==req.eventIndex)x.copy(t0=nt0,t1=nt1,valid=true) else x}
+                                ReportReviewV1.save(context,req.reportUri,state.copy(confirmed=false,confirmedAt=0L,events=updated))
+                                Toast.makeText(context,"T0/T1 calibrated from recording",Toast.LENGTH_SHORT).show()
+                                reviewPlayer=null
+                            }
                         }
                     }
                 ){Text("SAVE CALIBRATION")}
@@ -760,8 +768,8 @@ private fun ReportsHome(
         )
     }
 
-    reviewEdit?.let { triple ->
-        val reportKey=triple.first;val idx=triple.second;val initial=triple.third
+    reviewEdit?.let { request ->
+        val reportKey=request.reportKey;val idx=request.index;val initial=request.initial
         var t0 by remember(initial){mutableStateOf(initial.t0)}
         var t1 by remember(initial){mutableStateOf(initial.t1)}
         var note by remember(initial){mutableStateOf(initial.note)}
@@ -775,13 +783,17 @@ private fun ReportsHome(
                 Text("Original timing remains in the raw report. These reviewed values are stored separately for traceability.",style=MaterialTheme.typography.bodySmall)
             }},
             confirmButton={Button(onClick={
-                val catNow=category?:return@Button
-                val rows=if(catNow=="TIKTOK_LAG")tikTokLagReports else tikTokUploadReports
-                val rr=rows.firstOrNull{it.uri==reportKey}?:return@Button
-                val parsed=runCatching{context.contentResolver.openInputStream(Uri.parse(rr.uri))?.bufferedReader()?.use{TikTokReportExporter.parse(it.readText())}}.getOrNull()?:return@Button
-                val s=ReportReviewV1.load(context,reportKey,parsed.events)
-                val updated=s.events.mapIndexed{i,e->if(i==idx)e.copy(t0=t0.trim(),t1=t1.trim(),note=note.trim()) else e}
-                ReportReviewV1.save(context,reportKey,s.copy(confirmed=false,confirmedAt=0L,events=updated));reviewEdit=null
+                val reviewState=if(request.category=="YOUTUBE") {
+                    val detail=videoReports.firstOrNull{it.path==reportKey}?:return@Button
+                    ReportReviewV1.loadYouTube(context,reportKey,detail.samples)
+                } else {
+                    val rows=if(request.category=="TIKTOK_LAG")tikTokLagReports else tikTokUploadReports
+                    val rr=rows.firstOrNull{it.uri==reportKey}?:return@Button
+                    val parsed=runCatching{context.contentResolver.openInputStream(Uri.parse(rr.uri))?.bufferedReader()?.use{TikTokReportExporter.parse(it.readText())}}.getOrNull()?:return@Button
+                    ReportReviewV1.load(context,reportKey,parsed.events)
+                }
+                val updated=reviewState.events.mapIndexed{i,e->if(i==idx)e.copy(t0=t0.trim(),t1=t1.trim(),note=note.trim()) else e}
+                ReportReviewV1.save(context,reportKey,reviewState.copy(confirmed=false,confirmedAt=0L,events=updated));reviewEdit=null
             }){Text("SAVE")}},
             dismissButton={TextButton(onClick={reviewEdit=null}){Text("Cancel")}}
         )
@@ -844,12 +856,51 @@ private fun ReportsHome(
                         }
                     }
                     "YOUTUBE" -> videoReports.firstOrNull { it.path == path }?.let { r ->
-                        val values = r.samples.mapNotNull { it.delayMs }
+                        val reviewState=ReportReviewV1.loadYouTube(context,r.path,r.samples)
+                        val reviewedDurations=reviewState.events.filter{it.valid}.mapNotNull{ReportReviewV1.durationMs(it.t0,it.t1)}
                         GlassSection("YouTube Summary") {
                             Field("Started", SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(r.startedAt)))
                             Field("Attempts", r.samples.size.toString())
-                            Field("Average", values.takeIf { it.isNotEmpty() }?.average()?.let { String.format(Locale.US, "%.0f ms", it) } ?: "--")
+                            Field("Reviewed Valid", reviewState.events.count{it.valid}.toString())
+                            Field("Average", reviewedDurations.takeIf { it.isNotEmpty() }?.average()?.let { String.format(Locale.US, "%.0f ms", it) } ?: "--")
+                            Field("Review Status", if(reviewState.confirmed) "Confirmed" else "Draft / Not Confirmed")
                             Field("Status", r.status)
+                        }
+                        r.samples.forEachIndexed { i,sample ->
+                            val rev=reviewState.events.getOrNull(i) ?: return@forEachIndexed
+                            GlassSection("Attempt #${i+1} · ${sample.result}") {
+                                Field("Title",sample.title.ifBlank{"--"})
+                                Field("Original T0 → T1",
+                                    "${SimpleDateFormat("HH:mm:ss.SSS",Locale.US).format(Date(sample.startMs))} → "+
+                                        if(sample.loadedMs>0)SimpleDateFormat("HH:mm:ss.SSS",Locale.US).format(Date(sample.loadedMs)) else "--")
+                                Field("Reviewed T0 → T1","${rev.t0.ifBlank{"--"}} → ${rev.t1.ifBlank{"--"}}")
+                                Field("Reviewed Delay",ReportReviewV1.durationMs(rev.t0,rev.t1)?.let{"$it ms"}?:"--")
+                                Field("Review",if(rev.valid)"Valid" else "Invalid / Mis-touch")
+                                if(rev.note.isNotBlank()) Field("Note",rev.note)
+                                Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                                    OutlinedButton(onClick={
+                                        val uri=r.screenRecordingUri.orEmpty()
+                                        val base=r.screenRecordingStartMs
+                                        if(uri.isBlank()||base<=0L){
+                                            Toast.makeText(context,"This report has no linked screen recording. New tests will save it automatically.",Toast.LENGTH_SHORT).show()
+                                        }else{
+                                            val offset=(sample.startMs-base-5000L).coerceAtLeast(0L)
+                                            reviewPlayer=ReviewPlayerRequest(r.path,i,uri,base,offset,"YouTube #${i+1}","YOUTUBE")
+                                        }
+                                    },modifier=Modifier.weight(1f)){Text("REVIEW VIDEO")}
+                                    OutlinedButton(onClick={reviewEdit=ReviewEditRequestV1("YOUTUBE",r.path,i,rev)},modifier=Modifier.weight(1f)){Text("EDIT T0/T1")}
+                                }
+                                TextButton(onClick={
+                                    val current=ReportReviewV1.loadYouTube(context,r.path,r.samples)
+                                    ReportReviewV1.save(context,r.path,current.copy(confirmed=false,confirmedAt=0L,events=current.events.mapIndexed{j,x->if(j==i)x.copy(valid=!x.valid) else x}))
+                                }){Text(if(rev.valid)"MARK INVALID" else "MARK VALID")}
+                            }
+                        }
+                        GlassSection("Screen Recording") {
+                            val screenUri=r.screenRecordingUri
+                            Field("Linked",if(screenUri.isNullOrBlank())"No" else "Yes")
+                            if(!screenUri.isNullOrBlank()) Button(onClick={playScreenRecording(screenUri)},modifier=Modifier.fillMaxWidth()){Text("PLAY / REVIEW RECORDING")}
+                            else Text("Older reports may not contain a screen-recording link. Run a new YouTube test with Auto Screen Recording enabled to use frame calibration.",style=MaterialTheme.typography.bodySmall)
                         }
                     }
                     "WHATSAPP" -> whatsappReports.firstOrNull { it.path == path }?.let { r ->
@@ -902,7 +953,7 @@ private fun ReportsHome(
                                             reviewPlayer=ReviewPlayerRequest(r.uri,i,videoUri,recordedAt,(offset-5000L).coerceAtLeast(0L),"Lag #${i+1}")
                                         }
                                     },modifier=Modifier.weight(1f)){Text("REVIEW VIDEO")}
-                                    OutlinedButton(onClick={reviewEdit=Triple(r.uri,i,rev)},modifier=Modifier.weight(1f)){Text("EDIT T0/T1")}
+                                    OutlinedButton(onClick={reviewEdit=ReviewEditRequestV1(cat,r.uri,i,rev)},modifier=Modifier.weight(1f)){Text("EDIT T0/T1")}
                                 }
                                 TextButton(onClick={
                                     val s=ReportReviewV1.load(context,r.uri,parsed.events)
@@ -974,7 +1025,7 @@ private fun ReportsHome(
                                             reviewPlayer=ReviewPlayerRequest(r.uri,i,videoUri,recordedAt,(offset-5000L).coerceAtLeast(0L),"Upload #${i+1}")
                                         }
                                     },modifier=Modifier.weight(1f)){Text("REVIEW VIDEO")}
-                                    OutlinedButton(onClick={reviewEdit=Triple(r.uri,i,rev)},modifier=Modifier.weight(1f)){Text("EDIT T0/T1")}
+                                    OutlinedButton(onClick={reviewEdit=ReviewEditRequestV1(cat,r.uri,i,rev)},modifier=Modifier.weight(1f)){Text("EDIT T0/T1")}
                                 }
                                 TextButton(onClick={
                                     val s=ReportReviewV1.load(context,r.uri,parsed.events)
@@ -1075,6 +1126,17 @@ private fun ReportsHome(
                         enabled = !busy
                     ) { Text(if (busy) "PREPARING…" else "EXPORT / SHARE") }
                     if (cat == "YOUTUBE") {
+                        Button(
+                            onClick = {
+                                val detail=videoReports.firstOrNull{it.path==path}
+                                if(detail!=null){
+                                    val rs=ReportReviewV1.loadYouTube(context,path,detail.samples)
+                                    ReportReviewV1.save(context,path,rs.copy(confirmed=true,confirmedAt=System.currentTimeMillis()))
+                                    Toast.makeText(context,"Review confirmed · export will use reviewed timings",Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            modifier=Modifier.fillMaxWidth(),enabled=!busy
+                        ){Text("CONFIRM REVIEW")}
                         OutlinedButton(
                             onClick = { deleteYouTubePath = path },
                             modifier = Modifier.fillMaxWidth(),
