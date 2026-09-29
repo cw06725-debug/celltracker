@@ -1,3 +1,11 @@
+# v1.2.18 (versionCode 195)
+
+- Unified YouTube report details between Reports and YouTube Video Loading history: Attempts now supports direct review/calibration with highlighted REVIEW VIDEO and EDIT T0/T1 actions.
+- Standardized YouTube report action button widths inside one card-based Actions section.
+- Applied card-style surfaces to Settings subpages and additional test/detail secondary pages for a more consistent visual hierarchy.
+- DUT debuglogger export now treats ADB Permission denied as FAILED rather than PARTIAL SUCCESS.
+- Added a permission-denied diagnosis dialog that offers a modem-log fallback export from `/data/debuglogger/diag_mdlog`.
+
 # v1.2.17 (versionCode 194)
 
 - YouTube Video Test overlay now matches the TikTok interaction style: removed the visible "drag here" wording while retaining drag support on the non-button information area.

@@ -141,11 +141,16 @@ class AdbSyncPuller(private val context:Context){
        files += SyncPulledFile(uri, rel)
        pulled++
       } catch (e: Throwable) {
-       // A debuglogger tree can contain protected or transient files. One denied file
-       // must not abort the whole export; keep pulling the rest and report PARTIAL.
+       val reason = e.message ?: e.javaClass.simpleName
+       // Permission denied means the selected DUT tree is not fully readable by shell ADB.
+       // Treat this as a real export failure instead of reporting PARTIAL SUCCESS, because
+       // a debug package with missing modem files is not complete enough for analysis.
+       if (reason.contains("Permission denied", ignoreCase = true)) {
+        throw IllegalStateException("Permission denied while reading $remote. Full debuglogger export is incomplete because shell ADB cannot read this protected item.", e)
+       }
        skipped++
-       errors += "PULL $remote: ${e.message ?: e.javaClass.simpleName}"
-       onProgress(SyncPullProgress(found, pulled, skipped, bytes, remote, "Skipped inaccessible file"))
+       errors += "PULL $remote: $reason"
+       onProgress(SyncPullProgress(found, pulled, skipped, bytes, remote, "Skipped unreadable file"))
       }
      }
 

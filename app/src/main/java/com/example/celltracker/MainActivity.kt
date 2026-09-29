@@ -47,6 +47,7 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -878,7 +879,7 @@ private fun ReportsHome(
                                 Field("Review",if(rev.valid)"Valid" else "Invalid / Mis-touch")
                                 if(rev.note.isNotBlank()) Field("Note",rev.note)
                                 Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){
-                                    OutlinedButton(onClick={
+                                    Button(onClick={
                                         val uri=r.screenRecordingUri.orEmpty()
                                         val base=r.screenRecordingStartMs
                                         if(uri.isBlank()||base<=0L){
@@ -888,7 +889,7 @@ private fun ReportsHome(
                                             reviewPlayer=ReviewPlayerRequest(r.path,i,uri,base,offset,"YouTube #${i+1}","YOUTUBE")
                                         }
                                     },modifier=Modifier.weight(1f)){Text("REVIEW VIDEO")}
-                                    OutlinedButton(onClick={reviewEdit=ReviewEditRequestV1("YOUTUBE",r.path,i,rev)},modifier=Modifier.weight(1f)){Text("EDIT T0/T1")}
+                                    Button(onClick={reviewEdit=ReviewEditRequestV1("YOUTUBE",r.path,i,rev)},modifier=Modifier.weight(1f)){Text("EDIT T0/T1")}
                                 }
                                 TextButton(onClick={
                                     val current=ReportReviewV1.loadYouTube(context,r.path,r.samples)
@@ -899,8 +900,8 @@ private fun ReportsHome(
                         GlassSection("Screen Recording") {
                             val screenUri=r.screenRecordingUri
                             Field("Linked",if(screenUri.isNullOrBlank())"No" else "Yes")
-                            if(!screenUri.isNullOrBlank()) Button(onClick={playScreenRecording(screenUri)},modifier=Modifier.fillMaxWidth()){Text("PLAY / REVIEW RECORDING")}
-                            else Text("Older reports may not contain a screen-recording link. Run a new YouTube test with Auto Screen Recording enabled to use frame calibration.",style=MaterialTheme.typography.bodySmall)
+                            if(screenUri.isNullOrBlank()) Text("Older reports may not contain a screen-recording link. Run a new YouTube test with Auto Screen Recording enabled to use frame calibration.",style=MaterialTheme.typography.bodySmall)
+                            else Text("Use the Actions card below to play the full recording or calibrate an individual attempt.",style=MaterialTheme.typography.bodySmall)
                         }
                     }
                     "WHATSAPP" -> whatsappReports.firstOrNull { it.path == path }?.let { r ->
@@ -1114,21 +1115,27 @@ private fun ReportsHome(
                         },
                         modifier = Modifier.fillMaxWidth()
                     ) { Text("EXPORT / SHARE") }
-                } else {
-                    Button(
-                        onClick = { exportPath(cat, path, true) },
-                        modifier = Modifier.fillMaxWidth(),
-                        enabled = !busy
-                    ) { Text(if (busy) "PREPARING…" else "PREVIEW SUMMARY") }
-                    Button(
-                        onClick = { exportPath(cat, path, false) },
-                        modifier = Modifier.fillMaxWidth(),
-                        enabled = !busy
-                    ) { Text(if (busy) "PREPARING…" else "EXPORT / SHARE") }
-                    if (cat == "YOUTUBE") {
+                } else if (cat == "YOUTUBE") {
+                    val detail = videoReports.firstOrNull { it.path == path }
+                    GlassSection("Actions") {
+                        val screenUri = detail?.screenRecordingUri.orEmpty()
+                        Button(
+                            onClick = { if(screenUri.isNotBlank()) playScreenRecording(screenUri) },
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = screenUri.isNotBlank() && !busy
+                        ) { Text("PLAY / REVIEW RECORDING") }
+                        Button(
+                            onClick = { exportPath(cat, path, true) },
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = !busy
+                        ) { Text(if (busy) "PREPARING…" else "PREVIEW SUMMARY") }
+                        Button(
+                            onClick = { exportPath(cat, path, false) },
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = !busy
+                        ) { Text(if (busy) "PREPARING…" else "EXPORT / SHARE") }
                         Button(
                             onClick = {
-                                val detail=videoReports.firstOrNull{it.path==path}
                                 if(detail!=null){
                                     val rs=ReportReviewV1.loadYouTube(context,path,detail.samples)
                                     ReportReviewV1.save(context,path,rs.copy(confirmed=true,confirmedAt=System.currentTimeMillis()))
@@ -1143,6 +1150,17 @@ private fun ReportsHome(
                             enabled = !busy
                         ) { Text("DELETE REPORT") }
                     }
+                } else {
+                    Button(
+                        onClick = { exportPath(cat, path, true) },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !busy
+                    ) { Text(if (busy) "PREPARING…" else "PREVIEW SUMMARY") }
+                    Button(
+                        onClick = { exportPath(cat, path, false) },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !busy
+                    ) { Text(if (busy) "PREPARING…" else "EXPORT / SHARE") }
                 }
             }
         }
@@ -3433,11 +3451,11 @@ private fun SettingsScreen(
             modifier = Modifier.padding(padding).fillMaxSize()
         ) { currentPage ->
             when (currentPage) {
-                "sampling" -> Column(Modifier.padding(16.dp).verticalScroll(rememberRetainedScrollState("settings.sampling")), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                "sampling" -> Column(Modifier.padding(16.dp).fillMaxSize().clip(RoundedCornerShape(22.dp)).background(MaterialTheme.colorScheme.surface).border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=.12f), RoundedCornerShape(22.dp)).padding(16.dp).verticalScroll(rememberRetainedScrollState("settings.sampling")), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     IntervalPicker("UI refresh interval", draft.uiRefreshMs) { applySetting(draft.copy(uiRefreshMs = it)) }
                     IntervalPicker("Recording interval", draft.recordIntervalMs) { applySetting(draft.copy(recordIntervalMs = it)) }
                 }
-                "marker" -> Column(Modifier.padding(16.dp).verticalScroll(rememberRetainedScrollState("settings.marker")), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                "marker" -> Column(Modifier.padding(16.dp).fillMaxSize().clip(RoundedCornerShape(22.dp)).background(MaterialTheme.colorScheme.surface).border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=.12f), RoundedCornerShape(22.dp)).padding(16.dp).verticalScroll(rememberRetainedScrollState("settings.marker")), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     ActionPicker("Tap action", draft.tapAction) { applySetting(draft.copy(tapAction = it)) }
                     ActionPicker("Long press action", draft.longPressAction) { applySetting(draft.copy(longPressAction = it)) }
                     HorizontalDivider(); Text("After mark", style = MaterialTheme.typography.titleMedium)
@@ -3445,7 +3463,7 @@ private fun SettingsScreen(
                     SettingSwitch("Show toast", draft.toastOnMark) { applySetting(draft.copy(toastOnMark = it)) }
                     SettingSwitch("Play sound", draft.soundOnMark) { applySetting(draft.copy(soundOnMark = it)) }
                 }
-                "floating" -> Column(Modifier.padding(16.dp).verticalScroll(rememberRetainedScrollState("settings.floating")), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                "floating" -> Column(Modifier.padding(16.dp).fillMaxSize().clip(RoundedCornerShape(22.dp)).background(MaterialTheme.colorScheme.surface).border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=.12f), RoundedCornerShape(22.dp)).padding(16.dp).verticalScroll(rememberRetainedScrollState("settings.floating")), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     val context = LocalContext.current
                     var overlayGranted by remember { mutableStateOf(android.provider.Settings.canDrawOverlays(context)) }
                     var usageAccessGranted by remember { mutableStateOf(ScreenCaptureService.hasUsageAccess(context)) }
@@ -3518,7 +3536,7 @@ private fun SettingsScreen(
                     Text("When usage access is available, screenshot names use the most recent foreground app. If its display label cannot be read, CellTracker keeps a recognizable package-name suffix instead of using 'Screen'.", style = MaterialTheme.typography.bodySmall)
                     Text("The window uses the recording Mark Target SIM and can be dragged, collapsed and used to create issue markers while another app is on screen.", style = MaterialTheme.typography.bodySmall)
                 }
-                "map" -> Column(Modifier.padding(16.dp).verticalScroll(rememberRetainedScrollState("settings.map")), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                "map" -> Column(Modifier.padding(16.dp).fillMaxSize().clip(RoundedCornerShape(22.dp)).background(MaterialTheme.colorScheme.surface).border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=.12f), RoundedCornerShape(22.dp)).padding(16.dp).verticalScroll(rememberRetainedScrollState("settings.map")), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("Changes are saved immediately.", style = MaterialTheme.typography.bodySmall)
                     MapDetailField.entries.forEach { field ->
                         SettingSwitch(field.label, field in draft.mapDetailFields) { checked ->
@@ -3526,7 +3544,7 @@ private fun SettingsScreen(
                         }
                     }
                 }
-                "issues" -> Column(Modifier.padding(16.dp).verticalScroll(rememberRetainedScrollState("settings.issues")), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                "issues" -> Column(Modifier.padding(16.dp).fillMaxSize().clip(RoundedCornerShape(22.dp)).background(MaterialTheme.colorScheme.surface).border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=.12f), RoundedCornerShape(22.dp)).padding(16.dp).verticalScroll(rememberRetainedScrollState("settings.issues")), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Issue choices used by the upcoming Mark workflow. Changes are saved immediately.", style = MaterialTheme.typography.bodySmall)
                     draft.issueTypes.forEach { issue ->
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
@@ -3545,7 +3563,12 @@ private fun SettingsScreen(
                         }) { Text("Add") }
                     }
                 }
-                "metadata" -> MetadataOptionsSettings()
+                "metadata" -> Surface(
+                    modifier = Modifier.padding(16.dp).fillMaxSize(),
+                    shape = RoundedCornerShape(22.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .12f))
+                ) { MetadataOptionsSettings() }
                 else -> Column(
                     Modifier.padding(horizontal = 16.dp, vertical = 14.dp).verticalScroll(rootScrollState),
                     verticalArrangement = Arrangement.spacedBy(18.dp)
@@ -3980,11 +4003,12 @@ private fun WhatsAppSendScreen(onBack: () -> Unit) {
 
     Scaffold(topBar = { TopAppBar(title = { Text("WhatsApp Image Send") }, navigationIcon = { TextButton(onClick = onBack) { Text("Back") } }) }) { pad ->
         Column(Modifier.padding(pad).padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Manual timing", style = MaterialTheme.typography.titleMedium)
-            Text("Open a WhatsApp chat and prepare an image. For each sample: START → ARMED → tap Send (T0) → tap SENT (T1).", style = MaterialTheme.typography.bodySmall)
-            Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(autoRecord, { autoRecord = it }); Text("Auto Network Recording") }
-            Button(onClick = { context.startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }) { Text("1. Enable WhatsApp Send Accessibility") }
-            Button(onClick = { showMetadata = true }) { Text("2. PREPARE TEST / Open WhatsApp") }
+            GlassSection("Test Setup") {
+                Text("Open a WhatsApp chat and prepare an image. For each sample: START → ARMED → tap Send (T0) → tap SENT (T1).", style = MaterialTheme.typography.bodySmall)
+                Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(autoRecord, { autoRecord = it }); Text("Auto Network Recording") }
+                Button(onClick = { context.startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }, modifier = Modifier.fillMaxWidth()) { Text("1. ENABLE WHATSAPP SEND ACCESSIBILITY") }
+                Button(onClick = { showMetadata = true }, modifier = Modifier.fillMaxWidth()) { Text("2. PREPARE TEST / OPEN WHATSAPP") }
+            }
             TextButton(onClick = { history = repo.history() }) { Text("Refresh History") }
             Text("History", style = MaterialTheme.typography.titleMedium)
             if (history.isEmpty()) Text("No WhatsApp send sessions yet", style = MaterialTheme.typography.bodySmall)
@@ -4565,20 +4589,17 @@ private fun VisualAiCollectorScreen(onBack: () -> Unit) {
 
     Scaffold(topBar = { TopAppBar(title = { Text("Visual AI Collector") }, navigationIcon = { TextButton(onClick = onBack) { Text("Back") } }) }) { pad ->
         Column(Modifier.padding(pad).padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Independent Collector", style = MaterialTheme.typography.titleMedium)
-            Text("This mode only records YouTube screen data for visual-AI development. It does not use the old PLAY/RECS result to stop an attempt.", style = MaterialTheme.typography.bodySmall)
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(if (active) "CAPTURING ●" else "COLLECTOR READY", style = MaterialTheme.typography.titleMedium)
-                    Text("Frames: $frames")
-                    Text("PLAYER images: $frames")
-                    Text("RECS images: $frames")
-                    if (failures > 0) Text("Save failures: $failures")
-                    if (active && frames == 0) Text("Waiting for first MediaProjection frame…", style = MaterialTheme.typography.bodySmall)
-                    if (lastPath.isNotBlank()) Text("Working folder: $lastPath", style = MaterialTheme.typography.bodySmall)
-                    if (exportStatus.isNotBlank()) Text("Export: $exportStatus", style = MaterialTheme.typography.bodySmall)
-                    if (exportPath.isNotBlank()) Text("Public ZIP: $exportPath", style = MaterialTheme.typography.bodySmall)
-                }
+            GlassSection("Independent Collector") {
+                Text("This mode only records YouTube screen data for visual-AI development. It does not use the old PLAY/RECS result to stop an attempt.", style = MaterialTheme.typography.bodySmall)
+                Text(if (active) "CAPTURING ●" else "COLLECTOR READY", style = MaterialTheme.typography.titleMedium)
+                Field("Frames", frames.toString())
+                Field("PLAYER images", frames.toString())
+                Field("RECS images", frames.toString())
+                if (failures > 0) Field("Save failures", failures.toString())
+                if (active && frames == 0) Text("Waiting for first MediaProjection frame…", style = MaterialTheme.typography.bodySmall)
+                if (lastPath.isNotBlank()) LongField("Working folder", lastPath)
+                if (exportStatus.isNotBlank()) LongField("Export", exportStatus)
+                if (exportPath.isNotBlank()) LongField("Public ZIP", exportPath)
             }
             if (!active) {
                 Button(onClick = {
@@ -4627,6 +4648,9 @@ private fun VideoLoadingScreen(onBack: () -> Unit, onVisualAiCollector: () -> Un
     var preview by remember { mutableStateOf<VideoLoadingDetail?>(null) }
     var deleteVideoPath by remember { mutableStateOf<String?>(null) }
     var exportResult by remember { mutableStateOf<ExportResult?>(null) }
+    var reviewEdit by remember { mutableStateOf<ReviewEditRequestV1?>(null) }
+    var reviewPlayer by remember { mutableStateOf<ReviewPlayerRequest?>(null) }
+    var reviewRevision by remember { mutableIntStateOf(0) }
     val metaRepo = remember { TestMetadataRepository(context) }
     var showMetadata by remember { mutableStateOf(false) }
     var pendingConfig by remember { mutableStateOf<VideoLoadingConfig?>(null) }
@@ -4653,34 +4677,39 @@ private fun VideoLoadingScreen(onBack: () -> Unit, onVisualAiCollector: () -> Un
         topBar = { TopAppBar(title = { Text("YouTube Video Loading") }, navigationIcon = { TextButton(onClick = onBack) { Text("Back") } }) }
     ) { pad ->
         Column(Modifier.padding(pad).padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Preparation", style = MaterialTheme.typography.titleMedium)
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Visual AI Collector", style = MaterialTheme.typography.titleSmall)
-                    Text("Independent screen-data collection. It does NOT use PLAY/RECS auto-result logic.", style = MaterialTheme.typography.bodySmall)
-                    Button(onClick = onVisualAiCollector, modifier = Modifier.fillMaxWidth()) { Text("Open Visual AI Collector") }
+            GlassSection("Test Setup") {
+                Text("On every DUT/REF: open YouTube → the same creator → Videos, with the same first video visible. Each phone measures its own loading delay; simultaneous start is not required.", style = MaterialTheme.typography.bodySmall)
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                ) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Visual AI Collector", style = MaterialTheme.typography.titleSmall)
+                        Text("Independent screen-data collection. It does NOT use PLAY/RECS auto-result logic.", style = MaterialTheme.typography.bodySmall)
+                        Button(onClick = onVisualAiCollector, modifier = Modifier.fillMaxWidth()) { Text("OPEN VISUAL AI COLLECTOR") }
+                    }
                 }
+                OutlinedTextField(count, { count = it.filter(Char::isDigit) }, label = { Text("Test count (AUTO only)") }, singleLine = true, enabled = !semiAuto, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(timeout, { timeout = it.filter(Char::isDigit) }, label = { Text("Load timeout (s)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(returnWait, { returnWait = it.filter { c -> c.isDigit() || c == '.' } }, label = { Text("Return wait (s)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(autoRecord, { autoRecord = it }); Text("Auto Network Recording") }
+                Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(autoScreenRecord, { autoScreenRecord = it }); Text("Auto Screen Recording") }
+                Text("Android shows the system capture confirmation before the test. The MP4 is named from the test metadata and stops when the YouTube test finishes.",style=MaterialTheme.typography.bodySmall)
+                Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(semiAuto, { semiAuto = it }); Text("Semi-auto mode (START → click video → LOADED)") }
+                if (semiAuto) Text("Semi-auto has no fixed test count. For EACH sample: press START on the YouTube list, then tap one video; that tap is T0. CellTracker automatically detects playback start as T1. LOADED is only the manual T1 fallback if AUTO is not confirmed. Between samples you can scroll freely. Advertisements can be corrected during report review/calibration.", style = MaterialTheme.typography.bodySmall)
+                Button(onClick = { context.startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }, modifier = Modifier.fillMaxWidth()) { Text("1. ENABLE CELLTRACKER ACCESSIBILITY") }
+                Button(onClick = {
+                    pendingConfig = VideoLoadingConfig(
+                        count = (count.toIntOrNull() ?: 10).coerceIn(1, 50),
+                        timeoutMs = ((timeout.toLongOrNull() ?: 15) * 1000).coerceAtLeast(3000),
+                        returnWaitMs = (((returnWait.toDoubleOrNull() ?: 2.0) * 1000).toLong()).coerceAtLeast(500),
+                        autoRecord = autoRecord, semiAuto = semiAuto
+                    )
+                    showMetadata = true
+                }, modifier = Modifier.fillMaxWidth()) { Text("2. PREPARE TEST / OPEN YOUTUBE") }
+                Text(if (semiAuto) "Semi-auto: for every sample, START → tap one video (T0) → AUTO T1 when playback starts (LOADED is fallback) → return → freely scroll → START again. Android Back before T1 cancels the unfinished sample." else "AUTO: START → different video → first-play detection → Back → next video → auto-scroll. LOADED is a manual fallback.", style = MaterialTheme.typography.bodySmall)
             }
-            Text("On every DUT/REF: open YouTube → the same creator → Videos, with the same first video visible. Each phone measures its own loading delay; simultaneous start is not required.", style = MaterialTheme.typography.bodySmall)
-            OutlinedTextField(count, { count = it.filter(Char::isDigit) }, label = { Text("Test count (AUTO only)") }, singleLine = true, enabled = !semiAuto)
-            OutlinedTextField(timeout, { timeout = it.filter(Char::isDigit) }, label = { Text("Load timeout (s)") }, singleLine = true)
-            OutlinedTextField(returnWait, { returnWait = it.filter { c -> c.isDigit() || c == '.' } }, label = { Text("Return wait (s)") }, singleLine = true)
-            Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(autoRecord, { autoRecord = it }); Text("Auto Network Recording") }
-            Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(autoScreenRecord, { autoScreenRecord = it }); Text("Auto Screen Recording") }
-            Text("Android shows the system capture confirmation before the test. The MP4 is named from the test metadata and stops when the YouTube test finishes.",style=MaterialTheme.typography.bodySmall)
-            Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(semiAuto, { semiAuto = it }); Text("Semi-auto mode (START → click video → LOADED)") }
-            if (semiAuto) Text("Semi-auto has no fixed test count. For EACH sample: press START on the YouTube list, then tap one video; that tap is T0. CellTracker automatically detects playback start as T1. LOADED is only the manual T1 fallback if AUTO is not confirmed. Between samples you can scroll freely. Advertisements can be corrected during report review/calibration; no separate AD/SKIP overlay action is required.", style = MaterialTheme.typography.bodySmall)
-            Button(onClick = { context.startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }) { Text("1. Enable CellTracker Accessibility") }
-            Button(onClick = {
-                pendingConfig = VideoLoadingConfig(
-                    count = (count.toIntOrNull() ?: 10).coerceIn(1, 50),
-                    timeoutMs = ((timeout.toLongOrNull() ?: 15) * 1000).coerceAtLeast(3000),
-                    returnWaitMs = (((returnWait.toDoubleOrNull() ?: 2.0) * 1000).toLong()).coerceAtLeast(500),
-                    autoRecord = autoRecord, semiAuto = semiAuto
-                )
-                showMetadata = true
-            }) { Text("2. PREPARE TEST / Open YouTube") }
-            Text(if (semiAuto) "Semi-auto: for every sample, START → tap one video (T0) → AUTO T1 when playback starts (LOADED is fallback) → return → freely scroll → START again. Android Back before T1 cancels the unfinished sample." else "AUTO: START → different video → first-play detection → Back → next video → auto-scroll. LOADED is a manual fallback.", style = MaterialTheme.typography.bodySmall)
             TextButton(onClick = { history = repo.history() }) { Text("Refresh History") }
             Text("History", style = MaterialTheme.typography.titleMedium)
             if (history.isEmpty()) Text("No video loading sessions yet", style = MaterialTheme.typography.bodySmall)
@@ -4735,18 +4764,15 @@ private fun VideoLoadingScreen(onBack: () -> Unit, onVisualAiCollector: () -> Un
         fun pct(p: Double): Long? = if (values.isEmpty()) null else values[((values.size - 1) * p).toInt().coerceIn(0, values.lastIndex)]
         var detailTab by remember(d.path) { mutableIntStateOf(0) }
         val detailTabs = listOf("Summary", "Attempts", "Map")
+        val reviewState = remember(d.path, reviewRevision) { ReportReviewV1.loadYouTube(context, d.path, d.samples) }
+        val reviewedDurations = reviewState.events.filter { it.valid }.mapNotNull { ReportReviewV1.durationMs(it.t0, it.t1) }
         Dialog(onDismissRequest = { preview = null }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
             Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                 Scaffold(
                     topBar = {
                         TopAppBar(
                             title = { Text("YouTube Test Result") },
-                            navigationIcon = { TextButton(onClick = { preview = null }) { Text("Back") } },
-                            actions = {
-                                TextButton(onClick = {
-                                    runCatching { VideoLoadingExporter.export(context, d.path) }.onSuccess { exportResult = it }
-                                }) { Text("Share") }
-                            }
+                            navigationIcon = { TextButton(onClick = { preview = null }) { Text("Back") } }
                         )
                     },
                     bottomBar = {
@@ -4756,10 +4782,9 @@ private fun VideoLoadingScreen(onBack: () -> Unit, onVisualAiCollector: () -> Un
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
                                 OutlinedButton(onClick = { deleteVideoPath = d.path }, modifier = Modifier.weight(1f)) { Text("Delete") }
-                                OutlinedButton(onClick = { preview = null }, modifier = Modifier.weight(1f)) { Text("Close") }
                                 Button(onClick = {
                                     runCatching { VideoLoadingExporter.export(context, d.path) }.onSuccess { exportResult = it }
-                                }, modifier = Modifier.weight(1f)) { Text("Share") }
+                                }, modifier = Modifier.weight(1f)) { Text("Export / Share") }
                             }
                         }
                     }
@@ -4774,29 +4799,82 @@ private fun VideoLoadingScreen(onBack: () -> Unit, onVisualAiCollector: () -> Un
                             when (detailTab) {
                                 0 -> LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                                     item {
-                                        Card(Modifier.fillMaxWidth()) {
-                                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                                Text("Summary", style = MaterialTheme.typography.titleMedium)
-                                                Text("Status: ${d.status}")
-                                                Text("Attempts: ${d.samples.size} · Success: ${d.samples.count { it.result == "PASS" }} · Timeout: ${d.samples.count { it.result == "TIMEOUT" }} · AD: ${d.samples.count { it.result == "AD" }}")
-                                                Text("Average: ${if (values.isEmpty()) "--" else String.format(Locale.US, "%.0f ms", values.average())} · Median: ${pct(.5)?.let { "$it ms" } ?: "--"}")
-                                                Text("P90: ${pct(.9)?.let { "$it ms" } ?: "--"} · P95: ${pct(.95)?.let { "$it ms" } ?: "--"}")
-                                                Text("Min / Max: ${values.minOrNull()?.let { "$it ms" } ?: "--"} / ${values.maxOrNull()?.let { "$it ms" } ?: "--"}")
-                                            }
+                                        GlassSection("YouTube Summary") {
+                                            Field("Status", d.status)
+                                            Field("Attempts", d.samples.size.toString())
+                                            Field("Success", d.samples.count { it.result == "PASS" }.toString())
+                                            Field("Reviewed Valid", reviewState.events.count { it.valid }.toString())
+                                            Field("Average", reviewedDurations.takeIf { it.isNotEmpty() }?.average()?.let { String.format(Locale.US, "%.0f ms", it) } ?: "--")
+                                            Field("Median", pct(.5)?.let { "$it ms" } ?: "--")
+                                            Field("P90 / P95", "${pct(.9)?.let { "$it ms" } ?: "--"} / ${pct(.95)?.let { "$it ms" } ?: "--"}")
+                                            Field("Review Status", if (reviewState.confirmed) "Confirmed" else "Draft / Not Confirmed")
+                                        }
+                                    }
+                                    item {
+                                        GlassSection("Actions") {
+                                            Button(
+                                                onClick = {
+                                                    val uri = d.screenRecordingUri.orEmpty()
+                                                    if (uri.isBlank()) Toast.makeText(context, "No linked screen recording", Toast.LENGTH_SHORT).show()
+                                                    else runCatching {
+                                                        context.startActivity(Intent(Intent.ACTION_VIEW).apply {
+                                                            setDataAndType(Uri.parse(uri), "video/mp4")
+                                                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                                        })
+                                                    }
+                                                },
+                                                modifier = Modifier.fillMaxWidth(),
+                                                enabled = !d.screenRecordingUri.isNullOrBlank()
+                                            ) { Text("PLAY / REVIEW RECORDING") }
+                                            Button(onClick = {
+                                                runCatching { VideoLoadingExporter.export(context, d.path) }.onSuccess { exportResult = it }
+                                            }, modifier = Modifier.fillMaxWidth()) { Text("EXPORT / SHARE") }
+                                            Button(onClick = {
+                                                val rs = ReportReviewV1.loadYouTube(context, d.path, d.samples)
+                                                ReportReviewV1.save(context, d.path, rs.copy(confirmed = true, confirmedAt = System.currentTimeMillis()))
+                                                Toast.makeText(context, "Review confirmed · export will use reviewed timings", Toast.LENGTH_SHORT).show()
+                                            }, modifier = Modifier.fillMaxWidth()) { Text("CONFIRM REVIEW") }
                                         }
                                     }
                                 }
-                                1 -> LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    items(d.samples, key = { it.sequence }) { a ->
-                                        Card(Modifier.fillMaxWidth()) {
-                                            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                                Text("#${a.sequence}  ${a.delayMs?.let { "$it ms" } ?: "TIMEOUT"}  ${a.result} · ${a.detection}", style = MaterialTheme.typography.titleSmall)
-                                                val timeFmt = java.text.SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
-                                                Text("Click ${if (a.startMs > 0) timeFmt.format(java.util.Date(a.startMs)) else "--"} · Loaded ${if (a.loadedMs > 0) timeFmt.format(java.util.Date(a.loadedMs)) else "--"}", style = MaterialTheme.typography.bodySmall)
-                                                Text("T0 Source: ${a.t0Source.ifBlank { "LEGACY" }}", style = MaterialTheme.typography.bodySmall)
-                                                Text(a.title.ifBlank { "Video ${a.sequence}" }, style = MaterialTheme.typography.bodySmall)
-                                                Text("${a.snapshot.displayRat} · RSRP ${a.snapshot.rsrp} · SINR ${a.snapshot.sinr} · PCI ${a.snapshot.pci}", style = MaterialTheme.typography.bodySmall)
+                                1 -> LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    itemsIndexed(d.samples, key = { _, item -> item.sequence }) { i, a ->
+                                        val rev = reviewState.events.getOrNull(i) ?: ReviewedEventV1(i, true,
+                                            if (a.startMs > 0) SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(Date(a.startMs)) else "",
+                                            if (a.loadedMs > 0) SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(Date(a.loadedMs)) else "")
+                                        GlassSection("Attempt #${i + 1} · ${a.result}") {
+                                            Field("Title", a.title.ifBlank { "Video ${a.sequence}" })
+                                            val tf = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
+                                            Field("Original T0 → T1", "${if(a.startMs>0)tf.format(Date(a.startMs)) else "--"} → ${if(a.loadedMs>0)tf.format(Date(a.loadedMs)) else "--"}")
+                                            Field("Reviewed T0 → T1", "${rev.t0.ifBlank { "--" }} → ${rev.t1.ifBlank { "--" }}")
+                                            Field("Reviewed Delay", ReportReviewV1.durationMs(rev.t0, rev.t1)?.let { "$it ms" } ?: "--")
+                                            Field("Review", if (rev.valid) "Valid" else "Invalid / Mis-touch")
+                                            if (rev.note.isNotBlank()) Field("Note", rev.note)
+                                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                Button(onClick = {
+                                                    val uri = d.screenRecordingUri.orEmpty()
+                                                    val base = d.screenRecordingStartMs
+                                                    if (uri.isBlank() || base <= 0L) {
+                                                        Toast.makeText(context, "This report has no linked screen recording", Toast.LENGTH_SHORT).show()
+                                                    } else {
+                                                        val offset = (a.startMs - base - 5000L).coerceAtLeast(0L)
+                                                        reviewPlayer = ReviewPlayerRequest(d.path, i, uri, base, offset, "YouTube #${i + 1}", "YOUTUBE")
+                                                    }
+                                                }, modifier = Modifier.weight(1f)) { Text("REVIEW VIDEO") }
+                                                Button(onClick = { reviewEdit = ReviewEditRequestV1("YOUTUBE", d.path, i, rev) }, modifier = Modifier.weight(1f)) { Text("EDIT T0/T1") }
                                             }
+                                            OutlinedButton(
+                                                onClick = {
+                                                    val current = ReportReviewV1.loadYouTube(context, d.path, d.samples)
+                                                    ReportReviewV1.save(context, d.path, current.copy(
+                                                        confirmed = false,
+                                                        confirmedAt = 0L,
+                                                        events = current.events.mapIndexed { j, x -> if (j == i) x.copy(valid = !x.valid) else x }
+                                                    ))
+                                                    reviewRevision++
+                                                },
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) { Text(if (rev.valid) "MARK INVALID" else "MARK VALID") }
                                         }
                                     }
                                 }
@@ -4814,6 +4892,90 @@ private fun VideoLoadingScreen(onBack: () -> Unit, onVisualAiCollector: () -> Un
             }
         }
     }
+
+    reviewPlayer?.let { req ->
+        var videoView by remember(req) { mutableStateOf<android.widget.VideoView?>(null) }
+        var positionMs by remember(req) { mutableLongStateOf(req.initialPositionMs.coerceAtLeast(0L)) }
+        var playing by remember(req) { mutableStateOf(false) }
+        var markedT0 by remember(req) { mutableStateOf<Long?>(null) }
+        var markedT1 by remember(req) { mutableStateOf<Long?>(null) }
+        val clockFmt = remember { SimpleDateFormat("HH:mm:ss.SSS", Locale.US) }
+        LaunchedEffect(req, videoView) {
+            while (reviewPlayer == req) {
+                videoView?.let { positionMs = it.currentPosition.toLong(); playing = it.isPlaying }
+                delay(200)
+            }
+        }
+        AlertDialog(
+            onDismissRequest = { reviewPlayer = null },
+            title = { Text("${req.eventLabel} · Recording Review") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    AndroidView(
+                        factory = { ctx -> android.widget.VideoView(ctx).also { v ->
+                            videoView = v
+                            v.setVideoURI(Uri.parse(req.videoUri))
+                            v.setOnPreparedListener { v.seekTo(req.initialPositionMs.coerceAtLeast(0L).toInt()) }
+                        }},
+                        modifier = Modifier.fillMaxWidth().height(360.dp)
+                    )
+                    Text("Position  ${String.format(Locale.US, "%02d:%02d.%03d", positionMs/60000, (positionMs/1000)%60, positionMs%1000)}", fontWeight = FontWeight.SemiBold)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        OutlinedButton(onClick = { videoView?.seekTo((positionMs - 5000).coerceAtLeast(0L).toInt()) }, modifier = Modifier.weight(1f)) { Text("−5s") }
+                        Button(onClick = { videoView?.let { if (it.isPlaying) it.pause() else it.start() } }, modifier = Modifier.weight(1.4f)) { Text(if (playing) "PAUSE" else "PLAY") }
+                        OutlinedButton(onClick = { videoView?.seekTo((positionMs + 5000).toInt()) }, modifier = Modifier.weight(1f)) { Text("+5s") }
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Button(onClick = { markedT0 = videoView?.currentPosition?.toLong() ?: positionMs }, modifier = Modifier.weight(1f)) { Text("SET T0") }
+                        Button(onClick = { markedT1 = videoView?.currentPosition?.toLong() ?: positionMs }, modifier = Modifier.weight(1f)) { Text("SET T1") }
+                    }
+                    Text("T0  ${markedT0?.let { clockFmt.format(Date(req.recordingStartMs + it)) } ?: "—"}    T1  ${markedT1?.let { clockFmt.format(Date(req.recordingStartMs + it)) } ?: "—"}", style = MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton = {
+                Button(enabled = markedT0 != null && markedT1 != null, onClick = {
+                    val d = preview ?: return@Button
+                    val state = ReportReviewV1.loadYouTube(context, req.reportUri, d.samples)
+                    val nt0 = clockFmt.format(Date(req.recordingStartMs + markedT0!!))
+                    val nt1 = clockFmt.format(Date(req.recordingStartMs + markedT1!!))
+                    val updated = state.events.mapIndexed { i, x -> if (i == req.eventIndex) x.copy(t0 = nt0, t1 = nt1, valid = true) else x }
+                    ReportReviewV1.save(context, req.reportUri, state.copy(confirmed = false, confirmedAt = 0L, events = updated))
+                    reviewRevision++
+                    reviewPlayer = null
+                }) { Text("SAVE CALIBRATION") }
+            },
+            dismissButton = { TextButton(onClick = { reviewPlayer = null }) { Text("Cancel") } }
+        )
+    }
+
+    reviewEdit?.let { request ->
+        var t0 by remember(request.initial) { mutableStateOf(request.initial.t0) }
+        var t1 by remember(request.initial) { mutableStateOf(request.initial.t1) }
+        var note by remember(request.initial) { mutableStateOf(request.initial.note) }
+        AlertDialog(
+            onDismissRequest = { reviewEdit = null },
+            title = { Text("Review attempt #${request.index + 1}") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(t0, { t0 = it }, label = { Text("T0 · HH:mm:ss.SSS") }, singleLine = true)
+                    OutlinedTextField(t1, { t1 = it }, label = { Text("T1 · HH:mm:ss.SSS") }, singleLine = true)
+                    OutlinedTextField(note, { note = it }, label = { Text("Review note") })
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    val d = preview ?: return@Button
+                    val state = ReportReviewV1.loadYouTube(context, request.reportKey, d.samples)
+                    val updated = state.events.mapIndexed { i, e -> if (i == request.index) e.copy(t0 = t0.trim(), t1 = t1.trim(), note = note.trim()) else e }
+                    ReportReviewV1.save(context, request.reportKey, state.copy(confirmed = false, confirmedAt = 0L, events = updated))
+                    reviewRevision++
+                    reviewEdit = null
+                }) { Text("SAVE") }
+            },
+            dismissButton = { TextButton(onClick = { reviewEdit = null }) { Text("Cancel") } }
+        )
+    }
+
     deleteVideoPath?.let { path ->
         AlertDialog(
             onDismissRequest = { deleteVideoPath = null },
@@ -5025,7 +5187,19 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
     var refType by rememberSaveable { mutableStateOf("vivo") }
     var refTransport by rememberSaveable { mutableStateOf("Auto") }
     var customRefName by rememberSaveable { mutableStateOf("") }
+    var showModemFallbackDialog by remember { mutableStateOf(false) }
+    var lastDutExportPath by rememberSaveable { mutableStateOf("") }
+    val modemFallbackPath = "/data/debuglogger/diag_mdlog"
     val refLabel = when(refType){"Samsung"->"Samsung_REF";"vivo"->"vivo_REF";else->customRefName.trim().ifBlank{"Custom_REF"}}
+    LaunchedEffect(adb.exportResult, adb.exportError, lastDutExportPath) {
+        if (adb.exportResult == "FAILED" &&
+            adb.exportError.contains("Permission denied", ignoreCase = true) &&
+            lastDutExportPath.isNotBlank() &&
+            lastDutExportPath != modemFallbackPath
+        ) {
+            showModemFallbackDialog = true
+        }
+    }
     LaunchedEffect(Unit) { CellTrackerAdbEngine.startDiscovery(context) }
     Scaffold(topBar={TopAppBar(title={Text("Device Logs / ADB Tools")},navigationIcon={TextButton(onClick=onBack){Text("Back")}})},contentWindowInsets=WindowInsets(0,0,0,0)){pad->
         Column(Modifier.fillMaxSize().padding(pad).padding(16.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)){
@@ -5046,7 +5220,18 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
                 OutlinedTextField(dutLogName,{dutLogName=it},label={Text("Log name / remark")},supportingText={Text("Example: B1_Zong_5G · timestamp is added automatically")},singleLine=true,modifier=Modifier.fillMaxWidth())
                 Row(verticalAlignment=Alignment.CenterVertically){Checkbox(compressDutLog,{compressDutLog=it});Text("Compress to ZIP after export")}
                 if(compressDutLog) Row(verticalAlignment=Alignment.CenterVertically){Checkbox(deleteAfterZip,{deleteAfterZip=it});Text("Delete source files after ZIP succeeds")}
-                Button(enabled=!busy && !adb.exportRunning && adb.localStatus=="Connected",onClick={scope.launch{busy=true;CellTrackerAdbEngine.exportDebuglogger(context,dutPath,dutLogName,compressDutLog,deleteAfterZip);busy=false}},modifier=Modifier.fillMaxWidth()){Text(if(adb.exportRunning)"EXPORTING…" else "EXPORT DUT DEBUGLOGGER")}
+                Button(
+                    enabled=!busy && !adb.exportRunning && adb.localStatus=="Connected",
+                    onClick={
+                        lastDutExportPath = dutPath.trim().ifBlank { "/data/debuglogger" }
+                        scope.launch{
+                            busy=true
+                            CellTrackerAdbEngine.exportDebuglogger(context,lastDutExportPath,dutLogName,compressDutLog,deleteAfterZip)
+                            busy=false
+                        }
+                    },
+                    modifier=Modifier.fillMaxWidth()
+                ){Text(if(adb.exportRunning)"EXPORTING…" else "EXPORT DUT DEBUGLOGGER")}
                 if(adb.exportPhase.isNotBlank()){
                     Field("Export status",adb.exportPhase)
                     if(adb.exportFound>0) Field("Found","${adb.exportFound}")
@@ -5298,6 +5483,38 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
             if(busy) LinearProgressIndicator(Modifier.fillMaxWidth())
             if(adb.message.isNotBlank()) Text(adb.message,style=MaterialTheme.typography.bodySmall)
         }
+    }
+    if (showModemFallbackDialog) {
+        AlertDialog(
+            onDismissRequest = { showModemFallbackDialog = false },
+            title = { Text("DUT log export failed") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("CellTracker detected an ADB permission denial while reading the full debuglogger tree.")
+                    Text("This usually means one or more protected files under /data/debuglogger are not readable by shell ADB, so the full export is incomplete and is reported as FAILED.", style = MaterialTheme.typography.bodySmall)
+                    Text("Try exporting modem logs only from:", style = MaterialTheme.typography.bodySmall)
+                    SelectionContainer { Text(modemFallbackPath, fontWeight = FontWeight.SemiBold) }
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    showModemFallbackDialog = false
+                    lastDutExportPath = modemFallbackPath
+                    scope.launch {
+                        busy = true
+                        CellTrackerAdbEngine.exportDebuglogger(
+                            context,
+                            modemFallbackPath,
+                            dutLogName.trim().ifBlank { "DUT_modem_diag" },
+                            compressDutLog,
+                            deleteAfterZip
+                        )
+                        busy = false
+                    }
+                }) { Text("TRY MODEM LOG") }
+            },
+            dismissButton = { TextButton(onClick = { showModemFallbackDialog = false }) { Text("Cancel") } }
+        )
     }
 }
 
