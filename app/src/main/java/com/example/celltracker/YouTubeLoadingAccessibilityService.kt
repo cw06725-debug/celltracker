@@ -1939,19 +1939,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
 
     private suspend fun snapshot(): PingNetworkSnapshot {
         val sims = runCatching { CellularRepository(this).readAllSims() }.getOrDefault(emptyList())
-        // Prefer CellTracker's live data-SIM resolution. On a few dual-SIM devices Android's
-        // default-data subscription can briefly be INVALID/old while YouTube is active, which
-        // made the report snapshot come from the other SIM (for example WCDMA with no LTE RSRP).
-        val liveDataId = NetworkStore.dataSimSubscriptionId
-        val defaultDataId = runCatching { SubscriptionManager.getDefaultDataSubscriptionId() }.getOrDefault(-1)
-        val id = when {
-            sims.any { it.subscriptionId == liveDataId } -> liveDataId
-            sims.any { it.subscriptionId == defaultDataId } -> defaultDataId
-            RecordingState.status.value.markTargetSubscriptionId >= 0 &&
-                sims.any { it.subscriptionId == RecordingState.status.value.markTargetSubscriptionId } ->
-                RecordingState.status.value.markTargetSubscriptionId
-            else -> -1
-        }
+        val id = SubscriptionManager.getDefaultDataSubscriptionId()
         val s = sims.firstOrNull { it.subscriptionId == id } ?: sims.firstOrNull()
         val c = s?.servingCell
         val l = LocationStore.latest.value

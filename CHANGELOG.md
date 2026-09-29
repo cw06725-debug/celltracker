@@ -1,33 +1,8 @@
-# v1.2.26 (versionCode 203)
-- Rolled YouTube semi-auto T0 detection back exactly to the v1.2.24 implementation; no new T0 heuristics are introduced in this version.
-- Added persistent screen-recording diagnostics for every run, including device/build info, display/capture size, available AVC encoders, selected encoder, MediaProjection/VirtualDisplay state, encoder output-format events, encoded sample counts/bytes/PTS, validation metadata, stop/publish result, and full exceptions.
-- Diagnostic logs are automatically copied to `Download/CellTracker/<date>/Screen Recording Diagnostics/` so one failing run can be inspected without relying on transient logcat.
+# v1.2.27 (204)
 
-# v1.2.25 (versionCode 202)
-- Restore YouTube semi-auto T0 semantics: START only arms the test; only an actual YouTube media-card click can create T0.
-- Removed WINDOW_STATE_CHANGED and WINDOW_CONTENT_CHANGED T0 fallbacks that could treat generic post-START screen interactions as T0.
-- Added media-area / non-miniplayer validation for accessibility click events to reduce false attempts.
-
-# v1.2.24
-
-- Replace test screen recording MediaRecorder path with MediaCodec + MediaMuxer.
-- Prefer AOSP/Google software AVC encoder to avoid OEM vendor encoders that silently generate 3 KB / 0x0 MP4 files.
-- Use a conservative 540p-class / 20 fps profile for cross-device compatibility and report calibration.
-- Keep output validation before publishing the recording to Downloads.
-
-# v1.2.23
-- Screen recording now writes to an app-owned temporary MP4 first, validates duration/resolution, then publishes to Downloads.
-- Reduced capture size to a conservative 720p-class profile for OEM encoder compatibility.
-- Invalid tiny/0x0 recordings are rejected instead of being linked into reports.
-- YouTube snapshots now prefer the active CellTracker data SIM.
-- YouTube Excel/HTML export correlates each reviewed attempt with the continuous network recording to fill missing RAT/RSRP/RSRQ/SINR/Band/PCI/ARFCN data.
-
-# CellTracker v1.2.22
-
-- Fixed device-dependent screen recordings that could produce a tiny ~3 KB, 0x0 / 00:00 MP4.
-- Keep the MediaStore ParcelFileDescriptor open for the full MediaRecorder session instead of retaining only the raw FileDescriptor.
-- Cap very high/tall native display resolutions to an H.264-compatible capture size (max 1920 long side / 1080 short side, 16-pixel aligned) for better OEM encoder compatibility.
-- Added guarded MediaRecorder start/stop cleanup and runtime error state so failed starts do not leave broken pending media entries.
+- Restored the project behavior baseline to v1.2.21 for YouTube/TikTok timing, including the v1.2.21 T0 event logic.
+- Kept the original v1.2.21 MediaRecorder recording path and added detailed screen-recording diagnostics only.
+- Diagnostics now report MediaProjection/VirtualDisplay/MediaRecorder lifecycle plus final MP4 size, duration and dimensions.
 
 # v1.2.21
 
