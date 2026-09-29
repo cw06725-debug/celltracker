@@ -1,3 +1,10 @@
+# CellTracker v1.2.22
+
+- Fixed device-dependent screen recordings that could produce a tiny ~3 KB, 0x0 / 00:00 MP4.
+- Keep the MediaStore ParcelFileDescriptor open for the full MediaRecorder session instead of retaining only the raw FileDescriptor.
+- Cap very high/tall native display resolutions to an H.264-compatible capture size (max 1920 long side / 1080 short side, 16-pixel aligned) for better OEM encoder compatibility.
+- Added guarded MediaRecorder start/stop cleanup and runtime error state so failed starts do not leave broken pending media entries.
+
 # v1.2.21
 
 - Fixed TikTok Upload/Lag network recording ownership so reports no longer bind to a stale previous `latestPath`.
