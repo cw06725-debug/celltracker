@@ -1,3 +1,8 @@
+# v1.2.26 (versionCode 203)
+- Rolled YouTube semi-auto T0 detection back exactly to the v1.2.24 implementation; no new T0 heuristics are introduced in this version.
+- Added persistent screen-recording diagnostics for every run, including device/build info, display/capture size, available AVC encoders, selected encoder, MediaProjection/VirtualDisplay state, encoder output-format events, encoded sample counts/bytes/PTS, validation metadata, stop/publish result, and full exceptions.
+- Diagnostic logs are automatically copied to `Download/CellTracker/<date>/Screen Recording Diagnostics/` so one failing run can be inspected without relying on transient logcat.
+
 # v1.2.25 (versionCode 202)
 - Restore YouTube semi-auto T0 semantics: START only arms the test; only an actual YouTube media-card click can create T0.
 - Removed WINDOW_STATE_CHANGED and WINDOW_CONTENT_CHANGED T0 fallbacks that could treat generic post-START screen interactions as T0.

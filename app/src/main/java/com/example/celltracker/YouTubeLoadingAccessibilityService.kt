@@ -182,35 +182,21 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
 
         when (event.eventType) {
             AccessibilityEvent.TYPE_VIEW_CLICKED -> {
-                // START only arms the next sample. T0 must come from an actual YouTube media-card
-                // click, never from a generic screen/content/window change. This intentionally
-                // prefers a missed sample over a false T0; report calibration can correct timing.
-                if (isLikelyYouTubeMediaClick(event)) {
-                    acceptManualYouTubeT0(event, "VIDEO_CLICK")
-                } else {
-                    overlayStatus?.text = "SEMI · ARMED · tap a YouTube video for T0"
+                acceptManualYouTubeT0(event, "ACCESSIBILITY_CLICK")
+            }
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
+                if (event.eventTime >= semiArmedAtUptime + 120L) {
+                    acceptManualYouTubeT0(event, "WINDOW_CHANGE")
                 }
             }
-            // Do not use WINDOW_STATE_CHANGED / WINDOW_CONTENT_CHANGED as T0 fallbacks.
-            // Those events fire for scrolling, focus changes and other ordinary touches and can
-            // incorrectly turn any post-START screen interaction into T0.
-        }
-    }
-
-
-    private fun isLikelyYouTubeMediaClick(event: AccessibilityEvent): Boolean {
-        var node = event.source ?: return false
-        repeat(5) {
-            val r = Rect()
-            node.getBoundsInScreen(r)
-            if (!r.isEmpty && isPotentialSemiMediaTrigger(node)) {
-                val cy = r.centerY().toFloat()
-                val cx = r.centerX().toFloat()
-                if (isSemiMediaTapArea(cx, cy) && !isMiniPlayerNode(node)) return true
+            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
+                // Some YouTube builds/cards don't emit TYPE_VIEW_CLICKED. Use the first post-ARM
+                // native content mutation as fallback without walking rootInActiveWindow.
+                if (event.eventTime >= semiArmedAtUptime + 180L) {
+                    acceptManualYouTubeT0(event, "UI_CHANGE")
+                }
             }
-            node = node.parent ?: return false
         }
-        return false
     }
 
     private fun acceptManualYouTubeT0(event: AccessibilityEvent, source: String) {
@@ -1010,7 +996,8 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         val delay = (loadedElapsed - startElapsed).coerceAtLeast(0L)
         val targetFile = file ?: return
         scope.launch {
-            val accurate = source == "ACCESSIBILITY_CLICK" || source == "VIDEO_CLICK" ||
+            val accurate = source == "ACCESSIBILITY_CLICK" || source == "UI_CHANGE" ||
+                source == "WINDOW_CHANGE" ||
                 source == "OVERLAY_TOUCH_HIGH" || source == "OVERLAY_RECOVERED_TAP" || source == "OVERLAY_CONFIRMED_BY_LOADED"
             val storedResult = when {
                 result == "AD" -> "AD"

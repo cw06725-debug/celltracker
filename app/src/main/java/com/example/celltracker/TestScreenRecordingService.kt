@@ -24,6 +24,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.provider.MediaStore
 import android.util.DisplayMetrics
+import android.util.Log
 import android.view.Surface
 import android.view.WindowManager
 import androidx.core.app.NotificationCompat
@@ -38,6 +39,9 @@ class TestScreenRecordingService : Service() {
     private var tempFile: File? = null
     private var recorderStarted = false
     @Volatile private var stoppingRecording = false
+    private var diagnosticFile: File? = null
+    private var diagnosticStartedAt = 0L
+    private val diagnosticLock = Any()
 
     override fun onCreate() {
         super.onCreate()
@@ -79,6 +83,9 @@ class TestScreenRecordingService : Service() {
             "_" + java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US)
                 .format(java.util.Date(now)) + ".mp4"
 
+        startDiagnostics(name, now, resultCode, data != null)
+        diag("START requested; serviceStartId=n/a")
+
         try {
             val tmpDir = File(getExternalFilesDir(null), "screen_recording_tmp").apply { mkdirs() }
             tempFile = File(tmpDir, name).also { if (it.exists()) it.delete() }
@@ -87,6 +94,7 @@ class TestScreenRecordingService : Service() {
             @Suppress("DEPRECATION")
             (getSystemService(WINDOW_SERVICE) as WindowManager).defaultDisplay.getRealMetrics(metrics)
             val (width, height) = compatibleCaptureSize(metrics.widthPixels, metrics.heightPixels)
+            diag("Display raw=${metrics.widthPixels}x${metrics.heightPixels} densityDpi=${metrics.densityDpi}; capture=${width}x${height}")
 
             val notification = NotificationCompat.Builder(this, CH)
                 .setSmallIcon(android.R.drawable.presence_video_online)
@@ -102,8 +110,10 @@ class TestScreenRecordingService : Service() {
 
             projection = getSystemService(MediaProjectionManager::class.java)
                 .getMediaProjection(resultCode, data)
+            diag("MediaProjection created=${projection != null}")
             projection?.registerCallback(object : MediaProjection.Callback() {
                 override fun onStop() {
+                    diag("MediaProjection.Callback.onStop received")
                     stopRecording()
                 }
             }, Handler(mainLooper))
@@ -112,7 +122,9 @@ class TestScreenRecordingService : Service() {
             // MediaRecorder.start() but never deliver projection frames, leaving a ~3 KB MP4.
             // The lower-level surface encoder is more predictable and lets us verify actual output.
             codecRecorder = createCodecRecorder(tempFile!!, width, height)
+            diag("CodecRecorder created")
             codecRecorder!!.start()
+            diag("CodecRecorder started")
 
             virtualDisplay = projection?.createVirtualDisplay(
                 "CellTrackerTestRecording",
@@ -124,6 +136,7 @@ class TestScreenRecordingService : Service() {
                 null,
                 null
             ) ?: error("Unable to create screen capture display")
+            diag("VirtualDisplay created=true name=CellTrackerTestRecording ${width}x${height} dpi=${metrics.densityDpi}")
 
             recorderStarted = true
             isRecording = true
@@ -131,8 +144,10 @@ class TestScreenRecordingService : Service() {
             currentUri = ""
             currentStartedAt = now
             lastError = ""
+            diag("Recording state ACTIVE; temp=${tempFile?.absolutePath}")
         } catch (t: Throwable) {
             lastError = "Screen recording start failed: ${t.message ?: t.javaClass.simpleName}"
+            diagThrowable("START FAILED", t)
             cleanupFailedStart()
         }
     }
@@ -150,9 +165,11 @@ class TestScreenRecordingService : Service() {
         var last: Throwable? = null
         for ((w, h, bitrate) in candidates) {
             try {
-                return CodecRecorder(file, w, h, bitrate)
+                diag("Trying AVC config ${w}x${h} bitrate=$bitrate")
+                return CodecRecorder(file, w, h, bitrate, ::diag)
             } catch (t: Throwable) {
                 last = t
+                diagThrowable("AVC config ${w}x${h} bitrate=$bitrate rejected", t)
                 runCatching { file.delete() }
             }
         }
@@ -167,12 +184,16 @@ class TestScreenRecordingService : Service() {
         }
         stoppingRecording = true
         isRecording = false
+        diag("STOP requested; recorderStarted=$recorderStarted tempBytes=${tempFile?.length() ?: -1L}")
 
         var stopOk = true
         if (recorderStarted) {
             runCatching { codecRecorder?.stopAndRelease() }.onFailure {
                 stopOk = false
                 lastError = "Screen recording produced no valid frames: ${it.message ?: it.javaClass.simpleName}"
+                diagThrowable("ENCODER STOP FAILED", it)
+            }.onSuccess {
+                diag("Encoder stopped successfully; tempBytes=${tempFile?.length() ?: -1L}")
             }
         }
         recorderStarted = false
@@ -185,15 +206,19 @@ class TestScreenRecordingService : Service() {
 
         val file = tempFile
         var publishedUri: Uri? = null
-        if (stopOk && file != null && validateRecording(file)) {
+        val validationOk = if (stopOk && file != null) validateRecording(file) else false
+        diag("Validation result=$validationOk tempExists=${file?.exists() == true} tempBytes=${file?.length() ?: -1L}")
+        if (stopOk && file != null && validationOk) {
             publishedUri = runCatching { publishRecording(file, currentName, currentStartedAt) }
                 .onFailure { lastError = "Screen recording publish failed: ${it.message ?: it.javaClass.simpleName}" }
                 .getOrNull()
             stopOk = publishedUri != null
+            diag("Publish result=${publishedUri?.toString() ?: "FAILED"}")
         } else if (stopOk) {
             stopOk = false
             val bytes = file?.length() ?: 0L
             lastError = "Screen recording invalid or empty (${bytes} bytes). This device did not provide video frames."
+            diag("INVALID RECORDING: $lastError")
         }
 
         runCatching { file?.delete() }
@@ -208,6 +233,8 @@ class TestScreenRecordingService : Service() {
             lastUri = ""
             lastStartedAt = 0L
         }
+        diag("FINAL stopOk=$stopOk lastError=${lastError.ifBlank { "<none>" }} lastUri=${lastUri.ifBlank { "<none>" }}")
+        publishDiagnostics()
         currentName = ""
         currentUri = ""
         currentStartedAt = 0L
@@ -217,7 +244,14 @@ class TestScreenRecordingService : Service() {
     }
 
     private fun validateRecording(file: File): Boolean {
-        if (!file.exists() || file.length() < 64 * 1024L) return false
+        if (!file.exists()) {
+            diag("Validation: temp file missing")
+            return false
+        }
+        if (file.length() < 64 * 1024L) {
+            diag("Validation: file too small bytes=${file.length()}")
+            return false
+        }
         return runCatching {
             val retriever = MediaMetadataRetriever()
             try {
@@ -225,11 +259,12 @@ class TestScreenRecordingService : Service() {
                 val duration = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
                 val width = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
                 val height = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
+                diag("Validation metadata durationMs=$duration video=${width}x${height} bytes=${file.length()}")
                 duration >= 250L && width > 0 && height > 0
             } finally {
                 retriever.release()
             }
-        }.getOrDefault(false)
+        }.onFailure { diagThrowable("Validation metadata read failed", it) }.getOrDefault(false)
     }
 
     private fun publishRecording(file: File, name: String, startedAt: Long): Uri {
@@ -257,6 +292,7 @@ class TestScreenRecordingService : Service() {
     }
 
     private fun cleanupFailedStart() {
+        diag("cleanupFailedStart()")
         isRecording = false
         recorderStarted = false
         stoppingRecording = false
@@ -269,6 +305,8 @@ class TestScreenRecordingService : Service() {
         runCatching { oldProjection?.stop() }
         runCatching { tempFile?.delete() }
         tempFile = null
+        diag("FINAL startFailure lastError=${lastError.ifBlank { "<none>" }}")
+        publishDiagnostics()
         currentName = ""
         currentUri = ""
         currentStartedAt = 0L
@@ -300,7 +338,8 @@ class TestScreenRecordingService : Service() {
         private val outputFile: File,
         width: Int,
         height: Int,
-        bitrate: Int
+        bitrate: Int,
+        private val logger: (String) -> Unit
     ) {
         private val codec: MediaCodec
         private val muxer: MediaMuxer
@@ -311,6 +350,13 @@ class TestScreenRecordingService : Service() {
         private var trackIndex = -1
         private var muxerStarted = false
         private lateinit var drainThread: Thread
+        private var outputBufferCount = 0L
+        private var outputBytes = 0L
+        private var keyFrameCount = 0L
+        private var tryAgainCount = 0L
+        private var firstPtsUs = -1L
+        private var lastPtsUs = -1L
+        private var encoderName = ""
 
         private fun createPreferredAvcEncoder(): MediaCodec {
             val infos = MediaCodecList(MediaCodecList.ALL_CODECS).codecInfos
@@ -334,12 +380,15 @@ class TestScreenRecordingService : Service() {
             var last: Throwable? = null
             for (info in preferred) {
                 try {
+                    encoderName = info.name
+                    logger("Encoder selected=${info.name} software=${if (Build.VERSION.SDK_INT >= 29) info.isSoftwareOnly else "unknown"} vendor=${if (Build.VERSION.SDK_INT >= 29) info.isVendor else "unknown"}")
                     return MediaCodec.createByCodecName(info.name)
                 } catch (t: Throwable) {
                     last = t
                 }
             }
             return runCatching { MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC) }
+                .onSuccess { encoderName = it.name; logger("Encoder selected by type=${it.name}") }
                 .getOrElse { throw IllegalStateException("No AVC encoder available", last ?: it) }
         }
 
@@ -354,10 +403,12 @@ class TestScreenRecordingService : Service() {
                 }
             }
             codec = createPreferredAvcEncoder()
+            logger("Encoder configure name=$encoderName size=${width}x${height} bitrate=$bitrate fps=20 iframe=1")
             try {
                 codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
                 inputSurface = codec.createInputSurface()
                 muxer = MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+                logger("Encoder surface + muxer created output=${outputFile.absolutePath}")
             } catch (t: Throwable) {
                 runCatching { codec.release() }
                 throw t
@@ -366,6 +417,7 @@ class TestScreenRecordingService : Service() {
 
         fun start() {
             codec.start()
+            logger("MediaCodec.start OK name=$encoderName")
             drainThread = Thread({ drainLoop() }, "CellTrackerScreenEncoder").also { it.start() }
         }
 
@@ -376,6 +428,8 @@ class TestScreenRecordingService : Service() {
                     val index = codec.dequeueOutputBuffer(info, 10_000)
                     when {
                         index == MediaCodec.INFO_TRY_AGAIN_LATER -> {
+                            tryAgainCount++
+                            if (tryAgainCount == 1L || tryAgainCount % 500L == 0L) logger("Encoder no output yet; tryAgainCount=$tryAgainCount stopping=$stopping")
                             if (stopping) continue
                         }
                         index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
@@ -383,6 +437,7 @@ class TestScreenRecordingService : Service() {
                             trackIndex = muxer.addTrack(codec.outputFormat)
                             muxer.start()
                             muxerStarted = true
+                            logger("Output format changed; muxer started format=${codec.outputFormat}")
                         }
                         index >= 0 -> {
                             val buffer = codec.getOutputBuffer(index)
@@ -390,6 +445,14 @@ class TestScreenRecordingService : Service() {
                                 buffer.position(info.offset)
                                 buffer.limit(info.offset + info.size)
                                 muxer.writeSampleData(trackIndex, buffer, info)
+                                outputBufferCount++
+                                outputBytes += info.size.toLong()
+                                if (firstPtsUs < 0L) firstPtsUs = info.presentationTimeUs
+                                lastPtsUs = info.presentationTimeUs
+                                if (info.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0) keyFrameCount++
+                                if (outputBufferCount == 1L || outputBufferCount % 100L == 0L) {
+                                    logger("Encoded buffers=$outputBufferCount bytes=$outputBytes keyframes=$keyFrameCount ptsUs=$firstPtsUs..$lastPtsUs")
+                                }
                             }
                             val eos = info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
                             codec.releaseOutputBuffer(index, false)
@@ -399,6 +462,9 @@ class TestScreenRecordingService : Service() {
                 }
             } catch (t: Throwable) {
                 drainFailure = t
+                logger("Drain loop failure=${t.javaClass.simpleName}: ${t.message}")
+            } finally {
+                logger("Drain loop exit buffers=$outputBufferCount bytes=$outputBytes keyframes=$keyFrameCount tryAgain=$tryAgainCount muxerStarted=$muxerStarted ptsUs=$firstPtsUs..$lastPtsUs")
             }
         }
 
@@ -406,11 +472,16 @@ class TestScreenRecordingService : Service() {
             if (released) return
             stopping = true
             runCatching { codec.signalEndOfInputStream() }.getOrElse { throw it }
-            if (::drainThread.isInitialized) drainThread.join(4000)
+            if (::drainThread.isInitialized) {
+                drainThread.join(4000)
+                logger("Drain join done alive=${drainThread.isAlive}")
+            }
             val failure = drainFailure
             releaseInternal()
             if (failure != null) throw failure
+            logger("stopAndRelease summary muxerStarted=$muxerStarted buffers=$outputBufferCount bytes=$outputBytes keyframes=$keyFrameCount ptsUs=$firstPtsUs..$lastPtsUs")
             if (!muxerStarted) error("Encoder produced no output format / no frames")
+            if (outputBufferCount <= 0L || outputBytes <= 0L) error("Encoder produced output format but zero video samples")
         }
 
         fun abort() {
@@ -428,6 +499,95 @@ class TestScreenRecordingService : Service() {
             if (muxerStarted) runCatching { muxer.stop() }
             runCatching { muxer.release() }
         }
+    }
+
+    private fun startDiagnostics(recordingName: String, startedAt: Long, resultCode: Int, dataPresent: Boolean) {
+        diagnosticStartedAt = startedAt
+        val dir = File(getExternalFilesDir(null), "screen_recording_diagnostics").apply { mkdirs() }
+        val stem = recordingName.removeSuffix(".mp4")
+        diagnosticFile = File(dir, "${stem}_diagnostic.txt").also {
+            runCatching {
+                it.writeText(
+                    "CellTracker Screen Recording Diagnostic\n" +
+                        "recording=$recordingName\n" +
+                        "startedAt=$startedAt\n" +
+                        "manufacturer=${Build.MANUFACTURER}\n" +
+                        "brand=${Build.BRAND}\n" +
+                        "model=${Build.MODEL}\n" +
+                        "device=${Build.DEVICE}\n" +
+                        "product=${Build.PRODUCT}\n" +
+                        "sdk=${Build.VERSION.SDK_INT} release=${Build.VERSION.RELEASE}\n" +
+                        "build=${Build.DISPLAY}\n" +
+                        "resultCode=$resultCode dataPresent=$dataPresent\n" +
+                        "----------------------------------------\n"
+                )
+            }
+        }
+        diag("Diagnostics initialized")
+        val avc = runCatching {
+            MediaCodecList(MediaCodecList.ALL_CODECS).codecInfos
+                .filter { info -> info.isEncoder && info.supportedTypes.any { it.equals(MediaFormat.MIMETYPE_VIDEO_AVC, true) } }
+                .joinToString(" | ") { info ->
+                    if (Build.VERSION.SDK_INT >= 29) "${info.name}[sw=${info.isSoftwareOnly},vendor=${info.isVendor}]" else info.name
+                }
+        }.getOrElse { "<codec enumeration failed: ${it.message}>" }
+        diag("Available AVC encoders: $avc")
+    }
+
+    private fun diag(message: String) {
+        val elapsed = if (diagnosticStartedAt > 0L) System.currentTimeMillis() - diagnosticStartedAt else -1L
+        val line = String.format(java.util.Locale.US, "%+07dms [%s] %s", elapsed, Thread.currentThread().name, message)
+        Log.i("CTScreenRec", line)
+        synchronized(diagnosticLock) {
+            runCatching { diagnosticFile?.appendText(line + "\n") }
+        }
+    }
+
+    private fun diagThrowable(prefix: String, t: Throwable) {
+        diag("$prefix: ${t.javaClass.name}: ${t.message}")
+        synchronized(diagnosticLock) {
+            runCatching {
+                diagnosticFile?.appendText(t.stackTraceToString() + "\n")
+            }
+        }
+    }
+
+    private fun publishDiagnostics() {
+        val file = diagnosticFile ?: return
+        if (!file.exists()) return
+        val startedAt = diagnosticStartedAt.takeIf { it > 0L } ?: System.currentTimeMillis()
+        val displayName = file.name
+        val uri = runCatching {
+            val values = ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, displayName)
+                put(MediaStore.Downloads.MIME_TYPE, "text/plain")
+                if (Build.VERSION.SDK_INT >= 29) {
+                    put(MediaStore.Downloads.RELATIVE_PATH, ReportStorage.relativePath("Screen Recording Diagnostics", startedAt))
+                    put(MediaStore.Downloads.IS_PENDING, 1)
+                }
+            }
+            val outUri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                ?: error("Unable to create diagnostic output")
+            try {
+                contentResolver.openOutputStream(outUri, "w")?.use { out -> file.inputStream().use { it.copyTo(out) } }
+                    ?: error("Unable to open diagnostic output")
+                if (Build.VERSION.SDK_INT >= 29) {
+                    contentResolver.update(outUri, ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }, null, null)
+                }
+                outUri
+            } catch (t: Throwable) {
+                runCatching { contentResolver.delete(outUri, null, null) }
+                throw t
+            }
+        }.onFailure { Log.e("CTScreenRec", "Publish diagnostic failed", it) }.getOrNull()
+        if (uri != null) {
+            lastDiagnosticUri = uri.toString()
+            lastDiagnosticName = displayName
+            lastDiagnosticPathHint = ReportStorage.relativePath("Screen Recording Diagnostics", startedAt) + "/" + displayName
+            Log.i("CTScreenRec", "Diagnostic published: $lastDiagnosticPathHint")
+        }
+        diagnosticFile = null
+        diagnosticStartedAt = 0L
     }
 
     private fun safe(s: String) = s
@@ -453,5 +613,8 @@ class TestScreenRecordingService : Service() {
         @Volatile var currentStartedAt = 0L
         @Volatile var lastStartedAt = 0L
         @Volatile var lastError = ""
+        @Volatile var lastDiagnosticUri = ""
+        @Volatile var lastDiagnosticName = ""
+        @Volatile var lastDiagnosticPathHint = ""
     }
 }
