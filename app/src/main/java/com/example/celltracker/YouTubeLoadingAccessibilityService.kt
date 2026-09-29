@@ -612,7 +612,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         }
         val header = TextView(this).apply {
             setTextColor(0xffffffff.toInt())
-            text = "YouTube Video Test  ·  drag here"
+            text = "YouTube Video Test"
             setPadding(8, 8, 8, 12)
         }
         val status = TextView(this).apply {
@@ -634,14 +634,11 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         val start = Button(this).apply { text = "START" }
         overlayStartButton = start
         val loaded = Button(this).apply { text = "LOADED"; visibility = View.GONE }
-        val ad = Button(this).apply { text = "AD / SKIP"; visibility = View.GONE }
         val stop = Button(this).apply { text = "STOP"; visibility = View.GONE }
         val weighted = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         rowTop.addView(start, weighted)
         rowTop.addView(loaded, weighted)
-        rowBottom.addView(ad, weighted)
-        val stopWidth = (116 * resources.displayMetrics.density).toInt()
-        rowBottom.addView(stop, LinearLayout.LayoutParams(stopWidth, LinearLayout.LayoutParams.WRAP_CONTENT))
+        rowBottom.addView(stop, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         box.addView(header); box.addView(status); box.addView(clock); box.addView(rowTop); box.addView(rowBottom)
 
         val lp = WindowManager.LayoutParams(
@@ -699,7 +696,6 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                     if (accepted) {
                         if (!config.semiAuto) start.text = "RETRY"
                         loaded.visibility = View.VISIBLE
-                        ad.visibility = View.VISIBLE
                         stop.visibility = View.VISIBLE
                     } else {
                         start.text = "START"
@@ -720,12 +716,6 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                     else "SEMI · press START, then tap one YouTube video"
                 } else "Nothing is loading · LOADED ignored"
             }
-        }
-        ad.setOnClickListener {
-            if (running && t0 > 0) {
-                if (config.semiAuto) completeSemiAttempt("AD", "MANUAL_AD", status, performBack = true)
-                else completeAttempt("AD", "MANUAL_AD", status)
-            } else status.text = "No active video · AD ignored"
         }
         var stopConfirmUntil = 0L
         stop.setOnClickListener {
@@ -751,7 +741,6 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             status.text = "STOPPING… saving current results"
             start.isEnabled = false
             loaded.isEnabled = false
-            ad.isEnabled = false
             stop.isEnabled = false
             stop.text = "STOPPING…"
             stopTest("Stopped", status)

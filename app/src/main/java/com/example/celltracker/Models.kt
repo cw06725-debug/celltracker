@@ -141,7 +141,7 @@ data class AppSettings(
     val vibrateOnMark: Boolean = true,
     val toastOnMark: Boolean = true,
     val soundOnMark: Boolean = false,
-    val floatingWindowEnabled: Boolean = true,
+    val floatingWindowEnabled: Boolean = false,
     val floatingAutoShowDuringRecording: Boolean = true,
     val floatingKeepWhenStopped: Boolean = true,
     val floatingOpacity: Float = 0.80f,

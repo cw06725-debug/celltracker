@@ -511,7 +511,26 @@ object CellTrackerAdbEngine {
                 zipMs=System.currentTimeMillis()-zipStart;finalPath=zr.path;deleted=zr.deleted.toLong();deleteFailed=zr.deleteFailed.toLong()
             }
             val totalMs=System.currentTimeMillis()-started
-            AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=false,exportPhase="Completed",exportFiles=result.pulled,exportFound=result.found,exportSkipped=result.skipped,exportBytes=result.bytes,exportPullBytes=result.bytes,exportPullMs=pullMs,exportZipMs=zipMs,exportTotalMs=totalMs,exportDeleted=deleted,exportDeleteFailed=deleteFailed,exportSymlinks=result.symlinks,exportListFailed=result.listFailed,exportPath=finalPath,exportResult=if(deleteFailed>0)"SUCCESS · CLEANUP PARTIAL" else "SUCCESS",exportError="",message="Export completed")
+            val partial = result.skipped>0 || result.listFailed>0 || deleteFailed>0
+            val detail = if(result.errors.isNotEmpty()) {
+                val shown=result.errors.take(3).joinToString("\n")
+                if(result.errors.size>3) "$shown\n… ${result.errors.size-3} more skipped item(s)" else shown
+            } else ""
+            AdbToolStore.state.value=AdbToolStore.state.value.copy(
+                exportRunning=false,
+                exportPhase=if(partial)"Completed with skips" else "Completed",
+                exportFiles=result.pulled,exportFound=result.found,exportSkipped=result.skipped,
+                exportBytes=result.bytes,exportPullBytes=result.bytes,exportPullMs=pullMs,
+                exportZipMs=zipMs,exportTotalMs=totalMs,exportDeleted=deleted,exportDeleteFailed=deleteFailed,
+                exportSymlinks=result.symlinks,exportListFailed=result.listFailed,exportPath=finalPath,
+                exportResult=when {
+                    deleteFailed>0 -> "SUCCESS · CLEANUP PARTIAL"
+                    partial -> "PARTIAL SUCCESS"
+                    else -> "SUCCESS"
+                },
+                exportError=detail,
+                message=if(partial)"Export completed with ${result.skipped} skipped item(s)" else "Export completed"
+            )
         }catch(e:CancellationException){AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=false,exportPhase="Cancelled",exportResult="CANCELLED",exportPath="")}catch(e:Throwable){AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=false,exportPhase="Failed",exportResult="FAILED",exportPath="",exportError=e.message?:e.javaClass.simpleName)}};"Export started"
     }.onFailure{e->AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=false,exportPhase="Failed",exportResult="FAILED",exportPath="",exportError=e.message?:e.javaClass.simpleName)} }
     fun cancelExport(){ exportJob?.cancel(); exportJob=null }

@@ -1,3 +1,11 @@
+# v1.2.17 (versionCode 194)
+
+- YouTube Video Test overlay now matches the TikTok interaction style: removed the visible "drag here" wording while retaining drag support on the non-button information area.
+- Removed the YouTube AD / SKIP button; advertisement/mis-touch handling is expected to be corrected during report review/calibration.
+- Network Floating Window now defaults to OFF. Existing installs receive a one-time v1.2.17 migration to OFF, after which the user's setting is preserved.
+- DUT Log export Reason is rendered as a full-width multiline field so long ADB errors no longer squeeze the label into vertical characters.
+- Fixed Home Quick Start -> All Tests transition direction: enter slides forward (left), Back slides right.
+
 # v1.2.14 (versionCode 191)
 
 - YouTube Video Loading reports now support TikTok-style review/calibration: per-attempt T0/T1 review, video frame calibration, invalid-attempt marking, review confirmation, and reviewed timing in exported summaries/workbooks.

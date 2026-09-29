@@ -13,7 +13,7 @@ import java.util.zip.ZipOutputStream
 
 data class SyncPullProgress(val found:Long,val filesDone:Long,val skipped:Long,val bytesDone:Long,val current:String,val phase:String="Pulling files…")
 data class SyncPulledFile(val uri:Uri,val relative:String)
-data class SyncPullResult(val found:Long,val pulled:Long,val skipped:Long,val bytes:Long,val files:List<SyncPulledFile>,val symlinks:Long=0,val listFailed:Long=0)
+data class SyncPullResult(val found:Long,val pulled:Long,val skipped:Long,val bytes:Long,val files:List<SyncPulledFile>,val symlinks:Long=0,val listFailed:Long=0,val errors:List<String> = emptyList())
 class AdbSyncPuller(private val context:Context){
  data class Entry(val name:String,val mode:Int,val size:Long){val type get()=mode and 0xF000;val isDir get()=type==0x4000;val isFile get()=type==0x8000;val isLink get()=type==0xA000}
  private fun le(v:Int)=ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(v).array()
@@ -82,6 +82,7 @@ class AdbSyncPuller(private val context:Context){
   var listFailed = 0L
   var bytes = 0L
   val files = ArrayList<SyncPulledFile>()
+  val errors = ArrayList<String>()
   val visited = HashSet<String>()
 
   while (q.isNotEmpty()) {
@@ -93,6 +94,7 @@ class AdbSyncPuller(private val context:Context){
    } catch (e: Throwable) {
     skipped++
     listFailed++
+    errors += "LIST ${node.remote}: ${e.message ?: e.javaClass.simpleName}"
     onProgress(SyncPullProgress(found, pulled, skipped, bytes, node.remote, "LIST failed"))
     continue
    }
@@ -131,12 +133,20 @@ class AdbSyncPuller(private val context:Context){
        "$sessionDir/$subDir"
       }
 
-      val uri = createFile(remote, outputDir, fileName) { count ->
-       bytes += count
-       onProgress(SyncPullProgress(found, pulled, skipped, bytes, remote))
+      try {
+       val uri = createFile(remote, outputDir, fileName) { count ->
+        bytes += count
+        onProgress(SyncPullProgress(found, pulled, skipped, bytes, remote))
+       }
+       files += SyncPulledFile(uri, rel)
+       pulled++
+      } catch (e: Throwable) {
+       // A debuglogger tree can contain protected or transient files. One denied file
+       // must not abort the whole export; keep pulling the rest and report PARTIAL.
+       skipped++
+       errors += "PULL $remote: ${e.message ?: e.javaClass.simpleName}"
+       onProgress(SyncPullProgress(found, pulled, skipped, bytes, remote, "Skipped inaccessible file"))
       }
-      files += SyncPulledFile(uri, rel)
-      pulled++
      }
 
      entry.isLink -> {
@@ -159,7 +169,7 @@ class AdbSyncPuller(private val context:Context){
    }
   }
 
-  return SyncPullResult(found, pulled, skipped, bytes, files, symlinks, listFailed)
+  return SyncPullResult(found, pulled, skipped, bytes, files, symlinks, listFailed, errors)
  }
  fun pullSingleFile(remote:String, relativeDir:String, outputName:String, onProgress:(SyncPullProgress)->Unit):SyncPulledFile {
   var bytes=0L

@@ -1539,9 +1539,20 @@ private fun MainScreen(
             AnimatedContent(
                 targetState = if (homeAllTestsVisible) "ALL_TESTS" else mainTab,
                 transitionSpec = {
-                    val order = listOf("HOME", "TEST", "CELL", "REPORTS", "SETTINGS")
-                    val forward = order.indexOf(targetState) > order.indexOf(initialState)
-                    val direction = if (forward) AnimatedContentTransitionScope.SlideDirection.Left else AnimatedContentTransitionScope.SlideDirection.Right
+                    // Home -> All Tests is a forward navigation and must slide left;
+                    // All Tests -> Home is Back and must slide right. ALL_TESTS is not a
+                    // bottom-tab item, so handling it explicitly avoids indexOf(-1) reversing
+                    // the animation direction.
+                    val direction = when {
+                        targetState == "ALL_TESTS" && initialState == "HOME" -> AnimatedContentTransitionScope.SlideDirection.Left
+                        targetState == "HOME" && initialState == "ALL_TESTS" -> AnimatedContentTransitionScope.SlideDirection.Right
+                        else -> {
+                            val order = listOf("HOME", "TEST", "CELL", "REPORTS", "SETTINGS")
+                            val from = order.indexOf(initialState).coerceAtLeast(0)
+                            val to = order.indexOf(targetState).coerceAtLeast(0)
+                            if (to > from) AnimatedContentTransitionScope.SlideDirection.Left else AnimatedContentTransitionScope.SlideDirection.Right
+                        }
+                    }
                     (slideIntoContainer(direction, tween(300)) + fadeIn(tween(220)))
                         .togetherWith(slideOutOfContainer(direction, tween(300)) + fadeOut(tween(180)))
                 },
@@ -3865,6 +3876,27 @@ private fun Field(name: String, value: String) {
     }
 }
 
+@Composable
+private fun LongField(name: String, value: String) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Text(
+            name,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            value,
+            modifier = Modifier.fillMaxWidth(),
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+    }
+}
+
 private fun mapPointRows(sample: TrackSample, fields: Set<MapDetailField>): List<Pair<String, String>> {
     val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(sample.timestampMs))
     val values = linkedMapOf(
@@ -4637,7 +4669,7 @@ private fun VideoLoadingScreen(onBack: () -> Unit, onVisualAiCollector: () -> Un
             Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(autoScreenRecord, { autoScreenRecord = it }); Text("Auto Screen Recording") }
             Text("Android shows the system capture confirmation before the test. The MP4 is named from the test metadata and stops when the YouTube test finishes.",style=MaterialTheme.typography.bodySmall)
             Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(semiAuto, { semiAuto = it }); Text("Semi-auto mode (START → click video → LOADED)") }
-            if (semiAuto) Text("Semi-auto has no fixed test count. For EACH sample: press START on the YouTube list, then tap one video; that tap is T0. CellTracker automatically detects playback start as T1. LOADED is only the manual T1 fallback if AUTO is not confirmed. Between samples you can scroll freely. Use AD / SKIP for advertisements; AD rows are excluded from delay statistics.", style = MaterialTheme.typography.bodySmall)
+            if (semiAuto) Text("Semi-auto has no fixed test count. For EACH sample: press START on the YouTube list, then tap one video; that tap is T0. CellTracker automatically detects playback start as T1. LOADED is only the manual T1 fallback if AUTO is not confirmed. Between samples you can scroll freely. Advertisements can be corrected during report review/calibration; no separate AD/SKIP overlay action is required.", style = MaterialTheme.typography.bodySmall)
             Button(onClick = { context.startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }) { Text("1. Enable CellTracker Accessibility") }
             Button(onClick = {
                 pendingConfig = VideoLoadingConfig(
@@ -5060,7 +5092,7 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
                         Field(if(adb.exportRunning)"Elapsed" else "Total time",String.format(java.util.Locale.US,"%02d:%02d",elapsed/60,elapsed%60))
                     }
                     if(adb.exportResult.isNotBlank()) Field("Result",adb.exportResult)
-                    if(adb.exportError.isNotBlank()) Field("Reason",adb.exportError)
+                    if(adb.exportError.isNotBlank()) LongField("Reason", adb.exportError)
                     if(adb.exportPath.isNotBlank()) Field("Saved to",adb.exportPath)
                 }
             }

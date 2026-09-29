@@ -5,6 +5,17 @@ import android.content.Context
 class SettingsRepository(context: Context) {
     private val prefs = context.getSharedPreferences("celltracker_settings", Context.MODE_PRIVATE)
 
+    init {
+        // v1.2.17 changes the Network Floating Window default to OFF. Older builds
+        // persisted the former default (ON), so migrate once; later user choices are preserved.
+        if (!prefs.getBoolean("floating_default_off_migrated_v1217", false)) {
+            prefs.edit()
+                .putBoolean("floating_window_enabled", false)
+                .putBoolean("floating_default_off_migrated_v1217", true)
+                .apply()
+        }
+    }
+
     fun load(): AppSettings = AppSettings(
         uiRefreshMs = prefs.getLong("ui_refresh_ms", 1000L),
         recordIntervalMs = prefs.getLong("record_interval_ms", 1000L),
@@ -13,7 +24,7 @@ class SettingsRepository(context: Context) {
         vibrateOnMark = prefs.getBoolean("vibrate_on_mark", true),
         toastOnMark = prefs.getBoolean("toast_on_mark", true),
         soundOnMark = prefs.getBoolean("sound_on_mark", false),
-        floatingWindowEnabled = prefs.getBoolean("floating_window_enabled", true),
+        floatingWindowEnabled = prefs.getBoolean("floating_window_enabled", false),
         floatingAutoShowDuringRecording = prefs.getBoolean("floating_auto_show", true),
         floatingKeepWhenStopped = prefs.getBoolean("floating_keep_when_stopped", true),
         floatingOpacity = prefs.getFloat("floating_opacity", 0.80f).coerceIn(0.20f, 1.00f),
