@@ -1,3 +1,10 @@
+# v1.2.23
+- Screen recording now writes to an app-owned temporary MP4 first, validates duration/resolution, then publishes to Downloads.
+- Reduced capture size to a conservative 720p-class profile for OEM encoder compatibility.
+- Invalid tiny/0x0 recordings are rejected instead of being linked into reports.
+- YouTube snapshots now prefer the active CellTracker data SIM.
+- YouTube Excel/HTML export correlates each reviewed attempt with the continuous network recording to fill missing RAT/RSRP/RSRQ/SINR/Band/PCI/ARFCN data.
+
 # CellTracker v1.2.22
 
 - Fixed device-dependent screen recordings that could produce a tiny ~3 KB, 0x0 / 00:00 MP4.
