@@ -242,7 +242,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun stopRecording() {
         val app = getApplication<Application>()
         val path = RecordingState.status.value.latestPath ?: _state.value.latestRecordingPath ?: latestPathFromPrefs()
-        val autoExport = settingsRepository.load().autoExportReports
+        val autoExport = settingsRepository.load().autoExportNetworkRecording
         app.stopService(Intent(app, RecordingService::class.java))
         viewModelScope.launch {
             delay(350)

@@ -14,6 +14,18 @@ class SettingsRepository(context: Context) {
                 .putBoolean("floating_default_off_migrated_v1217", true)
                 .apply()
         }
+
+        // v1.2.35 splits the old global report auto-export switch into per-report switches.
+        // Preserve the previous global preference on upgrade; fresh installs default all three ON.
+        if (!prefs.getBoolean("report_auto_export_split_migrated_v1235", false)) {
+            val oldGlobal = prefs.getBoolean("auto_export_reports", true)
+            prefs.edit()
+                .putBoolean("auto_export_network_recording", oldGlobal)
+                .putBoolean("auto_export_youtube", oldGlobal)
+                .putBoolean("auto_export_tiktok", oldGlobal)
+                .putBoolean("report_auto_export_split_migrated_v1235", true)
+                .apply()
+        }
     }
 
     fun load(): AppSettings = AppSettings(
@@ -24,7 +36,9 @@ class SettingsRepository(context: Context) {
         vibrateOnMark = prefs.getBoolean("vibrate_on_mark", true),
         toastOnMark = prefs.getBoolean("toast_on_mark", true),
         soundOnMark = prefs.getBoolean("sound_on_mark", false),
-        autoExportReports = prefs.getBoolean("auto_export_reports", true),
+        autoExportNetworkRecording = prefs.getBoolean("auto_export_network_recording", true),
+        autoExportYouTube = prefs.getBoolean("auto_export_youtube", true),
+        autoExportTikTok = prefs.getBoolean("auto_export_tiktok", true),
         floatingWindowEnabled = prefs.getBoolean("floating_window_enabled", false),
         floatingAutoShowDuringRecording = prefs.getBoolean("floating_auto_show", true),
         floatingKeepWhenStopped = prefs.getBoolean("floating_keep_when_stopped", true),
@@ -52,7 +66,9 @@ class SettingsRepository(context: Context) {
             .putBoolean("vibrate_on_mark", settings.vibrateOnMark)
             .putBoolean("toast_on_mark", settings.toastOnMark)
             .putBoolean("sound_on_mark", settings.soundOnMark)
-            .putBoolean("auto_export_reports", settings.autoExportReports)
+            .putBoolean("auto_export_network_recording", settings.autoExportNetworkRecording)
+            .putBoolean("auto_export_youtube", settings.autoExportYouTube)
+            .putBoolean("auto_export_tiktok", settings.autoExportTikTok)
             .putBoolean("floating_window_enabled", settings.floatingWindowEnabled)
             .putBoolean("floating_auto_show", settings.floatingAutoShowDuringRecording)
             .putBoolean("floating_keep_when_stopped", settings.floatingKeepWhenStopped)

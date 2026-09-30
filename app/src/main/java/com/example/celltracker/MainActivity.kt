@@ -3432,7 +3432,7 @@ private fun SettingsScreen(
         topBar = {
             if (!embedded || page != "root") {
                 TopAppBar(
-                    title = { Text(when (page) { "sampling" -> "Sampling"; "marker" -> "Marker Button"; "floating" -> "Floating Window"; "map" -> "Map Point Details"; "issues" -> "Issue Types"; "metadata" -> "Test Metadata Options"; else -> "Settings" }) },
+                    title = { Text(when (page) { "sampling" -> "Sampling"; "marker" -> "Marker Button"; "floating" -> "Floating Window"; "map" -> "Map Point Details"; "issues" -> "Issue Types"; "metadata" -> "Test Metadata Options"; "testreport" -> "Test Report"; else -> "Settings" }) },
                     navigationIcon = {
                         if (page != "root") TextButton(onClick = { page = "root" }) { Text("Back") }
                         else if (!embedded) TextButton(onClick = onBack) { Text("Back") }
@@ -3538,6 +3538,21 @@ private fun SettingsScreen(
                     Text("When usage access is available, screenshot names use the most recent foreground app. If its display label cannot be read, CellTracker keeps a recognizable package-name suffix instead of using 'Screen'.", style = MaterialTheme.typography.bodySmall)
                     Text("The window uses the recording Mark Target SIM and can be dragged, collapsed and used to create issue markers while another app is on screen.", style = MaterialTheme.typography.bodySmall)
                 }
+                "testreport" -> Column(Modifier.padding(16.dp).fillMaxSize().clip(RoundedCornerShape(22.dp)).background(MaterialTheme.colorScheme.surface).border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=.12f), RoundedCornerShape(22.dp)).padding(16.dp).verticalScroll(rememberRetainedScrollState("settings.testreport")), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Text("Auto export reports", style = MaterialTheme.typography.titleMedium)
+                    Text("Choose which test reports are automatically exported to Downloads when a test finishes. All options are enabled by default.", style = MaterialTheme.typography.bodySmall)
+                    HorizontalDivider()
+                    SettingSwitch("Network Recording", draft.autoExportNetworkRecording) {
+                        applySetting(draft.copy(autoExportNetworkRecording = it))
+                    }
+                    SettingSwitch("YouTube Video Loading", draft.autoExportYouTube) {
+                        applySetting(draft.copy(autoExportYouTube = it))
+                    }
+                    SettingSwitch("TikTok", draft.autoExportTikTok) {
+                        applySetting(draft.copy(autoExportTikTok = it))
+                    }
+                    Text("Manual Export / Share remains available even when automatic export is turned off.", style = MaterialTheme.typography.bodySmall)
+                }
                 "map" -> Column(Modifier.padding(16.dp).fillMaxSize().clip(RoundedCornerShape(22.dp)).background(MaterialTheme.colorScheme.surface).border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=.12f), RoundedCornerShape(22.dp)).padding(16.dp).verticalScroll(rememberRetainedScrollState("settings.map")), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("Changes are saved immediately.", style = MaterialTheme.typography.bodySmall)
                     MapDetailField.entries.forEach { field ->
@@ -3583,13 +3598,7 @@ private fun SettingsScreen(
                         SettingsMenuRow("▣", "Floating Window", "Overlay info, opacity, compact mode and permission") { navigateTo("floating") }
                     }
                     SettingsGroup(title = "TEST & REPORT") {
-                        SettingSwitch("Auto export reports", draft.autoExportReports) {
-                            applySetting(draft.copy(autoExportReports = it))
-                        }
-                        Text(
-                            "Automatically export Network Recording, YouTube and TikTok reports when a test finishes. Enabled by default.",
-                            style = MaterialTheme.typography.bodySmall
-                        )
+                        SettingsMenuRow("⇩", "Test Report", "Auto export settings for each report type") { navigateTo("testreport") }
                         SettingsGroupDivider()
                         SettingsMenuRow("⌖", "Map Point Details", "Choose information shown for a map point") { navigateTo("map") }
                         SettingsGroupDivider()

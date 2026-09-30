@@ -1,3 +1,12 @@
+# v1.2.35 (212)
+
+- Redesign Settings > Test & Report to match the existing card/menu-row style.
+- Replace the prominent root-level Auto export reports switch with a normal Test Report settings row.
+- Add a Test Report subpage with independent auto-export switches for Network Recording, YouTube Video Loading, and TikTok.
+- All three auto-export options default to ON.
+- Upgrade migration preserves the previous global auto-export preference for all three new switches.
+- Manual Export / Share remains available when automatic export is disabled.
+
 # v1.2.34 (211)
 
 - Add Settings > Test & Report > **Auto export reports** switch; default is ON.

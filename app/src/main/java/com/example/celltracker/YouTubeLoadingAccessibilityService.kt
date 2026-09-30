@@ -1281,7 +1281,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         status.text = "YouTube Test · $state · results saved"
         if (f != null) {
             scope.launch(Dispatchers.IO) {
-                val autoExport = SettingsRepository(this@YouTubeLoadingAccessibilityService).load().autoExportReports
+                val autoExport = SettingsRepository(this@YouTubeLoadingAccessibilityService).load().autoExportYouTube
                 val finalResult = runCatching {
                     repo.finish(f, startedAtForFinish, finishedAt, state, recordingPath, screenRecordingUri, screenRecordingStartMs)
                     if (autoExport) VideoLoadingExporter.export(this@YouTubeLoadingAccessibilityService, f.absolutePath)
@@ -2464,7 +2464,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             val end=System.currentTimeMillis()
             val reportUri=saveReport(end);running=false
             if(reportUri!=null){
-                val autoExport = SettingsRepository(this@YouTubeLoadingAccessibilityService).load().autoExportReports
+                val autoExport = SettingsRepository(this@YouTubeLoadingAccessibilityService).load().autoExportTikTok
                 if (autoExport) {
                     scope.launch(Dispatchers.IO){
                         val exportResult=runCatching{TikTokReportExporter.export(this@YouTubeLoadingAccessibilityService,reportUri)}
