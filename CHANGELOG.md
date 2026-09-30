@@ -1,3 +1,10 @@
+# CellTracker v1.2.30
+
+- Roll back YouTube semi-auto START / ARMED / LOADED behavior to the pre-v1.2.29 flow used by v1.2.13/v1.2.28.
+- Remove the v1.2.29 candidate-tap + playback-confirmation T0 experiment.
+- START arms the original touch-capture path; the next valid tap-like gesture in the YouTube media/content area becomes T0; LOADED remains the manual completion marker.
+- Screen-recording code is intentionally unchanged from v1.2.29; LK7k recording is treated as a firmware issue for now.
+
 # CellTracker v1.2.29
 
 - YouTube semi-auto T0 now uses candidate tap + confirmed playback transition. UI/window changes can confirm a candidate but can never create T0 by themselves.
