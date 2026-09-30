@@ -1,3 +1,10 @@
+# CellTracker v1.2.29
+
+- YouTube semi-auto T0 now uses candidate tap + confirmed playback transition. UI/window changes can confirm a candidate but can never create T0 by themselves.
+- Preserves the original user tap timestamp when playback is confirmed; rejected taps are discarded and the test remains armed.
+- Adds an ImageReader frame probe to screen-recording diagnostics on OEMs where MediaProjection/VirtualDisplay starts but MediaRecorder/MediaCodec receives no frames.
+- TECNO LK7k uses the probe before recording so diagnostics distinguish projection frame delivery from encoder-surface failure.
+
 # v1.2.28 (205)
 
 - Fix compile error in TestScreenRecordingService by importing android.os.ParcelFileDescriptor.

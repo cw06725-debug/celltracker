@@ -122,6 +122,11 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
     private var semiAttemptArmed = false
     private var semiArmedAtUptime = 0L
     private var overlayStartButton: Button? = null
+    // v1.2.29: a user tap is only a candidate. T0 is committed only after YouTube
+    // actually transitions to a playback page. This prevents blank-area taps and
+    // mini-player/UI refreshes from creating phantom attempts.
+    private var semiCandidatePending = false
+    private var semiCandidateGeneration = 0
 
     // WhatsApp manual-timing controller shares this single AccessibilityService so Android
     // Settings exposes only one CellTracker accessibility switch.
@@ -182,19 +187,57 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
 
         when (event.eventType) {
             AccessibilityEvent.TYPE_VIEW_CLICKED -> {
-                acceptManualYouTubeT0(event, "ACCESSIBILITY_CLICK")
-            }
-            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
-                if (event.eventTime >= semiArmedAtUptime + 120L) {
-                    acceptManualYouTubeT0(event, "WINDOW_CHANGE")
+                if (!semiCandidatePending) {
+                    val eventUptime = event.eventTime
+                    val ageMs = (SystemClock.uptimeMillis() - eventUptime).coerceAtLeast(0L)
+                    val eventElapsed = (SystemClock.elapsedRealtime() - ageMs).coerceAtLeast(1L)
+                    val eventWall = System.currentTimeMillis() - ageMs
+                    beginYouTubeT0Candidate(eventWall, eventElapsed, lightweightClickedTitle(event), "ACCESSIBILITY_CLICK")
                 }
             }
-            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
-                // Some YouTube builds/cards don't emit TYPE_VIEW_CLICKED. Use the first post-ARM
-                // native content mutation as fallback without walking rootInActiveWindow.
-                if (event.eventTime >= semiArmedAtUptime + 180L) {
-                    acceptManualYouTubeT0(event, "UI_CHANGE")
+            // Window/content changes are confirmation signals only. They must never create T0
+            // without a preceding user candidate.
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
+            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> Unit
+        }
+    }
+
+    private fun beginYouTubeT0Candidate(wall: Long, elapsed: Long, title: String, source: String) {
+        if (!running || !config.semiAuto || !semiAttemptArmed || t0 > 0L || semiCandidatePending) return
+        semiCandidatePending = true
+        val generation = ++semiCandidateGeneration
+        overlayStatus?.text = "SEMI · tap candidate · confirming video…"
+        scope.launch {
+            var confirmed = false
+            // Give YouTube enough time to navigate, but preserve the original user-tap timestamp.
+            repeat(10) {
+                delay(150)
+                if (!running || generation != semiCandidateGeneration || t0 > 0L) return@launch
+                if (looksLikePlaybackPage(rootInActiveWindow)) {
+                    confirmed = true
+                    return@repeat
                 }
+            }
+            if (!running || generation != semiCandidateGeneration || t0 > 0L) return@launch
+            semiCandidatePending = false
+            if (confirmed) {
+                seq++
+                currentTitle = title.ifBlank { "Manual media $seq" }.take(160)
+                t0 = wall
+                semiT0ElapsedMs = elapsed
+                semiT0Source = "${source}_PLAYBACK_CONFIRMED"
+                semiAttemptArmed = false
+                semiArmedAtUptime = 0L
+                collectorLastSavedElapsed = 0L
+                collectorPlaybackReady = false
+                collectorRecommendationsReady = false
+                overlayStartButton?.apply { text = "ACTIVE"; isEnabled = true }
+                overlayStatus?.text = "SEMI · #$seq T0 confirmed · LOADED = manual fallback"
+                removeSemiTouchCapture()
+                startAutoVisualWatch()
+            } else {
+                overlayStatus?.text = "SEMI · tap ignored · no video transition"
+                if (semiCaptureOverlay == null && !looksLikePlaybackPage(rootInActiveWindow)) installSemiTouchCapture()
             }
         }
     }
@@ -1057,6 +1100,8 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         semiFlowGeneration++
         removeSemiTouchCapture()
         semiAttemptArmed = false
+        semiCandidatePending = false
+        semiCandidateGeneration++
         overlayStartButton?.apply { text = "START"; isEnabled = true }
 
         // RETRY means discard only the current unfinished attempt and return the interaction
@@ -1358,32 +1403,12 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                         (maxDistanceFromDown <= tapSlopPx || tapLikeWithClickableTarget)
 
                     if (isTap && inMediaArea) {
-                        // T0 is the user's real tap-up time.  Remove the capture layer, then replay
-                        // the same tap into YouTube.  No Accessibility click event is required.
-                        // Use ACTION_DOWN as the user's real click instant. Classification waits until ACTION_UP,
-                        // but T0 must not be shifted later by the classification/replay work.
                         val wall = System.currentTimeMillis() - duration
                         val elapsed = downElapsed
-                        seq++
-                        currentTitle = "Manual media $seq"
-                        t0 = wall
-                        semiT0ElapsedMs = elapsed
-                        semiT0Source = "OVERLAY_TOUCH_HIGH"
-                        semiSawPlayback = false
-                        // This gesture is now committed as the active attempt. Do not leave it in
-                        // the recovery cache, otherwise the Back transition after LOADED can reuse
-                        // the stale touch and create a duplicate attempt.
-                        semiLastGestureWallMs = 0L
-                        semiLastGestureElapsedMs = 0L
-                        semiLastGestureTitle = ""
-                        overlayStartButton?.text = "ACTIVE"
-                        overlayStatus?.text = "SEMI · #$seq T0 TOUCH · tap LOADED at first frame"
-                        // First try Accessibility ACTION_CLICK on the actual YouTube node under
-                        // the user's finger. This is much more reliable than dispatchGesture for the
-                        // first tap after an accessibility overlay is removed. Gesture replay remains
-                        // as the fallback for thumbnails that do not expose a clickable node.
                         val clickTarget = clickTargetAtDown ?: findClickableNodeAt(rootInActiveWindow, e.rawX.toInt(), e.rawY.toInt())
+                        val title = runCatching { clickTarget?.let { nodeLabel(it) }.orEmpty() }.getOrDefault("")
                         removeSemiTouchCapture()
+                        beginYouTubeT0Candidate(wall, elapsed, title, "OVERLAY_TOUCH")
                         scope.launch {
                             delay(90)
                             val nodeClicked = runCatching { clickTarget?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true }.getOrDefault(false)
@@ -1391,15 +1416,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                                 delay(90)
                                 if (!dispatchTap(e.rawX, e.rawY)) {
                                     delay(180)
-                                    if (!dispatchTap(e.rawX, e.rawY)) {
-                                        // Do not leave a phantom attempt when Android rejected every replay method.
-                                        t0 = 0L
-                                        semiT0ElapsedMs = 0L
-                                        semiT0Source = ""
-                                        seq = (seq - 1).coerceAtLeast(0)
-                                        overlayStatus?.text = "SEMI · tap delivery failed · tap video again"
-                                        installSemiTouchCapture()
-                                    }
+                                    dispatchTap(e.rawX, e.rawY)
                                 }
                             }
                         }
