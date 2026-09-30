@@ -1,3 +1,9 @@
+# v1.2.37 (214)
+
+- Fix GitHub Actions `validateSigningDebug` failure: the bundled internal-test keystore is now explicitly tracked instead of being excluded by `*.jks`.
+- Keep v1.2.36 behavior unchanged: stable update signing, per-test report folders, and refined Settings transition remain in place.
+- No YouTube/TikTok/Network Recording test-flow changes.
+
 # v1.2.36 (213)
 
 - Fix future in-place upgrades by bundling one stable internal-test signing certificate for GitHub Actions builds. Because previously installed APKs were signed with a different/random certificate, v1.2.36 requires one final uninstall/reinstall; subsequent higher-version builds can update in place without clearing app data.

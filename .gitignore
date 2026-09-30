@@ -1,3 +1,4 @@
 celltracker-signing.properties
 celltracker-update.jks
 *.jks
+!keystore/celltracker-dev.jks
