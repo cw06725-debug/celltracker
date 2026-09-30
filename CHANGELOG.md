@@ -1,3 +1,11 @@
+# v1.2.39 (216)
+
+- Rework Cell Info and Settings navigation to use the same full-destination horizontal push/pop structure as the working Home -> All Tests animation.
+- Move the Cell Info app bar inside the animated destination so the header and content slide together without Scaffold inset jumps.
+- Move the Settings root and child app bars inside the Settings AnimatedContent so root -> child -> back transitions no longer vertically shift.
+- Match Settings transition timing/fade values to the working Quick Start / All Tests animation.
+- No test, report, export, or signing behavior changes.
+
 # v1.2.38 (215)
 
 - Reworked Settings child-page navigation to an iPhone-like horizontal push/pop transition.

@@ -1530,7 +1530,11 @@ private fun MainScreen(
 
     Scaffold(
         topBar = {
-            if (mainTab != "HOME" && mainTab != "TEST" && !((mainTab == "SETTINGS" && settingsSubpageVisible) || (mainTab == "REPORTS" && reportsSubpageVisible))) {
+            // CELL and SETTINGS render their own app bars inside AnimatedContent so the
+            // header moves together with the page, matching the Quick Start / All Tests
+            // push-pop animation. Keeping an outer TopAppBar here changes Scaffold insets
+            // before the content animation and creates the visible vertical jump.
+            if ((mainTab == "MAP" || mainTab == "REPORTS") && !(mainTab == "REPORTS" && reportsSubpageVisible)) {
                 TopAppBar(
                     title = {
                         Text(
@@ -1702,6 +1706,16 @@ private fun MainScreen(
             }
 
             // CELL INFO
+            // Keep the header inside the AnimatedContent destination. This is deliberately
+            // the same structure used by Home -> All Tests: the complete destination,
+            // including its title/back affordance, participates in the horizontal slide.
+            TopAppBar(
+                title = { Text("Cell Info", fontWeight = FontWeight.SemiBold) },
+                navigationIcon = {
+                    TextButton(onClick = { onMainTabChange("HOME") }) { Text("‹ Back") }
+                }
+            )
+
             // Keep the SIM selector outside the scrollable content so it remains visible
             // while the user scrolls through Network / Neighbor / Recording cards.
             Surface(tonalElevation = 2.dp) {
@@ -3460,25 +3474,31 @@ private fun SettingsScreen(
             transitionSpec = {
                 when {
                     initialState == "root" && targetState != "root" ->
-                        (slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(300)) + fadeIn(tween(180)))
-                            .togetherWith(slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(300)) + fadeOut(tween(140)))
+                        (slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(300)) + fadeIn(tween(220)))
+                            .togetherWith(slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(300)) + fadeOut(tween(180)))
                     initialState != "root" && targetState == "root" ->
-                        (slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Right, tween(300)) + fadeIn(tween(180)))
-                            .togetherWith(slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Right, tween(300)) + fadeOut(tween(140)))
+                        (slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Right, tween(300)) + fadeIn(tween(220)))
+                            .togetherWith(slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Right, tween(300)) + fadeOut(tween(180)))
                     else ->
-                        (slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(300)) + fadeIn(tween(180)))
-                            .togetherWith(slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(300)) + fadeOut(tween(140)))
+                        (slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(300)) + fadeIn(tween(220)))
+                            .togetherWith(slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(300)) + fadeOut(tween(180)))
                 }
             },
             label = "settingsNavigation",
             modifier = Modifier.padding(padding).fillMaxSize()
         ) { currentPage ->
             Column(Modifier.fillMaxSize()) {
-                if (embedded && currentPage != "root") {
+                if (embedded) {
+                    // The root Settings header and child headers live inside the same
+                    // AnimatedContent page. This prevents Scaffold inset changes and makes
+                    // the whole screen push/pop horizontally like the working Quick Start
+                    // navigation.
                     TopAppBar(
-                        title = { Text(settingsPageTitle(currentPage)) },
+                        title = { Text(settingsPageTitle(currentPage), fontWeight = FontWeight.SemiBold) },
                         navigationIcon = {
-                            TextButton(onClick = { page = "root" }) { Text("Back") }
+                            if (currentPage != "root") {
+                                TextButton(onClick = { page = "root" }) { Text("‹ Back") }
+                            }
                         }
                     )
                 }
