@@ -4619,12 +4619,12 @@ private fun VisualAiCollectorScreen(onBack: () -> Unit) {
             } else {
                 Text("Ground Truth Labels", style = MaterialTheme.typography.titleSmall)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Button(onClick = { context.startService(Intent(context, ScreenCaptureService::class.java).apply { action = ScreenCaptureService.ACTION_VISUAL_AI_T0 }) }, modifier = Modifier.weight(1f)) { Text("T0") }
+                    Button(onClick = { context.startService(Intent(context, ScreenCaptureService::class.java).apply { action = ScreenCaptureService.ACTION_VISUAL_AI_T0 }) }, modifier = Modifier.weight(1f)) { Text("START/T0") }
                     Button(onClick = { context.startService(Intent(context, ScreenCaptureService::class.java).apply { action = ScreenCaptureService.ACTION_VISUAL_AI_PLAY_OK }) }, modifier = Modifier.weight(1f)) { Text("PLAY OK") }
                     Button(onClick = { context.startService(Intent(context, ScreenCaptureService::class.java).apply { action = ScreenCaptureService.ACTION_VISUAL_AI_RECS_OK }) }, modifier = Modifier.weight(1f)) { Text("RECS OK") }
                 }
                 Text("Attempt ${ScreenCaptureService.collectorAttempt} · ${ScreenCaptureService.collectorPhase}", style = MaterialTheme.typography.bodySmall)
-                Text("For each sample: tap T0 immediately before tapping the YouTube video; tap PLAY OK when video is visibly playing; tap RECS OK when recommendations are fully loaded.", style = MaterialTheme.typography.bodySmall)
+                Text("For each sample: tap START/T0 to arm, then tap the target YouTube video. That real screen tap becomes T0. Tap PLAY OK when video is visibly playing; tap RECS OK when recommendations are fully loaded. Drag the floating bar by its status area.", style = MaterialTheme.typography.bodySmall)
                 Button(onClick = {
                     context.startService(Intent(context, ScreenCaptureService::class.java).apply { action = ScreenCaptureService.ACTION_STOP_VISUAL_AI })
                 }, modifier = Modifier.fillMaxWidth()) { Text("STOP COLLECTION") }

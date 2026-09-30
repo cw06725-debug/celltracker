@@ -1,3 +1,12 @@
+# v1.2.31 (208)
+
+- Visual AI Collector ground-truth T0 now matches the stable YouTube test workflow: START/T0 only ARMS capture; the next real tap in the YouTube media/content area is recorded as T0 and replayed to YouTube.
+- Collector T0 is no longer timestamped when the floating START/T0 button itself is pressed.
+- Scroll/long gesture while armed does not create T0; the collector re-arms after replay.
+- Visual AI Collector floating control bar is draggable by its status area.
+- Keeps v1.2.30 YouTube Semi-auto START / ARMED / LOADED behavior unchanged.
+- Screen-recording logic unchanged.
+
 # CellTracker v1.2.30
 
 - Roll back YouTube semi-auto START / ARMED / LOADED behavior to the pre-v1.2.29 flow used by v1.2.13/v1.2.28.

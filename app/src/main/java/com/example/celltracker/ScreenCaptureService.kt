@@ -22,6 +22,7 @@ import android.provider.Settings
 import android.provider.MediaStore
 import android.util.DisplayMetrics
 import android.view.WindowManager
+import android.view.MotionEvent
 import android.view.Gravity
 import android.widget.Button
 import android.widget.LinearLayout
@@ -51,6 +52,7 @@ class ScreenCaptureService : Service() {
     private var visualAiLastFrameElapsed = 0L
     private var visualAiAttempt = 0
     private var visualAiT0Elapsed = 0L
+    private var visualAiT0Wall = 0L
     private var visualAiPlayOkElapsed = 0L
     private var visualAiRecsOkElapsed = 0L
     private var visualAiCaptureJob: Job? = null
@@ -127,6 +129,7 @@ class ScreenCaptureService : Service() {
         visualAiLastFrameElapsed = 0L
         visualAiAttempt = 0
         visualAiT0Elapsed = 0L
+        visualAiT0Wall = 0L
         visualAiPlayOkElapsed = 0L
         visualAiRecsOkElapsed = 0L
         collectorFrameCount = 0
@@ -221,14 +224,20 @@ class ScreenCaptureService : Service() {
             }
             bar.addView(b, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, weight))
         }
-        addButton("T0") { markVisualAiT0() }
+        addButton("START/T0", 1.15f) { armVisualAiT0() }
         addButton("PLAY") { markVisualAiPlayOk() }
         addButton("RECS") { markVisualAiRecsOk() }
         addButton("STOP", 0.8f) { stopVisualAiCollector() }
 
-        val barHeight = (52f * resources.displayMetrics.density).toInt()
+        val densityPx = resources.displayMetrics.density
+        val barHeight = (52f * densityPx).toInt()
+        val margin = (8f * densityPx).toInt()
+        val barWidth = minOf(
+            resources.displayMetrics.widthPixels - margin * 2,
+            (430f * densityPx).toInt()
+        ).coerceAtLeast((280f * densityPx).toInt())
         val lp = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
+            barWidth,
             barHeight,
             if (Build.VERSION.SDK_INT >= 26) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
@@ -236,10 +245,38 @@ class ScreenCaptureService : Service() {
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
         ).apply {
-            gravity = Gravity.TOP
-            x = 0
-            y = 0
+            gravity = Gravity.TOP or Gravity.START
+            x = margin
+            y = margin
         }
+
+        // Drag the collector bar by its status area. Buttons remain normal click targets.
+        var dragStartX = 0
+        var dragStartY = 0
+        var touchStartX = 0f
+        var touchStartY = 0f
+        status.setOnTouchListener { _, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    dragStartX = lp.x
+                    dragStartY = lp.y
+                    touchStartX = event.rawX
+                    touchStartY = event.rawY
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val maxX = (resources.displayMetrics.widthPixels - lp.width).coerceAtLeast(0)
+                    val maxY = (resources.displayMetrics.heightPixels - lp.height).coerceAtLeast(0)
+                    lp.x = (dragStartX + (event.rawX - touchStartX).toInt()).coerceIn(0, maxX)
+                    lp.y = (dragStartY + (event.rawY - touchStartY).toInt()).coerceIn(0, maxY)
+                    runCatching { wm.updateViewLayout(bar, lp) }
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> true
+                else -> false
+            }
+        }
+
         runCatching {
             wm.addView(bar, lp)
             visualAiOverlay = bar
@@ -260,14 +297,34 @@ class ScreenCaptureService : Service() {
         visualAiOverlayStatus = null
     }
 
+    private fun armVisualAiT0() {
+        // START/T0 must behave like the real YouTube test: pressing the collector button only
+        // arms capture. The next real tap in YouTube content is the actual T0.
+        collectorPhase = "ARMED"
+        updateVisualAiOverlay()
+        val accepted = YouTubeLoadingAccessibilityService.requestVisualAiCollectorT0Capture { wallMs, elapsedMs ->
+            android.os.Handler(mainLooper).post { commitVisualAiT0(wallMs, elapsedMs) }
+        }
+        if (!accepted) {
+            collectorPhase = "ARM FAILED"
+            updateVisualAiOverlay()
+        }
+    }
+
     private fun markVisualAiT0() {
+        // Kept for ACTION compatibility. It now ARMS rather than recording time immediately.
+        armVisualAiT0()
+    }
+
+    private fun commitVisualAiT0(wallMs: Long, elapsedMs: Long) {
         visualAiAttempt++
-        visualAiT0Elapsed = android.os.SystemClock.elapsedRealtime()
+        visualAiT0Elapsed = elapsedMs
+        visualAiT0Wall = wallMs
         visualAiPlayOkElapsed = 0L
         visualAiRecsOkElapsed = 0L
         collectorAttempt = visualAiAttempt
         collectorPhase = "LOADING"
-        appendVisualAiLabel("T0")
+        appendVisualAiLabel("T0", wallMs, elapsedMs)
         updateVisualAiOverlay()
     }
 
@@ -287,7 +344,7 @@ class ScreenCaptureService : Service() {
         updateVisualAiOverlay()
     }
 
-    private fun appendVisualAiLabel(label: String) {
+    private fun appendVisualAiLabel(label: String, forcedWallMs: Long? = null, forcedElapsedMs: Long? = null) {
         val sessionMs = visualAiSessionStartedAt
         if (sessionMs <= 0L) return
         runCatching {
@@ -298,14 +355,15 @@ class ScreenCaptureService : Service() {
             }
             val f = File(dir, "labels.csv")
             if (!f.exists()) f.appendText("attempt,label,wall_ms,elapsed_ms,from_t0_ms\n")
-            val nowWall = System.currentTimeMillis()
-            val nowElapsed = android.os.SystemClock.elapsedRealtime()
+            val nowWall = forcedWallMs ?: System.currentTimeMillis()
+            val nowElapsed = forcedElapsedMs ?: android.os.SystemClock.elapsedRealtime()
             val fromT0 = if (visualAiT0Elapsed > 0L) nowElapsed - visualAiT0Elapsed else -1L
             f.appendText("$visualAiAttempt,$label,$nowWall,$nowElapsed,$fromT0\n")
         }
     }
 
     private fun stopVisualAiCollector() {
+        YouTubeLoadingAccessibilityService.cancelVisualAiCollectorT0Capture()
         visualAiCollectorActive = false
         collectorActive = false
         visualAiCaptureJob?.cancel()

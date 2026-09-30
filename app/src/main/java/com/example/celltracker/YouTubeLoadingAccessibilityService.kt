@@ -65,6 +65,17 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                 }
             }
         }
+
+        /** Visual AI Collector: arm one real YouTube tap as ground-truth T0. */
+        fun requestVisualAiCollectorT0Capture(onT0: (wallMs: Long, elapsedMs: Long) -> Unit): Boolean {
+            val instance = activeInstance ?: return false
+            instance.scope.launch { instance.installVisualAiCollectorTouchCapture(onT0) }
+            return true
+        }
+
+        fun cancelVisualAiCollectorT0Capture() {
+            activeInstance?.scope?.launch { activeInstance?.removeVisualAiCollectorTouchCapture() }
+        }
     }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private lateinit var repo: VideoLoadingRepository
@@ -84,6 +95,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
     private var lockedContentTop = 0
     private var lockedContentBottom = 0
     private var overlayStatus: TextView? = null
+    private var visualAiCollectorTouchCapture: View? = null
     private var semiSawPlayback = false
     private var semiPendingClickMs = 0L
     private var semiPendingClickElapsedMs = 0L
@@ -1273,6 +1285,101 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         if (overlay === view) overlay = null
         overlayStatus = null
         overlayStartButton = null
+    }
+
+    private fun removeVisualAiCollectorTouchCapture() {
+        val v = visualAiCollectorTouchCapture ?: return
+        runCatching { getSystemService(WindowManager::class.java).removeView(v) }
+        visualAiCollectorTouchCapture = null
+    }
+
+    private fun installVisualAiCollectorTouchCapture(onT0: (Long, Long) -> Unit) {
+        removeVisualAiCollectorTouchCapture()
+        val wm = getSystemService(WindowManager::class.java)
+        val capture = View(this).apply { setBackgroundColor(0x01000000) }
+        val cp = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply { gravity = Gravity.TOP or Gravity.START }
+
+        val density = resources.displayMetrics.density
+        val tapSlopPx = 96f * density
+        val longPressMs = 650L
+        var downX = 0f
+        var downY = 0f
+        var downElapsed = 0L
+        var multiTouch = false
+        var maxDistance = 0f
+        val points = ArrayList<Pair<Float, Float>>()
+
+        fun rearm() {
+            scope.launch {
+                delay(100)
+                installVisualAiCollectorTouchCapture(onT0)
+            }
+        }
+
+        capture.setOnTouchListener { _, e ->
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    downX = e.rawX
+                    downY = e.rawY
+                    downElapsed = SystemClock.elapsedRealtime()
+                    multiTouch = false
+                    maxDistance = 0f
+                    points.clear()
+                    points.add(e.rawX to e.rawY)
+                    true
+                }
+                MotionEvent.ACTION_POINTER_DOWN -> { multiTouch = true; true }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = e.rawX - downX
+                    val dy = e.rawY - downY
+                    maxDistance = maxOf(maxDistance, kotlin.math.sqrt(dx * dx + dy * dy))
+                    if (points.isEmpty() || kotlin.math.abs(points.last().first - e.rawX) > 3f || kotlin.math.abs(points.last().second - e.rawY) > 3f) {
+                        points.add(e.rawX to e.rawY)
+                    }
+                    true
+                }
+                MotionEvent.ACTION_CANCEL -> { points.clear(); true }
+                MotionEvent.ACTION_UP -> {
+                    points.add(e.rawX to e.rawY)
+                    val upElapsed = SystemClock.elapsedRealtime()
+                    val duration = (upElapsed - downElapsed).coerceAtLeast(1L)
+                    val dx = e.rawX - downX
+                    val dy = e.rawY - downY
+                    maxDistance = maxOf(maxDistance, kotlin.math.sqrt(dx * dx + dy * dy))
+                    val inMediaArea = isSemiMediaTapArea(e.rawX, e.rawY)
+                    val isTap = !multiTouch && duration < longPressMs && maxDistance <= tapSlopPx
+
+                    removeVisualAiCollectorTouchCapture()
+                    if (isTap && inMediaArea) {
+                        val wall = System.currentTimeMillis() - duration
+                        val clickTarget = findClickableNodeAt(rootInActiveWindow, e.rawX.toInt(), e.rawY.toInt())
+                        onT0(wall, downElapsed)
+                        scope.launch {
+                            delay(90)
+                            val clicked = runCatching { clickTarget?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true }.getOrDefault(false)
+                            if (!clicked) dispatchTap(e.rawX, e.rawY)
+                        }
+                    } else if (!multiTouch && points.size >= 2) {
+                        replayGesture(points.toList(), duration) { rearm() }
+                    } else {
+                        rearm()
+                    }
+                    true
+                }
+                else -> true
+            }
+        }
+
+        runCatching {
+            wm.addView(capture, cp)
+            visualAiCollectorTouchCapture = capture
+        }
     }
 
     private fun installSemiTouchCapture() {
