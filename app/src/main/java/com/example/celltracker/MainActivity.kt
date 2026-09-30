@@ -4708,7 +4708,7 @@ private fun VideoLoadingScreen(onBack: () -> Unit, onVisualAiCollector: () -> Un
                     )
                     showMetadata = true
                 }, modifier = Modifier.fillMaxWidth()) { Text("2. PREPARE TEST / OPEN YOUTUBE") }
-                Text(if (semiAuto) "Semi-auto: for every sample, START → tap one video (T0) → AUTO T1 when playback starts (LOADED is fallback) → return → freely scroll → START again. Android Back before T1 cancels the unfinished sample." else "AUTO: START → different video → first-play detection → Back → next video → auto-scroll. LOADED is a manual fallback.", style = MaterialTheme.typography.bodySmall)
+                Text(if (semiAuto) "Semi-auto: for every sample, START → tap one video (T0) → AUTO T1 when playback starts (LOADED is fallback) → return → freely scroll → START again. Android Back before T1 cancels the unfinished sample." else "AUTO Visual AI (Beta): CellTracker selects a new video, then requires BOTH PLAY and recommendation-list readiness before T1 → Back → next video → auto-scroll. First-pass thresholds are tuned from the labelled Visual AI collector set; Semi-auto remains unchanged.", style = MaterialTheme.typography.bodySmall)
             }
             TextButton(onClick = { history = repo.history() }) { Text("Refresh History") }
             Text("History", style = MaterialTheme.typography.titleMedium)

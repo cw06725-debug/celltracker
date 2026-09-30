@@ -922,25 +922,8 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                     status.text = "Click failed · tap RETRY"
                     return
                 }
-                status.text = "Video $seq/${config.count} · AUTO DETECTING…"
-                scope.launch {
-                    val thisSeq = seq
-                    delay(150)
-                    var readyHits = 0
-                    while (running && seq == thisSeq && System.currentTimeMillis() - t0 < config.timeoutMs) {
-                        delay(120)
-                        val elapsed = System.currentTimeMillis() - t0
-                        // Do not count navigation/UI chrome as loaded.  Require a real watch/Shorts
-                        // player signature and evidence that playback has started.  Three consecutive
-                        // hits suppress transition-animation false positives.
-                        readyHits = if (elapsed >= 250 && isPlaybackActuallyStarted(rootInActiveWindow, sessionMode)) readyHits + 1 else 0
-                        if (readyHits >= 2) {
-                            completeAttempt("PASS", "AUTO", status)
-                            return@launch
-                        }
-                    }
-                    if (running && seq == thisSeq && t0 > 0) completeAttempt("TIMEOUT", "AUTO", status)
-                }
+                status.text = "Video $seq/${config.count} · AUTO AI · PLAY… RECS…"
+                startAutoVisualAiWatcher(status, seq)
                 return
             }
 
@@ -957,6 +940,112 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             }
         }
         status.text = "No new media item found after scrolling · tap RETRY"
+    }
+
+
+    /**
+     * v1.2.32 AUTO Visual AI v1.
+     *
+     * Keep the stable Semi-auto path completely separate.  AUTO clicks a new YouTube item, then
+     * confirms BOTH user-visible success conditions before completing the attempt:
+     *   1) PLAY: real playback evidence from Accessibility, audio transition, or repeated broad
+     *      motion in the player ROI.
+     *   2) RECS: populated recommendation cards below the player on two consecutive checks.
+     *
+     * The first thresholds are intentionally conservative and match the 2026-09-30 collector set
+     * (19 labelled attempts, ~500 ms frame cadence): successful samples reached PLAY at roughly
+     * 1.0-6.5 s and RECS at roughly 1.3-6.9 s, so the existing configurable timeout remains the
+     * outer guard rather than declaring success from a single transition frame.
+     */
+    private fun startAutoVisualAiWatcher(status: TextView, expectedSeq: Int) {
+        visualWatchJob?.cancel()
+        visualWatchGeneration++
+        val generation = visualWatchGeneration
+        val startWall = t0
+        if (!running || startWall <= 0L) return
+
+        autoCaptureFailureCount = 0
+        autoLastCaptureError = 0
+        val audioManager = getSystemService(AudioManager::class.java)
+        val audioWasActiveAtT0 = runCatching { audioManager.isMusicActive }.getOrDefault(false)
+
+        visualWatchJob = scope.launch {
+            delay(350)
+            var previous: IntArray? = null
+            var accessibilityPlayStreak = 0
+            var dynamicStreak = 0
+            var audioStreak = 0
+            var recommendationStreak = 0
+            var playbackReady = false
+            var playbackSource = ""
+
+            while (isActive && running && seq == expectedSeq && t0 == startWall && generation == visualWatchGeneration) {
+                val elapsed = System.currentTimeMillis() - startWall
+
+                if (!playbackReady) {
+                    val a11yStarted = elapsed >= 500L && isPlaybackActuallyStarted(rootInActiveWindow, sessionMode)
+                    accessibilityPlayStreak = if (a11yStarted) accessibilityPlayStreak + 1 else 0
+                    if (accessibilityPlayStreak >= 2) {
+                        playbackReady = true
+                        playbackSource = "A11Y"
+                    }
+                }
+
+                if (!playbackReady) {
+                    val audioActive = runCatching { audioManager.isMusicActive }.getOrDefault(false)
+                    audioStreak = if (!audioWasActiveAtT0 && audioActive && elapsed >= 500L) audioStreak + 1 else 0
+                    if (audioStreak >= 2) {
+                        playbackReady = true
+                        playbackSource = "AUDIO"
+                    }
+                }
+
+                val signature = capturePlayerSignature()
+                if (signature != null) {
+                    val prior = previous
+                    if (!playbackReady && prior != null && prior.size == signature.size) {
+                        val motion = visualMotion(prior, signature)
+                        dynamicStreak = if (motion.first >= 8.0 && motion.second >= 0.14 && elapsed >= 500L) dynamicStreak + 1 else 0
+                        if (dynamicStreak >= 3) {
+                            playbackReady = true
+                            playbackSource = "VISUAL"
+                        }
+                    }
+                    previous = signature
+                }
+
+                if (elapsed >= 500L) {
+                    recommendationStreak = if (detectRecommendationListLoaded()) recommendationStreak + 1 else 0
+                }
+                val recommendationsReady = recommendationStreak >= 2
+
+                status.text = buildString {
+                    append("Video "); append(expectedSeq); append("/"); append(config.count)
+                    append(" · AUTO AI · ")
+                    append(if (playbackReady) "PLAY✓" else "PLAY…")
+                    append(" ")
+                    append(if (recommendationsReady) "RECS✓" else "RECS…")
+                    if (playbackReady && playbackSource.isNotBlank()) { append(" · "); append(playbackSource) }
+                }
+
+                if (playbackReady && recommendationsReady) {
+                    completeAttempt("PASS", "AUTO_AI_${playbackSource}+RECS", status)
+                    return@launch
+                }
+
+                if (elapsed >= config.timeoutMs) {
+                    status.text = buildString {
+                        append("Video "); append(expectedSeq); append(" · AUTO AI timeout · ")
+                        append(if (playbackReady) "PLAY✓" else "PLAY✗")
+                        append(" ")
+                        append(if (recommendationsReady) "RECS✓" else "RECS✗")
+                    }
+                    completeAttempt("TIMEOUT", "AUTO_AI_TIMEOUT", status)
+                    return@launch
+                }
+                delay(550)
+            }
+        }
     }
 
     private fun completeAttempt(result: String, detection: String, status: TextView) {

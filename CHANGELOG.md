@@ -1,3 +1,13 @@
+# v1.2.32 (209)
+
+- Add **AUTO Visual AI v1 (Beta)** for YouTube Video Loading, using the labelled Visual AI collector set as the first threshold baseline.
+- AUTO now completes an attempt only when BOTH conditions are confirmed: actual video PLAY and populated RECS/recommendation list.
+- PLAY uses multiple independent signals: Accessibility playback evidence, inactive→active audio transition, and repeated broad player-ROI visual motion.
+- RECS requires two consecutive populated recommendation-list confirmations to suppress transition/skeleton false positives.
+- AUTO status shows `PLAY…/PLAY✓` and `RECS…/RECS✓` separately; reports record `AUTO_AI_<source>+RECS` or `AUTO_AI_TIMEOUT`.
+- Keep the stable v1.2.30/v1.2.31 Semi-auto `START → ARMED → tap video → LOADED` workflow unchanged.
+- Visual AI Collector and screen-recording behavior unchanged.
+
 # v1.2.31 (208)
 
 - Visual AI Collector ground-truth T0 now matches the stable YouTube test workflow: START/T0 only ARMS capture; the next real tap in the YouTube media/content area is recorded as T0 and replayed to YouTube.
