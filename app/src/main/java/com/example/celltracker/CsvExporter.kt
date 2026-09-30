@@ -39,7 +39,7 @@ object CsvExporter {
         val source = File(sourcePath)
         require(source.exists()) { "Recording file not found" }
         val exportStartedAt = recordingStartedAt(source)
-        val exportRelativePath = ReportStorage.relativePath("Network Recording", exportStartedAt)
+        val exportRelativePath = ReportStorage.sessionRelativePath("Network Recording", exportStartedAt, source.nameWithoutExtension)
 
         val rawUris = when (mode) {
             CsvExportMode.COMBINED -> {

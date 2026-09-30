@@ -1,25 +1,10 @@
-# CellTracker in-place APK updates
+# CellTracker in-place update signing
 
-Android preserves CellTracker settings/history during an APK update when all of these stay the same:
+v1.2.36 introduces a bundled **internal-test** signing key so APKs produced by fresh GitHub Actions runners keep the same certificate.
 
-1. `applicationId` stays `com.example.celltracker`.
-2. The new APK has a higher `versionCode`.
-3. Every APK is signed with the same signing certificate.
+## Important one-time migration
+APK signatures cannot be changed by an Android update. If the currently installed CellTracker was signed by an older/random debug key, Android will show **package conflicts with an existing package**. Uninstall that old build **one final time**, install v1.2.36, and then keep this signing key unchanged. From v1.2.36 onward, higher-version APKs built from this project can be installed directly over the existing app and app data will be preserved.
 
-## One-time setup
+Bundled key: `keystore/celltracker-dev.jks` (internal testing only).
 
-Create one keystore and keep it permanently:
-
-```bash
-keytool -genkeypair -v -keystore celltracker-update.jks -alias celltracker -keyalg RSA -keysize 2048 -validity 10000
-```
-
-Copy `celltracker-signing.properties.example` to `celltracker-signing.properties`, fill in the password/alias, and keep both the real properties file and keystore private.
-
-When the file is present, this project signs debug and release APKs with that stable key. Subsequent APKs can update the installed app directly (or via `adb install -r`) without uninstalling and without clearing SharedPreferences/app-private report history.
-
-## GitHub Actions
-
-Do not commit the private keystore/password to a public repository. Store the keystore as a Base64 GitHub Secret and recreate `celltracker-update.jks` plus `celltracker-signing.properties` in the workflow before Gradle runs. Every workflow run must reuse the SAME keystore.
-
-Important: the first APK signed with the new stable key cannot update an APK signed with an older/different key. There is one final uninstall/reinstall when switching certificates. After that, future versions can update in place.
+For production/Play distribution, replace it with a private production keystore using `celltracker-signing.properties`; never publish a production signing key.

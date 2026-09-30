@@ -2337,13 +2337,17 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             }
             val stamp=java.text.SimpleDateFormat("yyyyMMdd_HHmmss",java.util.Locale.US).format(java.util.Date(sessionStartWall))
             val name=(if(isLag)"TikTok_Video_Lag_" else "TikTok_Upload_")+stamp+".csv"
+            val category=if(isLag)"TikTok Video Lag" else "TikTok Upload"
+            val safeTask=taskName.ifBlank{category}.replace(Regex("[\\/:*?\"<>|\r\n]+"),"_").replace(' ','_').take(48)
+            val sessionBase="${safeTask}_$stamp"
+            val reportPath=ReportStorage.sessionRelativePath(category,sessionStartWall,sessionBase)
             val values=android.content.ContentValues().apply{
                 put(android.provider.MediaStore.Downloads.DISPLAY_NAME,name)
                 put(android.provider.MediaStore.Downloads.MIME_TYPE,"text/csv")
-                put(android.provider.MediaStore.Downloads.RELATIVE_PATH,ReportStorage.relativePath(if(isLag)"TikTok Video Lag" else "TikTok Upload",sessionStartWall))
+                put(android.provider.MediaStore.Downloads.RELATIVE_PATH,reportPath)
             }
             return runCatching{
-                val existing=ExportMediaStore.findDownload(this,name,ReportStorage.relativePath(if(isLag)"TikTok Video Lag" else "TikTok Upload",sessionStartWall))
+                val existing=ExportMediaStore.findDownload(this,name,reportPath)
                 val uri=existing ?: contentResolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI,values)!!
                 if(existing==null) contentResolver.openOutputStream(uri)!!.use{it.write(csv.toByteArray())}
                 uri.toString()

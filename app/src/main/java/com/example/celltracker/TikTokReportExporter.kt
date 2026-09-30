@@ -31,7 +31,8 @@ object TikTokReportExporter {
         val rec=File(p.fields["Recording Path"].orEmpty())
         val cellRows=if(rec.exists()) readCsv(rec) else emptyList()
         val recordingStarted=cellRows.drop(1).firstOrNull()?.firstOrNull()?.let(::parseDateTime) ?: 0L
-        val started=recordingStarted.takeIf{it>0} ?: System.currentTimeMillis()
+        val reportStarted=parseDateTime(p.fields["Start"].orEmpty())
+        val started=reportStarted.takeIf{it>0} ?: recordingStarted.takeIf{it>0} ?: System.currentTimeMillis()
         val stamp=SimpleDateFormat("yyyyMMdd_HHmmss",Locale.US).format(Date(started))
         val base="${safe}_$stamp"
         val cellHeader=cellRows.firstOrNull().orEmpty()
@@ -83,7 +84,7 @@ object TikTokReportExporter {
         val kmlName="${base}_track.kml"
         val rawName="${base}_events.csv"
         val exportCategory=if(p.isLag)"TikTok Video Lag" else "TikTok Upload"
-        val relativePath=ReportStorage.relativePath(exportCategory,started)
+        val relativePath=ReportStorage.sessionRelativePath(exportCategory,started,base)
         val existingHtml=ExportMediaStore.findDownload(c,htmlName,relativePath)
         val existingXlsx=ExportMediaStore.findDownload(c,xlsxName,relativePath)
         val existingCell=ExportMediaStore.findDownload(c,cellName,relativePath)
@@ -99,11 +100,11 @@ object TikTokReportExporter {
                 alreadyExported=true
             )
         }
-        val htmlUri=save(c,htmlName,"text/html",html(p,cellHeader,cellData).toByteArray(),started,exportCategory).toString()
-        val xlsxUri=save(c,xlsxName,"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",PingExporter.simpleXlsx(sheets),started,exportCategory).toString()
-        val cellUri=save(c,cellName,"text/csv",(if(rec.exists())rec.readBytes() else "Cell Info unavailable\n".toByteArray()),started,exportCategory).toString()
-        val kmlUri=save(c,kmlName,"application/vnd.google-earth.kml+xml",kml(cellHeader,cellData,p.events).toByteArray(),started,exportCategory).toString()
-        val rawUri=save(c,rawName,"text/csv",finalCsv(p).toByteArray(),started,exportCategory).toString()
+        val htmlUri=save(c,htmlName,"text/html",html(p,cellHeader,cellData).toByteArray(),relativePath).toString()
+        val xlsxUri=save(c,xlsxName,"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",PingExporter.simpleXlsx(sheets),relativePath).toString()
+        val cellUri=save(c,cellName,"text/csv",(if(rec.exists())rec.readBytes() else "Cell Info unavailable\n".toByteArray()),relativePath).toString()
+        val kmlUri=save(c,kmlName,"application/vnd.google-earth.kml+xml",kml(cellHeader,cellData,p.events).toByteArray(),relativePath).toString()
+        val rawUri=save(c,rawName,"text/csv",finalCsv(p).toByteArray(),relativePath).toString()
         return ExportResult(
             message="Export successful · HTML Summary + Excel + Cell Info + Track KML",
             exportedFileUris=listOf(rawUri,cellUri),
@@ -247,8 +248,8 @@ object TikTokReportExporter {
     private fun parseFullTime(s:String):Long=timeOfDayMs(s).coerceAtLeast(0L)
     private fun parseDateTime(s:String):Long=runCatching{SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS",Locale.US).parse(s)?.time?:0L}.getOrDefault(0L)
     private fun esc(s:String)=s.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
-    private fun save(c:Context,name:String,mime:String,bytes:ByteArray,started:Long,category:String):Uri{
+    private fun save(c:Context,name:String,mime:String,bytes:ByteArray,relativePath:String):Uri{
         if(Build.VERSION.SDK_INT<29) error("Android 10+ required")
-        return ExportMediaStore.saveOrReuse(c,name,mime,bytes,ReportStorage.relativePath(category,started)).first
+        return ExportMediaStore.saveOrReuse(c,name,mime,bytes,relativePath).first
     }
 }

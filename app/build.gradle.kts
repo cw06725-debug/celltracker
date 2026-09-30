@@ -18,30 +18,34 @@ android {
         applicationId = "com.example.celltracker"
         minSdk = 29
         targetSdk = 34
-        versionCode = 212
-        versionName = "1.2.35"
+        versionCode = 213
+        versionName = "1.2.36"
     }
 
-    // Optional stable signing for in-place APK upgrades. Keep the real keystore outside Git.
-    // When celltracker-signing.properties exists, both debug/release APKs use the same certificate,
-    // so Android can install a newer APK over the old one without clearing app data.
+    // Stable internal-test signing for in-place APK upgrades.
+    // If celltracker-signing.properties is supplied, it takes precedence. Otherwise the
+    // bundled internal-test keystore is used so GitHub Actions does not generate a new
+    // random debug certificate on every runner. Do not use the bundled key for Play release.
     signingConfigs {
-        if (cellTrackerSigningFile.exists()) {
-            create("celltrackerStable") {
+        create("celltrackerStable") {
+            if (cellTrackerSigningFile.exists()) {
                 storeFile = rootProject.file(cellTrackerSigning.getProperty("storeFile"))
                 storePassword = cellTrackerSigning.getProperty("storePassword")
                 keyAlias = cellTrackerSigning.getProperty("keyAlias")
                 keyPassword = cellTrackerSigning.getProperty("keyPassword")
+            } else {
+                storeFile = rootProject.file("keystore/celltracker-dev.jks")
+                storePassword = "celltracker123"
+                keyAlias = "celltracker"
+                keyPassword = "celltracker123"
             }
         }
     }
 
     buildTypes {
-        val stable = signingConfigs.findByName("celltrackerStable")
-        if (stable != null) {
-            getByName("debug").signingConfig = stable
-            getByName("release").signingConfig = stable
-        }
+        val stable = signingConfigs.getByName("celltrackerStable")
+        getByName("debug").signingConfig = stable
+        getByName("release").signingConfig = stable
     }
 
     buildFeatures {

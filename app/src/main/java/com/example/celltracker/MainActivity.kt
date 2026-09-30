@@ -3444,10 +3444,10 @@ private fun SettingsScreen(
         AnimatedContent(
             targetState = page,
             transitionSpec = {
-                val enteringChild = targetState != "root"
-                val direction = if (enteringChild) AnimatedContentTransitionScope.SlideDirection.Left else AnimatedContentTransitionScope.SlideDirection.Right
-                (slideIntoContainer(direction, tween(210)) + fadeIn(tween(150)))
-                    .togetherWith(slideOutOfContainer(direction, tween(210)) + fadeOut(tween(130)))
+                // Root Settings is embedded without its own TopAppBar while child pages add one.
+                // A slide transition therefore looks like the page is moving downward as the
+                // content inset changes. Use a short cross-fade for stable, iOS-like navigation.
+                fadeIn(tween(140)).togetherWith(fadeOut(tween(110)))
             },
             label = "settingsNavigation",
             modifier = Modifier.padding(padding).fillMaxSize()

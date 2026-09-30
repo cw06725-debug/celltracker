@@ -1,3 +1,10 @@
+# v1.2.36 (213)
+
+- Fix future in-place upgrades by bundling one stable internal-test signing certificate for GitHub Actions builds. Because previously installed APKs were signed with a different/random certificate, v1.2.36 requires one final uninstall/reinstall; subsequent higher-version builds can update in place without clearing app data.
+- Export each Network Recording, YouTube and TikTok test into its own session folder under the report-type folder to prevent different test runs being mixed together.
+- Keep per-report auto-export settings from v1.2.35.
+- Replace the Settings child-page slide animation with a short cross-fade to remove the apparent downward movement caused by the child TopAppBar appearing.
+
 # v1.2.35 (212)
 
 - Redesign Settings > Test & Report to match the existing card/menu-row style.
