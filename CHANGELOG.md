@@ -1,3 +1,10 @@
+# v1.2.38 (215)
+
+- Reworked Settings child-page navigation to an iPhone-like horizontal push/pop transition.
+- Opening a Settings item slides the child page in from the right while the root page exits left; Back reverses the direction.
+- The child app bar now travels with the child page so entering Settings subpages no longer creates the previous vertical/downward jump.
+- No test, report, export, or signing behavior changed from v1.2.37.
+
 # v1.2.37 (214)
 
 - Fix GitHub Actions `validateSigningDebug` failure: the bundled internal-test keystore is now explicitly tracked instead of being excluded by `*.jks`.

@@ -3428,14 +3428,28 @@ private fun SettingsScreen(
     BackHandler(enabled = page != "root") {
         page = "root"
     }
+    fun settingsPageTitle(value: String): String = when (value) {
+        "sampling" -> "Sampling"
+        "marker" -> "Marker Button"
+        "floating" -> "Floating Window"
+        "map" -> "Map Point Details"
+        "issues" -> "Issue Types"
+        "metadata" -> "Test Metadata Options"
+        "testreport" -> "Test Report"
+        else -> "Settings"
+    }
+
     Scaffold(
         topBar = {
-            if (!embedded || page != "root") {
+            // In embedded Settings the child header is part of AnimatedContent itself.
+            // This makes the whole child page (header included) slide horizontally like iOS
+            // instead of changing Scaffold insets and creating a vertical/downward jump.
+            if (!embedded) {
                 TopAppBar(
-                    title = { Text(when (page) { "sampling" -> "Sampling"; "marker" -> "Marker Button"; "floating" -> "Floating Window"; "map" -> "Map Point Details"; "issues" -> "Issue Types"; "metadata" -> "Test Metadata Options"; "testreport" -> "Test Report"; else -> "Settings" }) },
+                    title = { Text(settingsPageTitle(page)) },
                     navigationIcon = {
                         if (page != "root") TextButton(onClick = { page = "root" }) { Text("Back") }
-                        else if (!embedded) TextButton(onClick = onBack) { Text("Back") }
+                        else TextButton(onClick = onBack) { Text("Back") }
                     }
                 )
             }
@@ -3444,15 +3458,32 @@ private fun SettingsScreen(
         AnimatedContent(
             targetState = page,
             transitionSpec = {
-                // Root Settings is embedded without its own TopAppBar while child pages add one.
-                // A slide transition therefore looks like the page is moving downward as the
-                // content inset changes. Use a short cross-fade for stable, iOS-like navigation.
-                fadeIn(tween(140)).togetherWith(fadeOut(tween(110)))
+                when {
+                    initialState == "root" && targetState != "root" ->
+                        (slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(300)) + fadeIn(tween(180)))
+                            .togetherWith(slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(300)) + fadeOut(tween(140)))
+                    initialState != "root" && targetState == "root" ->
+                        (slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Right, tween(300)) + fadeIn(tween(180)))
+                            .togetherWith(slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Right, tween(300)) + fadeOut(tween(140)))
+                    else ->
+                        (slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(300)) + fadeIn(tween(180)))
+                            .togetherWith(slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(300)) + fadeOut(tween(140)))
+                }
             },
             label = "settingsNavigation",
             modifier = Modifier.padding(padding).fillMaxSize()
         ) { currentPage ->
-            when (currentPage) {
+            Column(Modifier.fillMaxSize()) {
+                if (embedded && currentPage != "root") {
+                    TopAppBar(
+                        title = { Text(settingsPageTitle(currentPage)) },
+                        navigationIcon = {
+                            TextButton(onClick = { page = "root" }) { Text("Back") }
+                        }
+                    )
+                }
+                Box(Modifier.weight(1f).fillMaxWidth()) {
+                    when (currentPage) {
                 "sampling" -> Column(Modifier.padding(16.dp).fillMaxSize().clip(RoundedCornerShape(22.dp)).background(MaterialTheme.colorScheme.surface).border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=.12f), RoundedCornerShape(22.dp)).padding(16.dp).verticalScroll(rememberRetainedScrollState("settings.sampling")), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     IntervalPicker("UI refresh interval", draft.uiRefreshMs) { applySetting(draft.copy(uiRefreshMs = it)) }
                     IntervalPicker("Recording interval", draft.recordIntervalMs) { applySetting(draft.copy(recordIntervalMs = it)) }
@@ -3607,6 +3638,8 @@ private fun SettingsScreen(
                         SettingsMenuRow("≡", "Test Metadata Options", "Customize Scenario, Operator, RAT and Task choices") { navigateTo("metadata") }
                     }
                     Spacer(Modifier.height(6.dp))
+                }
+                    }
                 }
             }
         }
