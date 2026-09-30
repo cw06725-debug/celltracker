@@ -1281,7 +1281,17 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         status.text = "YouTube Test · $state · results saved"
         if (f != null) {
             scope.launch(Dispatchers.IO) {
-                runCatching { repo.finish(f, startedAtForFinish, finishedAt, state, recordingPath, screenRecordingUri, screenRecordingStartMs) }
+                val finalResult = runCatching {
+                    repo.finish(f, startedAtForFinish, finishedAt, state, recordingPath, screenRecordingUri, screenRecordingStartMs)
+                    VideoLoadingExporter.export(this@YouTubeLoadingAccessibilityService, f.absolutePath)
+                }
+                withContext(Dispatchers.Main) {
+                    status.text = if (finalResult.isSuccess) {
+                        "YouTube Test · $state · report auto-exported"
+                    } else {
+                        "YouTube Test · $state · results saved · auto-export failed"
+                    }
+                }
             }
         }
     }
@@ -2294,7 +2304,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             },null)
             if(!accepted) status.text="Auto swipe rejected · swipe manually (T0 kept)"
         }
-        fun saveReport(endWall:Long){
+        fun saveReport(endWall:Long):String?{
             val duration=endWall-sessionStartWall
             val csv=buildString{
                 appendLine("CellTracker TikTok ${if(isLag)"Video Lag" else "Upload"}")
@@ -2331,14 +2341,16 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                 put(android.provider.MediaStore.Downloads.MIME_TYPE,"text/csv")
                 put(android.provider.MediaStore.Downloads.RELATIVE_PATH,ReportStorage.relativePath(if(isLag)"TikTok Video Lag" else "TikTok Upload",sessionStartWall))
             }
-            runCatching{
-                val uri=contentResolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI,values)!!
-                contentResolver.openOutputStream(uri)!!.use{it.write(csv.toByteArray())}
+            return runCatching{
+                val existing=ExportMediaStore.findDownload(this,name,ReportStorage.relativePath(if(isLag)"TikTok Video Lag" else "TikTok Upload",sessionStartWall))
+                val uri=existing ?: contentResolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI,values)!!
+                if(existing==null) contentResolver.openOutputStream(uri)!!.use{it.write(csv.toByteArray())}
+                uri.toString()
             }.onSuccess{
-                status.text="Report saved · open CellTracker > Reports"
+                status.text="Report saved · preparing auto export…"
             }.onFailure{
                 status.text="Report save failed · ${it.message ?: "unknown"}"
-            }
+            }.getOrNull()
         }
 
         var startGuard=false
@@ -2449,7 +2461,15 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             ttUploadAwaitingExternalTouch=false
             uploadAwaitingTouch=false
             val end=System.currentTimeMillis()
-            saveReport(end);running=false
+            val reportUri=saveReport(end);running=false
+            if(reportUri!=null){
+                scope.launch(Dispatchers.IO){
+                    val exportResult=runCatching{TikTokReportExporter.export(this@YouTubeLoadingAccessibilityService,reportUri)}
+                    withContext(Dispatchers.Main){
+                        status.text=if(exportResult.isSuccess) "Finished · report auto-exported" else "Finished · source saved · auto-export failed"
+                    }
+                }
+            }
             if(TestScreenRecordingService.isRecording) runCatching{
                 startService(Intent(this,TestScreenRecordingService::class.java).apply{action=TestScreenRecordingService.STOP})
             }

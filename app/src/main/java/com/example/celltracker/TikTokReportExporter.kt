@@ -78,15 +78,32 @@ object TikTokReportExporter {
         }
 
         val htmlName="${base}_summary.html"
-        val htmlUri=save(c,htmlName,"text/html",html(p,cellHeader,cellData).toByteArray(),started).toString()
         val xlsxName="${base}_report.xlsx"
-        val xlsxUri=save(c,xlsxName,"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",PingExporter.simpleXlsx(sheets),started).toString()
         val cellName="${base}_cell_info.csv"
-        val cellUri=save(c,cellName,"text/csv",(if(rec.exists())rec.readBytes() else "Cell Info unavailable\n".toByteArray()),started).toString()
         val kmlName="${base}_track.kml"
-        val kmlUri=save(c,kmlName,"application/vnd.google-earth.kml+xml",kml(cellHeader,cellData,p.events).toByteArray(),started).toString()
         val rawName="${base}_events.csv"
-        val rawUri=save(c,rawName,"text/csv",finalCsv(p).toByteArray(),started).toString()
+        val exportCategory=if(p.isLag)"TikTok Video Lag" else "TikTok Upload"
+        val relativePath=ReportStorage.relativePath(exportCategory,started)
+        val existingHtml=ExportMediaStore.findDownload(c,htmlName,relativePath)
+        val existingXlsx=ExportMediaStore.findDownload(c,xlsxName,relativePath)
+        val existingCell=ExportMediaStore.findDownload(c,cellName,relativePath)
+        val existingKml=ExportMediaStore.findDownload(c,kmlName,relativePath)
+        val existingRaw=ExportMediaStore.findDownload(c,rawName,relativePath)
+        if(existingHtml!=null&&existingXlsx!=null&&existingCell!=null&&existingKml!=null&&existingRaw!=null){
+            return ExportResult(
+                message="Already exported · TikTok report is already in Downloads/CellTracker",
+                exportedFileUris=listOf(existingRaw.toString(),existingCell.toString()),
+                summaryUri=existingHtml.toString(),summaryName=htmlName,
+                excelUri=existingXlsx.toString(),excelName=xlsxName,
+                kmlUri=existingKml.toString(),kmlName=kmlName,
+                alreadyExported=true
+            )
+        }
+        val htmlUri=save(c,htmlName,"text/html",html(p,cellHeader,cellData).toByteArray(),started,exportCategory).toString()
+        val xlsxUri=save(c,xlsxName,"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",PingExporter.simpleXlsx(sheets),started,exportCategory).toString()
+        val cellUri=save(c,cellName,"text/csv",(if(rec.exists())rec.readBytes() else "Cell Info unavailable\n".toByteArray()),started,exportCategory).toString()
+        val kmlUri=save(c,kmlName,"application/vnd.google-earth.kml+xml",kml(cellHeader,cellData,p.events).toByteArray(),started,exportCategory).toString()
+        val rawUri=save(c,rawName,"text/csv",finalCsv(p).toByteArray(),started,exportCategory).toString()
         return ExportResult(
             message="Export successful · HTML Summary + Excel + Cell Info + Track KML",
             exportedFileUris=listOf(rawUri,cellUri),
@@ -230,10 +247,8 @@ object TikTokReportExporter {
     private fun parseFullTime(s:String):Long=timeOfDayMs(s).coerceAtLeast(0L)
     private fun parseDateTime(s:String):Long=runCatching{SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS",Locale.US).parse(s)?.time?:0L}.getOrDefault(0L)
     private fun esc(s:String)=s.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
-    private fun save(c:Context,name:String,mime:String,bytes:ByteArray,started:Long):Uri{
+    private fun save(c:Context,name:String,mime:String,bytes:ByteArray,started:Long,category:String):Uri{
         if(Build.VERSION.SDK_INT<29) error("Android 10+ required")
-        val v=ContentValues().apply{put(MediaStore.Downloads.DISPLAY_NAME,name);put(MediaStore.Downloads.MIME_TYPE,mime);put(MediaStore.Downloads.RELATIVE_PATH,ReportStorage.relativePath("TikTok",started))}
-        val u=c.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI,v)?:error("Create export failed")
-        c.contentResolver.openOutputStream(u)!!.use{it.write(bytes)};return u
+        return ExportMediaStore.saveOrReuse(c,name,mime,bytes,ReportStorage.relativePath(category,started)).first
     }
 }

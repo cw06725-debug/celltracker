@@ -27,7 +27,8 @@ data class ExportResult(
     val kmlUri: String? = null,
     val kmlName: String? = null,
     val screenshotUris: List<String> = emptyList(),
-    val screenshotNames: List<String> = emptyList()
+    val screenshotNames: List<String> = emptyList(),
+    val alreadyExported: Boolean = false
 ) {
     val primaryFileUri: String? get() = summaryUri ?: excelUri ?: exportedFileUris.firstOrNull()
     val primaryMimeType: String get() = if (summaryUri != null) "text/html" else if (excelUri != null) "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" else "text/csv"
@@ -37,12 +38,14 @@ object CsvExporter {
     fun exportLatest(context: Context, sourcePath: String, mode: CsvExportMode): ExportResult {
         val source = File(sourcePath)
         require(source.exists()) { "Recording file not found" }
+        val exportStartedAt = recordingStartedAt(source)
+        val exportRelativePath = ReportStorage.relativePath("Network Recording", exportStartedAt)
 
         val rawUris = when (mode) {
             CsvExportMode.COMBINED -> {
-                listOf(saveToDownloads(context, source.name, "text/csv", source.readText()).toString())
+                listOf(saveToDownloads(context, source.name, "text/csv", source.readText(), exportRelativePath).toString())
             }
-            CsvExportMode.SEPARATE_BY_SIM -> exportSeparate(context, source)
+            CsvExportMode.SEPARATE_BY_SIM -> exportSeparate(context, source, exportRelativePath)
         }
 
         // Keep the raw CSV untouched for analysis, and create a human-friendly summary
@@ -53,14 +56,16 @@ object CsvExporter {
             context,
             summaryName,
             "text/html",
-            buildSummaryHtml(source)
+            buildSummaryHtml(source),
+            exportRelativePath
         ).toString()
 
         val excelName = "${source.nameWithoutExtension}_report.xlsx"
         val excelUri = saveBytesToDownloads(
             context, excelName,
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            buildXlsx(source)
+            buildXlsx(source),
+            exportRelativePath
         ).toString()
 
         val kmlName = "${source.nameWithoutExtension}_track.kml"
@@ -68,7 +73,8 @@ object CsvExporter {
             context,
             kmlName,
             "application/vnd.google-earth.kml+xml",
-            buildKml(source)
+            buildKml(source),
+            exportRelativePath
         ).toString()
 
         val screenshotFiles = collectScreenshotFiles(source)
@@ -76,7 +82,7 @@ object CsvExporter {
             file to normalizedScreenshotName(source, file, index)
         }
         val screenshotUris = screenshotExports.mapNotNull { (file, exportName) ->
-            runCatching { saveBytesToDownloads(context, exportName, "image/png", file.readBytes()).toString() }.getOrNull()
+            runCatching { saveBytesToDownloads(context, exportName, "image/png", file.readBytes(), exportRelativePath).toString() }.getOrNull()
         }
 
         val rawDescription = if (mode == CsvExportMode.SEPARATE_BY_SIM) {
@@ -98,6 +104,17 @@ object CsvExporter {
         )
     }
 
+
+    private fun recordingStartedAt(source: File): Long {
+        val m = Regex("_(\\d{8})_(\\d{6})(?:\\.[^.]+)?$").find(source.name)
+        if (m != null) {
+            val parsed = runCatching {
+                SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).parse(m.groupValues[1] + "_" + m.groupValues[2])?.time
+            }.getOrNull()
+            if (parsed != null && parsed > 0L) return parsed
+        }
+        return source.lastModified().takeIf { it > 0L } ?: System.currentTimeMillis()
+    }
 
     /**
      * Export screenshots with a stable human-readable name even for recordings
@@ -137,7 +154,7 @@ object CsvExporter {
         }.distinctBy { it.absolutePath }
     }
 
-    private fun exportSeparate(context: Context, source: File): List<String> {
+    private fun exportSeparate(context: Context, source: File, relativePath: String): List<String> {
         val lines = source.readLines()
         require(lines.isNotEmpty()) { "Recording file is empty" }
         val header = lines.first()
@@ -166,16 +183,16 @@ object CsvExporter {
                 appendLine(header)
                 rows.forEach { appendLine(it) }
             }
-            saveToDownloads(context, name, "text/csv", content).toString()
+            saveToDownloads(context, name, "text/csv", content, relativePath).toString()
         }
     }
 
-    private fun saveToDownloads(context: Context, displayName: String, mimeType: String, content: String): Uri {
+    private fun saveToDownloads(context: Context, displayName: String, mimeType: String, content: String, relativePath: String): Uri {
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
             put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/CellTracker")
+                put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath)
             }
         }
         val resolver = context.contentResolver
@@ -186,11 +203,11 @@ object CsvExporter {
         return uri
     }
 
-    private fun saveBytesToDownloads(context: Context, displayName: String, mimeType: String, content: ByteArray): Uri {
+    private fun saveBytesToDownloads(context: Context, displayName: String, mimeType: String, content: ByteArray, relativePath: String): Uri {
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
             put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/CellTracker")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath)
         }
         val resolver = context.contentResolver
         val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: error("Unable to create exported file")

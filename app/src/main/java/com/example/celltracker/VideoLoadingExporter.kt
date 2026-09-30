@@ -15,10 +15,23 @@ object VideoLoadingExporter {
         val d = original
         val src = File(path)
         val base = src.nameWithoutExtension
-        val csvUri = save(c, src.name, "text/csv", src.readBytes(), d.startedAt).toString()
+        val relativePath = ReportStorage.relativePath("YouTube", d.startedAt)
         val htmlName = "${base}_summary.html"
-        val htmlUri = save(c, htmlName, "text/html", html(d,review).toByteArray(), d.startedAt).toString()
         val xlsxName = "${base}_report.xlsx"
+        val existingCsv = ExportMediaStore.findDownload(c, src.name, relativePath)
+        val existingHtml = ExportMediaStore.findDownload(c, htmlName, relativePath)
+        val existingXlsx = ExportMediaStore.findDownload(c, xlsxName, relativePath)
+        if (existingCsv != null && existingHtml != null && existingXlsx != null) {
+            return ExportResult(
+                message = "Already exported · YouTube report is already in Downloads/CellTracker",
+                exportedFileUris = listOf(existingCsv.toString()),
+                summaryUri = existingHtml.toString(), summaryName = htmlName,
+                excelUri = existingXlsx.toString(), excelName = xlsxName,
+                alreadyExported = true
+            )
+        }
+        val csvUri = save(c, src.name, "text/csv", src.readBytes(), d.startedAt).toString()
+        val htmlUri = save(c, htmlName, "text/html", html(d,review).toByteArray(), d.startedAt).toString()
         val rows = mutableListOf<List<String>>()
         rows += listOf("sequence","title","reviewed_t0","reviewed_t1","delay_ms","result","detection","operator","rat","rsrp","rsrq","sinr","band","pci","arfcn")
         original.samples.forEachIndexed { i,sample ->
@@ -102,14 +115,9 @@ object VideoLoadingExporter {
 
     private fun save(c: Context, name: String, mime: String, bytes: ByteArray, startedAt: Long): android.net.Uri {
         if (Build.VERSION.SDK_INT >= 29) {
-            val values = ContentValues().apply {
-                put(MediaStore.Downloads.DISPLAY_NAME, name)
-                put(MediaStore.Downloads.MIME_TYPE, mime)
-                put(MediaStore.Downloads.RELATIVE_PATH, ReportStorage.relativePath("YouTube", startedAt))
-            }
-            val uri = c.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)!!
-            c.contentResolver.openOutputStream(uri)!!.use { it.write(bytes) }
-            return uri
+            return ExportMediaStore.saveOrReuse(
+                c, name, mime, bytes, ReportStorage.relativePath("YouTube", startedAt)
+            ).first
         }
         throw IllegalStateException("Android 10+ required")
     }

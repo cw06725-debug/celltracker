@@ -1,6 +1,13 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+}
+
+val cellTrackerSigningFile = rootProject.file("celltracker-signing.properties")
+val cellTrackerSigning = Properties().apply {
+    if (cellTrackerSigningFile.exists()) cellTrackerSigningFile.inputStream().use { load(it) }
 }
 
 android {
@@ -11,8 +18,30 @@ android {
         applicationId = "com.example.celltracker"
         minSdk = 29
         targetSdk = 34
-        versionCode = 209
-        versionName = "1.2.32"
+        versionCode = 210
+        versionName = "1.2.33"
+    }
+
+    // Optional stable signing for in-place APK upgrades. Keep the real keystore outside Git.
+    // When celltracker-signing.properties exists, both debug/release APKs use the same certificate,
+    // so Android can install a newer APK over the old one without clearing app data.
+    signingConfigs {
+        if (cellTrackerSigningFile.exists()) {
+            create("celltrackerStable") {
+                storeFile = rootProject.file(cellTrackerSigning.getProperty("storeFile"))
+                storePassword = cellTrackerSigning.getProperty("storePassword")
+                keyAlias = cellTrackerSigning.getProperty("keyAlias")
+                keyPassword = cellTrackerSigning.getProperty("keyPassword")
+            }
+        }
+    }
+
+    buildTypes {
+        val stable = signingConfigs.findByName("celltrackerStable")
+        if (stable != null) {
+            getByName("debug").signingConfig = stable
+            getByName("release").signingConfig = stable
+        }
     }
 
     buildFeatures {

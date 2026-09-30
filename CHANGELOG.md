@@ -1,3 +1,12 @@
+# v1.2.33 (210)
+
+- Anti-mix-up export folders: Network Recording exports now go to `Downloads/CellTracker/<date>/Network Recording/` instead of the CellTracker root.
+- YouTube and TikTok automatically export their full report packages when a test finishes.
+- YouTube/TikTok export is de-duplicated. If the complete report package already exists, pressing Export reports `Already exported` and does not create another copy.
+- Adds optional stable APK signing support through `celltracker-signing.properties`, enabling normal in-place Android upgrades that preserve history/settings when the same signing key is reused.
+- Keeps the v1.2.30 stable YouTube START / ARMED / LOADED timing behavior unchanged.
+- Visual AI AUTO work is not expanded in this release.
+
 # v1.2.32 (209)
 
 - Add **AUTO Visual AI v1 (Beta)** for YouTube Video Loading, using the labelled Visual AI collector set as the first threshold baseline.

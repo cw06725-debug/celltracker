@@ -639,6 +639,8 @@ private fun ReportsHome(
             } else if (previewOnly) {
                 result.summaryUri?.let { openExportedFile(context, it, "text/html") }
                     ?: Toast.makeText(context, "Summary unavailable", Toast.LENGTH_SHORT).show()
+            } else if (result.alreadyExported) {
+                Toast.makeText(context, "Already exported · no duplicate files created", Toast.LENGTH_LONG).show()
             } else {
                 exportResult = result
             }

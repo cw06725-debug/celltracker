@@ -1,0 +1,5 @@
+# Copy to celltracker-signing.properties and keep the real file OUT of Git.
+storeFile=celltracker-update.jks
+storePassword=CHANGE_ME
+keyAlias=celltracker
+keyPassword=CHANGE_ME
