@@ -141,6 +141,7 @@ data class AppSettings(
     val vibrateOnMark: Boolean = true,
     val toastOnMark: Boolean = true,
     val soundOnMark: Boolean = false,
+    val autoExportReports: Boolean = true,
     val floatingWindowEnabled: Boolean = false,
     val floatingAutoShowDuringRecording: Boolean = true,
     val floatingKeepWhenStopped: Boolean = true,

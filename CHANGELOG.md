@@ -1,3 +1,11 @@
+# v1.2.34 (211)
+
+- Add Settings > Test & Report > **Auto export reports** switch; default is ON.
+- Manual Network Recording now auto-exports when STOP is pressed, using the existing dated `Network Recording` folder.
+- YouTube and TikTok auto-export now follow the same global setting.
+- Turning auto export OFF keeps source/history data but skips automatic Downloads export; manual Export remains available.
+- No changes to the validated v1.2.30 YouTube START / ARMED / LOADED timing flow.
+
 # v1.2.33 (210)
 
 - Anti-mix-up export folders: Network Recording exports now go to `Downloads/CellTracker/<date>/Network Recording/` instead of the CellTracker root.

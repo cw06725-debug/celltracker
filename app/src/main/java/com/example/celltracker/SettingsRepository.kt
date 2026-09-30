@@ -24,6 +24,7 @@ class SettingsRepository(context: Context) {
         vibrateOnMark = prefs.getBoolean("vibrate_on_mark", true),
         toastOnMark = prefs.getBoolean("toast_on_mark", true),
         soundOnMark = prefs.getBoolean("sound_on_mark", false),
+        autoExportReports = prefs.getBoolean("auto_export_reports", true),
         floatingWindowEnabled = prefs.getBoolean("floating_window_enabled", false),
         floatingAutoShowDuringRecording = prefs.getBoolean("floating_auto_show", true),
         floatingKeepWhenStopped = prefs.getBoolean("floating_keep_when_stopped", true),
@@ -51,6 +52,7 @@ class SettingsRepository(context: Context) {
             .putBoolean("vibrate_on_mark", settings.vibrateOnMark)
             .putBoolean("toast_on_mark", settings.toastOnMark)
             .putBoolean("sound_on_mark", settings.soundOnMark)
+            .putBoolean("auto_export_reports", settings.autoExportReports)
             .putBoolean("floating_window_enabled", settings.floatingWindowEnabled)
             .putBoolean("floating_auto_show", settings.floatingAutoShowDuringRecording)
             .putBoolean("floating_keep_when_stopped", settings.floatingKeepWhenStopped)

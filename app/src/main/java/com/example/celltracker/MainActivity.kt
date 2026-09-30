@@ -3583,6 +3583,14 @@ private fun SettingsScreen(
                         SettingsMenuRow("▣", "Floating Window", "Overlay info, opacity, compact mode and permission") { navigateTo("floating") }
                     }
                     SettingsGroup(title = "TEST & REPORT") {
+                        SettingSwitch("Auto export reports", draft.autoExportReports) {
+                            applySetting(draft.copy(autoExportReports = it))
+                        }
+                        Text(
+                            "Automatically export Network Recording, YouTube and TikTok reports when a test finishes. Enabled by default.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        SettingsGroupDivider()
                         SettingsMenuRow("⌖", "Map Point Details", "Choose information shown for a map point") { navigateTo("map") }
                         SettingsGroupDivider()
                         SettingsMenuRow("!", "Issue Types", "Manage built-in and custom issue choices") { navigateTo("issues") }

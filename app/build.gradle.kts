@@ -18,8 +18,8 @@ android {
         applicationId = "com.example.celltracker"
         minSdk = 29
         targetSdk = 34
-        versionCode = 210
-        versionName = "1.2.33"
+        versionCode = 211
+        versionName = "1.2.34"
     }
 
     // Optional stable signing for in-place APK upgrades. Keep the real keystore outside Git.

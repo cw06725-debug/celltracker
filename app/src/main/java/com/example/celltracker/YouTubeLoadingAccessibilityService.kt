@@ -1281,15 +1281,16 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         status.text = "YouTube Test · $state · results saved"
         if (f != null) {
             scope.launch(Dispatchers.IO) {
+                val autoExport = SettingsRepository(this@YouTubeLoadingAccessibilityService).load().autoExportReports
                 val finalResult = runCatching {
                     repo.finish(f, startedAtForFinish, finishedAt, state, recordingPath, screenRecordingUri, screenRecordingStartMs)
-                    VideoLoadingExporter.export(this@YouTubeLoadingAccessibilityService, f.absolutePath)
+                    if (autoExport) VideoLoadingExporter.export(this@YouTubeLoadingAccessibilityService, f.absolutePath)
                 }
                 withContext(Dispatchers.Main) {
-                    status.text = if (finalResult.isSuccess) {
-                        "YouTube Test · $state · report auto-exported"
-                    } else {
-                        "YouTube Test · $state · results saved · auto-export failed"
+                    status.text = when {
+                        finalResult.isFailure -> "YouTube Test · $state · results saved · auto-export failed"
+                        autoExport -> "YouTube Test · $state · report auto-exported"
+                        else -> "YouTube Test · $state · results saved · auto export off"
                     }
                 }
             }
@@ -2463,11 +2464,16 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             val end=System.currentTimeMillis()
             val reportUri=saveReport(end);running=false
             if(reportUri!=null){
-                scope.launch(Dispatchers.IO){
-                    val exportResult=runCatching{TikTokReportExporter.export(this@YouTubeLoadingAccessibilityService,reportUri)}
-                    withContext(Dispatchers.Main){
-                        status.text=if(exportResult.isSuccess) "Finished · report auto-exported" else "Finished · source saved · auto-export failed"
+                val autoExport = SettingsRepository(this@YouTubeLoadingAccessibilityService).load().autoExportReports
+                if (autoExport) {
+                    scope.launch(Dispatchers.IO){
+                        val exportResult=runCatching{TikTokReportExporter.export(this@YouTubeLoadingAccessibilityService,reportUri)}
+                        withContext(Dispatchers.Main){
+                            status.text=if(exportResult.isSuccess) "Finished · report auto-exported" else "Finished · source saved · auto-export failed"
+                        }
                     }
+                } else {
+                    status.text="Finished · source saved · auto export off"
                 }
             }
             if(TestScreenRecordingService.isRecording) runCatching{

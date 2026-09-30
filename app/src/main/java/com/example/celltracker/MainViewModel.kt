@@ -241,8 +241,23 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun stopRecording() {
         val app = getApplication<Application>()
+        val path = RecordingState.status.value.latestPath ?: _state.value.latestRecordingPath ?: latestPathFromPrefs()
+        val autoExport = settingsRepository.load().autoExportReports
         app.stopService(Intent(app, RecordingService::class.java))
-        viewModelScope.launch { delay(200); _state.value = _state.value.copy(recordings = loadRecordings()) }
+        viewModelScope.launch {
+            delay(350)
+            _state.value = _state.value.copy(recordings = loadRecordings())
+            if (autoExport && !path.isNullOrBlank() && File(path).exists()) {
+                val result = withContext(Dispatchers.IO) {
+                    runCatching { CsvExporter.exportLatest(app, path, CsvExportMode.COMBINED) }
+                }
+                result.onSuccess {
+                    Toast.makeText(app, if (it.alreadyExported) "Network report already exported" else "Network report auto-exported", Toast.LENGTH_SHORT).show()
+                }.onFailure {
+                    Toast.makeText(app, "Network auto export failed: ${it.message ?: "unknown"}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
     }
 
     fun markEvent(issueType: String, note: String = "") {
