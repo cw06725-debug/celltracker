@@ -31,6 +31,22 @@ object ExportMediaStore {
         return null
     }
 
+    fun deleteDownload(context: Context, displayName: String, relativePath: String): Boolean {
+        val uri=findDownload(context,displayName,relativePath) ?: return false
+        return runCatching { context.contentResolver.delete(uri,null,null)>0 }.getOrDefault(false)
+    }
+
+    fun saveReplacing(
+        context: Context,
+        displayName: String,
+        mimeType: String,
+        bytes: ByteArray,
+        relativePath: String
+    ): Uri {
+        deleteDownload(context,displayName,relativePath)
+        return saveOrReuse(context,displayName,mimeType,bytes,relativePath).first
+    }
+
     fun saveOrReuse(
         context: Context,
         displayName: String,

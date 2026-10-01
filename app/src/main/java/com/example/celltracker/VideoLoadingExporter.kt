@@ -21,7 +21,8 @@ object VideoLoadingExporter {
         val existingCsv = ExportMediaStore.findDownload(c, src.name, relativePath)
         val existingHtml = ExportMediaStore.findDownload(c, htmlName, relativePath)
         val existingXlsx = ExportMediaStore.findDownload(c, xlsxName, relativePath)
-        if (existingCsv != null && existingHtml != null && existingXlsx != null) {
+        val exportCurrent = ReportReviewV1.isExportCurrent(c,path)
+        if (existingCsv != null && existingHtml != null && existingXlsx != null && exportCurrent) {
             return ExportResult(
                 message = "Already exported · YouTube report is already in Downloads/CellTracker",
                 exportedFileUris = listOf(existingCsv.toString()),
@@ -30,8 +31,18 @@ object VideoLoadingExporter {
                 alreadyExported = true
             )
         }
-        val csvUri = save(c, src.name, "text/csv", src.readBytes(), relativePath).toString()
-        val htmlUri = save(c, htmlName, "text/html", html(d,review).toByteArray(), relativePath).toString()
+        val replaceExisting = !exportCurrent
+        val reviewedCsv = buildString {
+            append("sequence,title,reviewed_t0,reviewed_t1,reviewed_delay_ms,review_valid,result,detection,operator,rat,rsrp,rsrq,sinr,band,pci,arfcn\n")
+            original.samples.forEachIndexed { i,sample ->
+                val rev=review.events.getOrNull(i)
+                val delay=if(rev?.valid==true) ReportReviewV1.durationMs(rev.t0,rev.t1) else null
+                val values=listOf(sample.sequence.toString(),sample.title,rev?.t0.orEmpty(),rev?.t1.orEmpty(),delay?.toString().orEmpty(),(rev?.valid!=false).toString(),sample.result,sample.detection,sample.snapshot.operator,sample.snapshot.displayRat,sample.snapshot.rsrp,sample.snapshot.rsrq,sample.snapshot.sinr,sample.snapshot.band,sample.snapshot.pci,sample.snapshot.arfcn)
+                append(values.joinToString(",") { v -> if(v.any{it==','||it=='\"'||it=='\n'||it=='\r'}) "\""+v.replace("\"","\"\"")+"\"" else v }).append('\n')
+            }
+        }
+        val csvUri = save(c, src.name, "text/csv", reviewedCsv.toByteArray(), relativePath, replaceExisting).toString()
+        val htmlUri = save(c, htmlName, "text/html", html(d,review).toByteArray(), relativePath, replaceExisting).toString()
         val rows = mutableListOf<List<String>>()
         rows += listOf("sequence","title","reviewed_t0","reviewed_t1","delay_ms","result","detection","operator","rat","rsrp","rsrq","sinr","band","pci","arfcn")
         original.samples.forEachIndexed { i,sample ->
@@ -70,7 +81,8 @@ object VideoLoadingExporter {
             listOf("Reviewed Valid Attempts", review.events.count { it.valid }.toString())
         )
         val xlsx = PingExporter.simpleXlsx(listOf("Summary" to summary, "Video Loading" to rows))
-        val xlsxUri = save(c, xlsxName, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", xlsx, relativePath).toString()
+        val xlsxUri = save(c, xlsxName, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", xlsx, relativePath, replaceExisting).toString()
+        ReportReviewV1.markExported(c,path)
         return ExportResult(
             "YouTube Video Loading report exported · HTML + Excel + CSV",
             listOf(csvUri), htmlUri, htmlName, xlsxUri, xlsxName
@@ -113,11 +125,10 @@ object VideoLoadingExporter {
 
     private fun fmtTime(ms: Long): String = if (ms > 0L) java.text.SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(java.util.Date(ms)) else "--"
 
-    private fun save(c: Context, name: String, mime: String, bytes: ByteArray, relativePath: String): android.net.Uri {
+    private fun save(c: Context, name: String, mime: String, bytes: ByteArray, relativePath: String, replace: Boolean = false): android.net.Uri {
         if (Build.VERSION.SDK_INT >= 29) {
-            return ExportMediaStore.saveOrReuse(
-                c, name, mime, bytes, relativePath
-            ).first
+            return if(replace) ExportMediaStore.saveReplacing(c,name,mime,bytes,relativePath)
+            else ExportMediaStore.saveOrReuse(c, name, mime, bytes, relativePath).first
         }
         throw IllegalStateException("Android 10+ required")
     }

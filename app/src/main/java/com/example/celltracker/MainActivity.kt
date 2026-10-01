@@ -536,6 +536,14 @@ private fun loadTikTokReportsV1(context: Context): Pair<List<TikTokReportRowV1>,
                 val isLag=rel.contains("TikTok Video Lag",true)
                 val isUpload=rel.contains("TikTok Upload",true)
                 if(!isLag&&!isUpload) continue
+                val displayName=c.getString(nameI).orEmpty()
+                val lower=displayName.lowercase(Locale.US)
+                // Export artifacts live under the same TikTok session folder. They are files of
+                // one test, not separate test reports, so never expose them as report rows.
+                if(lower.endsWith("_summary.html") || lower.endsWith("_report.xlsx") ||
+                    lower.endsWith("_cell_info.csv") || lower.endsWith("_track.kml") ||
+                    lower.endsWith("_events.csv")) continue
+                if(!lower.endsWith(".csv")) continue
                 val uri=android.content.ContentUris.withAppendedId(collection,c.getLong(idI))
                 val raw=runCatching {
                     context.contentResolver.openInputStream(uri)?.bufferedReader()?.use{it.readText()}
@@ -553,7 +561,7 @@ private fun loadTikTokReportsV1(context: Context): Pair<List<TikTokReportRowV1>,
                 }
                 val detail=if(header>=0) lines.drop(header).filter{it.isNotBlank()}.joinToString("\n") else ""
                 val row=TikTokReportRowV1(
-                    uri=uri.toString(),name=c.getString(nameI).orEmpty(),
+                    uri=uri.toString(),name=displayName,
                     addedMs=c.getLong(dateI)*1000L,
                     task=fields["Task"].orEmpty(),operator=fields["Operator"].orEmpty(),
                     start=fields["Start"].orEmpty(),fields=fields,detail=detail
@@ -562,7 +570,11 @@ private fun loadTikTokReportsV1(context: Context): Pair<List<TikTokReportRowV1>,
             }
         }
     }
-    return lag to upload
+    fun dedup(rows:List<TikTokReportRowV1>):List<TikTokReportRowV1> = rows
+        .groupBy { listOf(it.task.trim(),it.operator.trim(),it.start.trim(),it.fields["End"].orEmpty().trim()).joinToString("|") }
+        .mapNotNull { (_,same) -> same.maxByOrNull { it.addedMs } }
+        .sortedByDescending { it.addedMs }
+    return dedup(lag) to dedup(upload)
 }
 
 private data class BasementReportRow(val uri: Uri, val name: String, val relativePath: String, val addedMs: Long)

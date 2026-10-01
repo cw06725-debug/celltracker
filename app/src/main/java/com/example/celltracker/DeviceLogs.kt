@@ -36,6 +36,7 @@ object AdbToolStore { val state=MutableStateFlow(AdbUiState()) }
 object CellTrackerAdbEngine {
     private val scope=CoroutineScope(SupervisorJob()+Dispatchers.IO)
     private var logcatJob:Job?=null
+    @Volatile private var logcatUsesUsb=false
     private var exportJob:Job?=null
     @Volatile private var discoveredPair:AdbEndpoint?=null
     @Volatile private var discoveredConnect:AdbEndpoint?=null
@@ -325,11 +326,17 @@ object CellTrackerAdbEngine {
     }
     suspend fun startUsbLogcat(context:Context,command:String,refLabel:String):Result<String> = withContext(Dispatchers.IO){runCatching{
         check(logcatJob?.isActive!=true){"A log capture is already running"}
+        // A cancelled USB shell can still be unwinding its blocking bulkTransfer. Wait for the
+        // previous capture and reopen the USB ADB transport before starting a new shell stream.
+        logcatJob?.let { old -> runCatching { withTimeout(2500){ old.join() } } }; logcatJob=null
+        val host=UsbAdbHost.get(context)
+        if(!host.connected) host.connect()
+        logcatUsesUsb=true
         val resolver=context.contentResolver;val stamp=SimpleDateFormat("yyyyMMdd_HHmmss",Locale.US).format(Date());val safe=refLabel.replace(Regex("[^A-Za-z0-9._-]"),"_")
         val name="${safe}_AP_Log_$stamp.txt";val values=ContentValues().apply{put(MediaStore.Downloads.DISPLAY_NAME,name);put(MediaStore.Downloads.MIME_TYPE,"text/plain");put(MediaStore.Downloads.RELATIVE_PATH,"${Environment.DIRECTORY_DOWNLOADS}/CellTracker/Logs/$safe")}
         val uri=resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI,values)?:error("Cannot create AP log")
         AdbToolStore.state.value=AdbToolStore.state.value.copy(logcatRunning=true,logcatBytes=0,logcatPath="Download/CellTracker/Logs/$safe/$name",message="USB logcat recording")
-        logcatJob=scope.launch(Dispatchers.IO){try{resolver.openOutputStream(uri,"w")!!.use{out->UsbAdbHost.get(context).shell(command){b->out.write(b);out.flush();AdbToolStore.state.value=AdbToolStore.state.value.copy(logcatBytes=AdbToolStore.state.value.logcatBytes+b.size)}}}finally{AdbToolStore.state.value=AdbToolStore.state.value.copy(logcatRunning=false)}}
+        logcatJob=scope.launch(Dispatchers.IO){try{resolver.openOutputStream(uri,"w")!!.use{out->host.shell(command){b->out.write(b);out.flush();AdbToolStore.state.value=AdbToolStore.state.value.copy(logcatBytes=AdbToolStore.state.value.logcatBytes+b.size)}}}catch(_:CancellationException){}catch(e:Throwable){AdbToolStore.state.value=AdbToolStore.state.value.copy(message="USB AP log stopped: ${e.message ?: e.javaClass.simpleName}")}finally{logcatUsesUsb=false;AdbToolStore.state.value=AdbToolStore.state.value.copy(logcatRunning=false)}}
         "USB AP log started"
     }}
     suspend fun connectRemote(context:Context,host:String,port:Int):Result<String> = withContext(Dispatchers.IO){ runCatching {
@@ -492,7 +499,9 @@ object CellTrackerAdbEngine {
         val safe=if(isModemLog && !remark.contains("MODEM_LOG",ignoreCase=true)) "${remark}_MODEM_LOG" else remark
         val session="${safe}_$stamp";val folderPath="Download/CellTracker/Logs/DUT/$session/"
         AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=true,exportPhase="Starting ADB Sync pull…",exportBytes=0,exportTotalBytes=0,exportFiles=0,exportFound=0,exportSkipped=0,exportStartedMs=started,exportPullMs=0,exportTotalMs=0,exportZipMs=0,exportPullBytes=0,exportDeleted=0,exportDeleteFailed=0,exportSymlinks=0,exportListFailed=0,exportPath="",exportResult="",exportError="")
-        exportJob=scope.launch{try{val puller=AdbSyncPuller(context)
+        exportJob=scope.launch{
+            adbSessionMutex.lock()
+            try{val puller=AdbSyncPuller(context)
             // Avoid a full recursive ADB Sync scan before the actual pull. On large debuglogger
             // trees that doubled directory traversal and made export startup unpredictably slow.
             // A short remote `du` gives us an approximate byte total for percentage progress;
@@ -537,7 +546,7 @@ object CellTrackerAdbEngine {
                 exportError=detail,
                 message=if(partial)"Export completed with ${result.skipped} skipped item(s)" else "Export completed"
             )
-        }catch(e:CancellationException){AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=false,exportPhase="Cancelled",exportResult="CANCELLED",exportPath=folderPath)}catch(e:Throwable){AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=false,exportPhase="Failed",exportResult="FAILED",exportPath=folderPath,exportError=e.message?:e.javaClass.simpleName)}};"Export started"
+        }catch(e:CancellationException){AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=false,exportPhase="Cancelled",exportResult="CANCELLED",exportPath=folderPath)}catch(e:Throwable){AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=false,exportPhase="Failed",exportResult="FAILED",exportPath=folderPath,exportError=e.message?:e.javaClass.simpleName)}finally{if(adbSessionMutex.isLocked) runCatching{adbSessionMutex.unlock()}; exportJob=null}};"Export started"
     }.onFailure{e->AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=false,exportPhase="Failed",exportResult="FAILED",exportPath="",exportError=e.message?:e.javaClass.simpleName)} }
     suspend fun deleteLocalExportOutput(context:Context,publicPath:String):Result<Int> = withContext(Dispatchers.IO) { runCatching {
         val normalized=publicPath.trim().trimStart('/').let{if(it.endsWith('/')) it else "$it/"}
@@ -588,7 +597,21 @@ object CellTrackerAdbEngine {
           .also{AdbToolStore.state.value=AdbToolStore.state.value.copy(logcatRunning=false)}
         }
     }
-    fun stopLogcat(){logcatJob?.cancel();logcatJob=null;AdbToolStore.state.value=AdbToolStore.state.value.copy(logcatRunning=false,message="AP log stopped")}
+    fun stopLogcat(){
+        val job=logcatJob
+        val wasUsb=logcatUsesUsb
+        job?.cancel()
+        // UsbAdbHost.shell() blocks in a native USB read. Closing the transport is required to
+        // unblock it; cancellation alone leaves the old stream alive and a second START can
+        // corrupt the ADB packet stream / crash the process.
+        if(wasUsb) runCatching{UsbAdbHost.instance?.close()}
+        logcatUsesUsb=false
+        scope.launch {
+            runCatching { withTimeout(2500){ job?.join() } }
+            if(logcatJob===job) logcatJob=null
+        }
+        AdbToolStore.state.value=AdbToolStore.state.value.copy(logcatRunning=false,usbStatus=if(wasUsb)"Ready · reconnect on next START" else AdbToolStore.state.value.usbStatus,message="AP log stopped")
+    }
 }
 
 class AdbPairCodeReceiver:BroadcastReceiver(){

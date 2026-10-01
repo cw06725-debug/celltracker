@@ -1,3 +1,11 @@
+# v1.2.40 (217)
+
+- Fix TikTok report browser: exported summary/XLSX/cell/KML/events files are no longer shown as separate tests; duplicate source rows are collapsed by test identity.
+- Editing reviewed T0/T1 or validity now invalidates the prior YouTube/TikTok export. The next Export replaces the old files in the same test folder; unchanged reports still show Already exported.
+- Harden REF USB AP log lifecycle: STOP closes the blocking USB ADB shell transport and the next START reconnects cleanly, preventing second-cycle crashes.
+- Serialize DUT debuglogger export against ADB reconnect/session changes and clean up export job state on every exit path.
+- No change to stable YouTube START/ARMED/LOADED timing.
+
 # v1.2.39 (216)
 
 - Rework Cell Info and Settings navigation to use the same full-destination horizontal push/pop structure as the working Home -> All Tests animation.

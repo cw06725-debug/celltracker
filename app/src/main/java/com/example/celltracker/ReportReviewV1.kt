@@ -8,6 +8,7 @@ data class ReviewStateV1(val confirmed:Boolean=false,val confirmedAt:Long=0L,val
 
 object ReportReviewV1 {
     private const val PREF="report_review_v1"
+    private const val EXPORT_PREF="report_review_export_v1"
     fun load(c:Context,key:String,original:List<TikTokReportExporter.Event>):ReviewStateV1{
         val raw=c.getSharedPreferences(PREF,0).getString(key,null)
         if(raw.isNullOrBlank()) return ReviewStateV1(events=original.mapIndexed{i,e->ReviewedEventV1(i,true,e.t0,e.t1)})
@@ -44,8 +45,22 @@ object ReportReviewV1 {
         val a=p(t0)?:return null;var b=p(t1)?:return null;if(b<a)b+=24*60*60*1000L;return (b-a).coerceAtLeast(0L)
     }
     fun save(c:Context,key:String,s:ReviewStateV1){
-        val o=JSONObject().put("confirmed",s.confirmed).put("confirmedAt",s.confirmedAt).put("events",JSONArray().apply{s.events.forEach{e->put(JSONObject().put("index",e.index).put("valid",e.valid).put("t0",e.t0).put("t1",e.t1).put("note",e.note))}})
+        val now=System.currentTimeMillis()
+        val o=JSONObject().put("confirmed",s.confirmed).put("confirmedAt",s.confirmedAt).put("modifiedAt",now).put("events",JSONArray().apply{s.events.forEach{e->put(JSONObject().put("index",e.index).put("valid",e.valid).put("t0",e.t0).put("t1",e.t1).put("note",e.note))}})
         c.getSharedPreferences(PREF,0).edit().putString(key,o.toString()).apply()
+    }
+    fun modifiedAt(c:Context,key:String):Long{
+        val raw=c.getSharedPreferences(PREF,0).getString(key,null) ?: return 0L
+        return runCatching{JSONObject(raw).optLong("modifiedAt",0L)}.getOrDefault(0L)
+    }
+    fun isExportCurrent(c:Context,key:String):Boolean{
+        val modified=modifiedAt(c,key)
+        if(modified<=0L) return true
+        return c.getSharedPreferences(EXPORT_PREF,0).getLong(key,0L)>=modified
+    }
+    fun markExported(c:Context,key:String){
+        val modified=modifiedAt(c,key)
+        c.getSharedPreferences(EXPORT_PREF,0).edit().putLong(key,if(modified>0L)modified else System.currentTimeMillis()).apply()
     }
     fun offsetMs(clock:String,sessionStart:String):Long?{
         fun p(x:String)=runCatching{java.text.SimpleDateFormat("HH:mm:ss.SSS",java.util.Locale.US).parse(x)?.time}.getOrNull()
