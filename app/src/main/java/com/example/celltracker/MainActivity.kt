@@ -507,6 +507,7 @@ private data class TikTokReportRowV1(
     val uri:String,
     val name:String,
     val addedMs:Long,
+    val relativePath:String,
     val task:String,
     val operator:String,
     val start:String,
@@ -563,6 +564,7 @@ private fun loadTikTokReportsV1(context: Context): Pair<List<TikTokReportRowV1>,
                 val row=TikTokReportRowV1(
                     uri=uri.toString(),name=displayName,
                     addedMs=c.getLong(dateI)*1000L,
+                    relativePath=rel,
                     task=fields["Task"].orEmpty(),operator=fields["Operator"].orEmpty(),
                     start=fields["Start"].orEmpty(),fields=fields,detail=detail
                 )
@@ -579,6 +581,67 @@ private fun loadTikTokReportsV1(context: Context): Pair<List<TikTokReportRowV1>,
 
 private data class BasementReportRow(val uri: Uri, val name: String, val relativePath: String, val addedMs: Long)
 private data class ReviewEditRequestV1(val category:String,val reportKey:String,val index:Int,val initial:ReviewedEventV1)
+
+private fun reportDateKey(timestampMs: Long): String =
+    SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(timestampMs))
+
+private fun mediaStoreDisplayName(context: Context, uriString: String?): String {
+    if (uriString.isNullOrBlank()) return ""
+    return runCatching {
+        val uri = Uri.parse(uriString)
+        context.contentResolver.query(
+            uri,
+            arrayOf(android.provider.MediaStore.MediaColumns.DISPLAY_NAME),
+            null, null, null
+        )?.use { c ->
+            if (c.moveToFirst()) c.getString(0).orEmpty() else ""
+        }.orEmpty()
+    }.getOrDefault("").ifBlank {
+        runCatching { Uri.parse(uriString).lastPathSegment.orEmpty() }.getOrDefault("")
+    }
+}
+
+private fun reportFilesInRelativePath(context: Context, relativePath: String): List<String> {
+    if (relativePath.isBlank()) return emptyList()
+    val out = mutableListOf<String>()
+    runCatching {
+        context.contentResolver.query(
+            android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+            arrayOf(
+                android.provider.MediaStore.Downloads.DISPLAY_NAME,
+                android.provider.MediaStore.Downloads.RELATIVE_PATH
+            ),
+            null, null,
+            android.provider.MediaStore.Downloads.DISPLAY_NAME + " ASC"
+        )?.use { c ->
+            val nameI = c.getColumnIndexOrThrow(android.provider.MediaStore.Downloads.DISPLAY_NAME)
+            val pathI = c.getColumnIndexOrThrow(android.provider.MediaStore.Downloads.RELATIVE_PATH)
+            val expected = relativePath.trimEnd('/')
+            while (c.moveToNext()) {
+                if (c.getString(pathI).orEmpty().trimEnd('/') == expected) {
+                    c.getString(nameI)?.takeIf { it.isNotBlank() }?.let(out::add)
+                }
+            }
+        }
+    }
+    return out.distinct()
+}
+
+@Composable
+private fun ReportDateHeader(date: String, count: Int) {
+    Row(
+        Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(date, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.weight(1f))
+        Text(
+            "$count report${if (count == 1) "" else "s"}",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -873,6 +936,11 @@ private fun ReportsHome(
                     "YOUTUBE" -> videoReports.firstOrNull { it.path == path }?.let { r ->
                         val reviewState=ReportReviewV1.loadYouTube(context,r.path,r.samples)
                         val reviewedDurations=reviewState.events.filter{it.valid}.mapNotNull{ReportReviewV1.durationMs(it.t0,it.t1)}
+                        val base=File(r.path).nameWithoutExtension
+                        val exportPath=ReportStorage.sessionRelativePath("YouTube",r.startedAt,base)
+                        val exportedFiles=reportFilesInRelativePath(context,exportPath)
+                            .filterNot { it.endsWith(".mp4",true) }
+                        val screenName=mediaStoreDisplayName(context,r.screenRecordingUri)
                         GlassSection("YouTube Summary") {
                             Field("Started", SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(r.startedAt)))
                             Field("Attempts", r.samples.size.toString())
@@ -880,6 +948,9 @@ private fun ReportsHome(
                             Field("Average", reviewedDurations.takeIf { it.isNotEmpty() }?.average()?.let { String.format(Locale.US, "%.0f ms", it) } ?: "--")
                             Field("Review Status", if(reviewState.confirmed) "Confirmed" else "Draft / Not Confirmed")
                             Field("Status", r.status)
+                            Field("Screen Recording", if(r.screenRecordingUri.isNullOrBlank()) "No" else "Yes")
+                            LongField("Recording File", screenName.ifBlank { if(r.screenRecordingUri.isNullOrBlank()) "--" else r.screenRecordingUri.orEmpty() })
+                            LongField("Report Files", if(exportedFiles.isEmpty()) "Not exported yet" else exportedFiles.joinToString("\n"))
                         }
                         r.samples.forEachIndexed { i,sample ->
                             val rev=reviewState.events.getOrNull(i) ?: return@forEachIndexed
@@ -932,6 +1003,10 @@ private fun ReportsHome(
                             context.contentResolver.openInputStream(Uri.parse(r.uri))?.bufferedReader()?.use { TikTokReportExporter.parse(it.readText()) }
                         }.getOrNull()
                         val durations=parsed?.events?.mapNotNull{it.durationMs}.orEmpty()
+                        val summaryFiles=reportFilesInRelativePath(context,r.relativePath)
+                            .filterNot { it.endsWith(".mp4",true) }
+                        val summaryScreenName=r.fields["Screen Recording"].orEmpty()
+                        val summaryScreenUri=r.fields["Screen Recording URI"].orEmpty()
                         GlassSection("TikTok Video Lag Summary") {
                             Field("Task", r.task)
                             Field("Operator", r.operator)
@@ -942,6 +1017,9 @@ private fun ReportsHome(
                             Field("Total Lag", durations.sum().let { String.format(Locale.US,"%.3f s",it/1000.0) })
                             Field("Average", durations.takeIf{it.isNotEmpty()}?.average()?.let { String.format(Locale.US,"%.3f s",it/1000.0) } ?: "--")
                             Field("Longest", durations.maxOrNull()?.let { String.format(Locale.US,"%.3f s",it/1000.0) } ?: "--")
+                            Field("Screen Recording", if(summaryScreenUri.isBlank() && summaryScreenName.isBlank()) "No" else "Yes")
+                            LongField("Recording File", summaryScreenName.ifBlank { "--" })
+                            LongField("Report Files", if(summaryFiles.isEmpty()) r.name else summaryFiles.joinToString("\n"))
                         }
                         val reviewState=parsed?.let{ReportReviewV1.load(context,r.uri,it.events)}
                         parsed?.events?.forEachIndexed { i,e ->
@@ -1005,6 +1083,10 @@ private fun ReportsHome(
                             context.contentResolver.openInputStream(Uri.parse(r.uri))?.bufferedReader()?.use { TikTokReportExporter.parse(it.readText()) }
                         }.getOrNull()
                         val durations=parsed?.events?.mapNotNull{it.durationMs}.orEmpty()
+                        val summaryFiles=reportFilesInRelativePath(context,r.relativePath)
+                            .filterNot { it.endsWith(".mp4",true) }
+                        val summaryScreenName=r.fields["Screen Recording"].orEmpty()
+                        val summaryScreenUri=r.fields["Screen Recording URI"].orEmpty()
                         GlassSection("TikTok Upload Summary") {
                             Field("Task", r.task)
                             Field("Operator", r.operator)
@@ -1014,6 +1096,9 @@ private fun ReportsHome(
                             Field("Average", durations.takeIf{it.isNotEmpty()}?.average()?.let{String.format(Locale.US,"%.3f s",it/1000.0)} ?: "--")
                             Field("Fastest", durations.minOrNull()?.let{String.format(Locale.US,"%.3f s",it/1000.0)} ?: "--")
                             Field("Slowest", durations.maxOrNull()?.let{String.format(Locale.US,"%.3f s",it/1000.0)} ?: "--")
+                            Field("Screen Recording", if(summaryScreenUri.isBlank() && summaryScreenName.isBlank()) "No" else "Yes")
+                            LongField("Recording File", summaryScreenName.ifBlank { "--" })
+                            LongField("Report Files", if(summaryFiles.isEmpty()) r.name else summaryFiles.joinToString("\n"))
                         }
                         val reviewState=parsed?.let{ReportReviewV1.load(context,r.uri,it.events)}
                         parsed?.events?.forEachIndexed { i,e ->
@@ -1242,64 +1327,88 @@ private fun ReportsHome(
                 }
 
                 when (cat) {
-                    "WEAK" -> items(basementReports, key = { it.uri.toString() }) { r ->
-                        val name = r.relativePath.substringAfter("WeakCoverage/").substringBefore('/').ifBlank { r.name }
-                        ReportListCard(
-                            title = name,
-                            subtitle = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(r.addedMs)),
-                            onClick = { selectedPath = r.uri.toString() }
-                        )
+                    "WEAK" -> basementReports.groupBy { reportDateKey(it.addedMs) }.toSortedMap(reverseOrder()).forEach { (date, rows) ->
+                        item("weak_date_$date") { ReportDateHeader(date, rows.size) }
+                        items(rows, key = { it.uri.toString() }) { r ->
+                            val name = r.relativePath.substringAfter("WeakCoverage/").substringBefore('/').ifBlank { r.name }
+                            ReportListCard(
+                                title = name,
+                                subtitle = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(r.addedMs)),
+                                onClick = { selectedPath = r.uri.toString() }
+                            )
+                        }
                     }
-                    "PING" -> items(state.pingHistory, key = { it.path }) { r ->
-                        ReportListCard(
-                            title = r.taskName.ifBlank { "Ping ${r.host}" },
-                            subtitle = "${SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(r.startedAt))} · Success ${String.format(Locale.US, "%.1f%%", r.successRate)}",
-                            onClick = { selectedPath = r.path }
-                        )
+                    "PING" -> state.pingHistory.groupBy { reportDateKey(it.startedAt) }.toSortedMap(reverseOrder()).forEach { (date, rows) ->
+                        item("ping_date_$date") { ReportDateHeader(date, rows.size) }
+                        items(rows, key = { it.path }) { r ->
+                            ReportListCard(
+                                title = r.taskName.ifBlank { "Ping ${r.host}" },
+                                subtitle = "${SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(r.startedAt))} · Success ${String.format(Locale.US, "%.1f%%", r.successRate)}",
+                                onClick = { selectedPath = r.path }
+                            )
+                        }
                     }
-                    "YOUTUBE" -> items(videoReports, key = { it.path }) { r ->
-                        val values = r.samples.mapNotNull { it.delayMs }
-                        ReportListCard(
-                            title = File(r.path).nameWithoutExtension,
-                            subtitle = "${SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(r.startedAt))} · ${r.samples.size} attempts · Avg ${values.takeIf { it.isNotEmpty() }?.average()?.let { String.format(Locale.US, "%.0fms", it) } ?: "--"}",
-                            onClick = { selectedPath = r.path }
-                        )
+                    "YOUTUBE" -> videoReports.groupBy { reportDateKey(it.startedAt) }.toSortedMap(reverseOrder()).forEach { (date, rows) ->
+                        item("youtube_date_$date") { ReportDateHeader(date, rows.size) }
+                        items(rows, key = { it.path }) { r ->
+                            val values = r.samples.mapNotNull { it.delayMs }
+                            ReportListCard(
+                                title = File(r.path).nameWithoutExtension,
+                                subtitle = "${SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(r.startedAt))} · ${r.samples.size} attempts · Avg ${values.takeIf { it.isNotEmpty() }?.average()?.let { String.format(Locale.US, "%.0fms", it) } ?: "--"}",
+                                onClick = { selectedPath = r.path }
+                            )
+                        }
                     }
-                    "WHATSAPP" -> items(whatsappReports, key = { it.path }) { r ->
-                        val values = r.samples.map { it.delayMs }
-                        ReportListCard(
-                            title = File(r.path).nameWithoutExtension,
-                            subtitle = "${SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(r.startedAt))} · ${r.samples.size} attempts · Avg ${values.takeIf { it.isNotEmpty() }?.average()?.let { String.format(Locale.US, "%.0fms", it) } ?: "--"}",
-                            onClick = { selectedPath = r.path }
-                        )
+                    "WHATSAPP" -> whatsappReports.groupBy { reportDateKey(it.startedAt) }.toSortedMap(reverseOrder()).forEach { (date, rows) ->
+                        item("whatsapp_date_$date") { ReportDateHeader(date, rows.size) }
+                        items(rows, key = { it.path }) { r ->
+                            val values = r.samples.map { it.delayMs }
+                            ReportListCard(
+                                title = File(r.path).nameWithoutExtension,
+                                subtitle = "${SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(r.startedAt))} · ${r.samples.size} attempts · Avg ${values.takeIf { it.isNotEmpty() }?.average()?.let { String.format(Locale.US, "%.0fms", it) } ?: "--"}",
+                                onClick = { selectedPath = r.path }
+                            )
+                        }
                     }
-                    "TIKTOK_LAG" -> items(tikTokLagReports, key = { it.uri }) { r ->
-                        ReportListCard(
-                            title = r.task.ifBlank { r.name.substringBeforeLast('.') },
-                            subtitle = "${r.start} · ${r.operator} · Lag ${r.fields["Lag Count"] ?: "0"}",
-                            onClick = { selectedPath = r.uri }
-                        )
+                    "TIKTOK_LAG" -> tikTokLagReports.groupBy { reportDateKey(it.addedMs) }.toSortedMap(reverseOrder()).forEach { (date, rows) ->
+                        item("tiktok_lag_date_$date") { ReportDateHeader(date, rows.size) }
+                        items(rows, key = { it.uri }) { r ->
+                            ReportListCard(
+                                title = r.task.ifBlank { r.name.substringBeforeLast('.') },
+                                subtitle = "${r.start} · ${r.operator} · Lag ${r.fields["Lag Count"] ?: "0"}",
+                                onClick = { selectedPath = r.uri }
+                            )
+                        }
                     }
-                    "TIKTOK_UPLOAD" -> items(tikTokUploadReports, key = { it.uri }) { r ->
-                        ReportListCard(
-                            title = r.task.ifBlank { r.name.substringBeforeLast('.') },
-                            subtitle = "${r.start} · ${r.operator} · Completed ${r.fields["Completed"] ?: "0"}",
-                            onClick = { selectedPath = r.uri }
-                        )
+                    "TIKTOK_UPLOAD" -> tikTokUploadReports.groupBy { reportDateKey(it.addedMs) }.toSortedMap(reverseOrder()).forEach { (date, rows) ->
+                        item("tiktok_upload_date_$date") { ReportDateHeader(date, rows.size) }
+                        items(rows, key = { it.uri }) { r ->
+                            ReportListCard(
+                                title = r.task.ifBlank { r.name.substringBeforeLast('.') },
+                                subtitle = "${r.start} · ${r.operator} · Completed ${r.fields["Completed"] ?: "0"}",
+                                onClick = { selectedPath = r.uri }
+                            )
+                        }
                     }
-                    "CALL" -> items(state.callHistory, key = { it.path }) { r ->
-                        ReportListCard(
-                            title = r.taskName.ifBlank { "Call Setup" },
-                            subtitle = "${SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(r.startedAt))} · ${r.attempts} attempts · Success ${String.format(Locale.US, "%.1f%%", r.successRate)}",
-                            onClick = { selectedPath = r.path }
-                        )
+                    "CALL" -> state.callHistory.groupBy { reportDateKey(it.startedAt) }.toSortedMap(reverseOrder()).forEach { (date, rows) ->
+                        item("call_date_$date") { ReportDateHeader(date, rows.size) }
+                        items(rows, key = { it.path }) { r ->
+                            ReportListCard(
+                                title = r.taskName.ifBlank { "Call Setup" },
+                                subtitle = "${SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(r.startedAt))} · ${r.attempts} attempts · Success ${String.format(Locale.US, "%.1f%%", r.successRate)}",
+                                onClick = { selectedPath = r.path }
+                            )
+                        }
                     }
-                    "RECORDING" -> items(state.recordings, key = { it.path }) { r ->
-                        ReportListCard(
-                            title = recordingDisplayName(r.name),
-                            subtitle = "${SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(r.startedAt))} · ${r.simSummary} · ${formatElapsed(r.durationMs)}",
-                            onClick = { onOpenRecording(r.path) }
-                        )
+                    "RECORDING" -> state.recordings.groupBy { reportDateKey(it.startedAt) }.toSortedMap(reverseOrder()).forEach { (date, rows) ->
+                        item("recording_date_$date") { ReportDateHeader(date, rows.size) }
+                        items(rows, key = { it.path }) { r ->
+                            ReportListCard(
+                                title = recordingDisplayName(r.name),
+                                subtitle = "${SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(r.startedAt))} · ${r.simSummary} · ${formatElapsed(r.durationMs)}",
+                                onClick = { onOpenRecording(r.path) }
+                            )
+                        }
                     }
                 }
             }
@@ -2848,10 +2957,13 @@ private fun RecordingDetailScreen(
 
 @Composable
 private fun RecordingSummary(item: RecordingItem, samples: List<TrackSample>, onMarkerClick: (TrackSample) -> Unit) {
+    val context = LocalContext.current
     val validLocation = samples.count { it.locationValid }
     val ratCounts = samples.groupingBy { normalizedRat(it) }.eachCount().toList().sortedByDescending { it.second }
     val rsrp = samples.mapNotNull { it.rsrp.toIntOrNull() }
     val first = samples.firstOrNull(); val last = samples.lastOrNull()
+    val exportPath = ReportStorage.sessionRelativePath("Network Recording", item.startedAt, File(item.path).nameWithoutExtension)
+    val exportedFiles = reportFilesInRelativePath(context, exportPath)
     Column(Modifier.fillMaxSize().verticalScroll(rememberRetainedScrollState("recording.summary.${item.path}")).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         InfoCard("Session") {
             Field("Started", SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(item.startedAt)))
@@ -2859,6 +2971,7 @@ private fun RecordingSummary(item: RecordingItem, samples: List<TrackSample>, on
             Field("Samples", samples.size.toString())
             Field("GPS samples", "$validLocation / ${samples.size}")
             Field("Screenshots", samples.count { it.isMarker && it.screenshot.isNotBlank() }.toString())
+            LongField("Report Files", if(exportedFiles.isEmpty()) "Not exported yet" else exportedFiles.joinToString("\n"))
         }
         InfoCard("Track") {
             Field("Start", if (first?.locationValid == true) "${formatCoord(first.latitude)}, ${formatCoord(first.longitude)}" else "--")

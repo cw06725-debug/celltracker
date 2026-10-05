@@ -1,3 +1,11 @@
+# v1.2.43 (220)
+
+- Group saved reports by test date inside CellTracker. Each date header shows how many reports were recorded that day, e.g. `2026-10-01 · 3 reports`.
+- Apply date grouping across Weak Coverage, Ping, YouTube, WhatsApp, Call Setup, Network Recording, TikTok Video Lag and TikTok Upload report lists.
+- YouTube Summary now shows whether a screen recording is linked, the recording filename, and the report files currently exported for that test.
+- TikTok Video Lag / Upload Summary now shows screen-recording availability/name and all report files stored in that test session folder.
+- Keep v1.2.42 report storage folders unchanged (`yyyy-MM-dd`) and preserve all existing test/review/ADB/signing behavior.
+
 # v1.2.42 (219)
 
 - Restore report date folders to a single `yyyy-MM-dd` directory, e.g. `Downloads/CellTracker/2026-10-05/...`.
