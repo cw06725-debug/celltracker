@@ -178,6 +178,11 @@ class MainActivity : ComponentActivity() {
                 var showSettings by remember { mutableStateOf(false) } // legacy root destination
                 var settingsVisitId by remember { mutableIntStateOf(0) }
                 var mainTab by rememberSaveable { mutableStateOf("HOME") }
+                // When a Network Recording detail is opened from Reports, remember the
+                // originating report category outside MainScreen. RootDestination.Detail
+                // temporarily removes MainScreen from composition; without this state the
+                // ReportsHome category is lost and Back skips two levels.
+                var reportsResumeCategory by rememberSaveable { mutableStateOf<String?>(null) }
                 var detailPath by remember { mutableStateOf<String?>(null) }
                 var showPingTest by remember { mutableStateOf(false) }
                 var showCallSetup by remember { mutableStateOf(false) }
@@ -364,7 +369,14 @@ class MainActivity : ComponentActivity() {
                         onExportRecording = vm::exportRecording,
                         onDeleteRecording = vm::deleteRecording,
                         onDeleteAll = vm::deleteAllRecordings,
-                        onOpenRecording = { detailPath = it },
+                        onOpenRecording = { path ->
+                            // Recording detail is a root destination, so preserve the Reports
+                            // category explicitly and restore it after the detail closes.
+                            if (mainTab == "REPORTS") reportsResumeCategory = "RECORDING"
+                            detailPath = path
+                        },
+                        reportsResumeCategory = reportsResumeCategory,
+                        onReportsResumeCategoryConsumed = { reportsResumeCategory = null },
                         mainTab = mainTab,
                         onMainTabChange = { tab ->
                             if (tab == "SETTINGS") settingsVisitId += 1
@@ -648,6 +660,8 @@ private fun ReportDateHeader(date: String, count: Int) {
 private fun ReportsHome(
     state: AppState,
     onOpenRecording: (String) -> Unit,
+    initialCategory: String? = null,
+    onInitialCategoryConsumed: () -> Unit = {},
     onSubpageChanged: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -659,7 +673,7 @@ private fun ReportsHome(
     var tikTokLagReports by remember { mutableStateOf(emptyList<TikTokReportRowV1>()) }
     var tikTokUploadReports by remember { mutableStateOf(emptyList<TikTokReportRowV1>()) }
     var deleteYouTubePath by remember { mutableStateOf<String?>(null) }
-    var category by rememberSaveable { mutableStateOf<String?>(null) }
+    var category by rememberSaveable { mutableStateOf<String?>(initialCategory) }
     var selectedPath by rememberSaveable { mutableStateOf<String?>(null) }
     var exportResult by remember { mutableStateOf<ExportResult?>(null) }
     var busy by remember { mutableStateOf(false) }
@@ -686,6 +700,16 @@ private fun ReportsHome(
     }
 
     LaunchedEffect(Unit) { reloadReports() }
+    // One-shot restoration after returning from the root RecordingDetailScreen.
+    // Keep the user in Network Recording Reports; a second Back then returns to
+    // Reports by Type, matching the normal one-level navigation model.
+    LaunchedEffect(initialCategory) {
+        if (initialCategory != null) {
+            category = initialCategory
+            selectedPath = null
+            onInitialCategoryConsumed()
+        }
+    }
     LaunchedEffect(category, selectedPath) { onSubpageChanged(category != null || selectedPath != null) }
     DisposableEffect(Unit) { onDispose { onSubpageChanged(false) } }
     BackHandler(enabled = category != null || selectedPath != null) {
@@ -1591,6 +1615,8 @@ private fun MainScreen(
     onDeleteRecording: (String) -> Unit,
     onDeleteAll: () -> Unit,
     onOpenRecording: (String) -> Unit,
+    reportsResumeCategory: String? = null,
+    onReportsResumeCategoryConsumed: () -> Unit = {},
     mainTab: String,
     onMainTabChange: (String) -> Unit,
     settingsVisitId: Int,
@@ -1820,6 +1846,8 @@ private fun MainScreen(
                 ReportsHome(
                     state = state,
                     onOpenRecording = onOpenRecording,
+                    initialCategory = reportsResumeCategory,
+                    onInitialCategoryConsumed = onReportsResumeCategoryConsumed,
                     onSubpageChanged = { reportsSubpageVisible = it },
                     modifier = Modifier.fillMaxSize()
                 )

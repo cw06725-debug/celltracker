@@ -1,3 +1,10 @@
+# v1.2.44 (221)
+
+- Fix Reports back-stack behavior for Network Recording details.
+- Opening a Network Recording from Reports now remembers the originating `Network Recording Reports` category while the root detail screen is shown.
+- Back from the recording detail returns exactly one level to the dated Network Recording report list; a second Back returns to Reports by Type.
+- No changes to test, export, report grouping, or recording logic.
+
 # v1.2.43 (220)
 
 - Group saved reports by test date inside CellTracker. Each date header shows how many reports were recorded that day, e.g. `2026-10-01 · 3 reports`.
