@@ -660,6 +660,8 @@ private fun ReportDateHeader(date: String, count: Int) {
 private fun ReportsHome(
     state: AppState,
     onOpenRecording: (String) -> Unit,
+    onExportRecording: (String, CsvExportMode) -> Unit,
+    onDeleteRecording: (String) -> Unit,
     initialCategory: String? = null,
     onInitialCategoryConsumed: () -> Unit = {},
     onSubpageChanged: (Boolean) -> Unit = {},
@@ -911,6 +913,23 @@ private fun ReportsHome(
             },
             dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("Cancel") } }
         )
+    }
+
+    // Network Recording detail stays inside ReportsHome, just like YouTube/TikTok.
+    // This preserves the exact navigation stack: report detail -> recording list -> reports by type.
+    if (selectedPath != null && category == "RECORDING") {
+        val path = selectedPath!!
+        RecordingDetailScreen(
+            path = path,
+            fallbackItem = state.recordings.firstOrNull { it.path == path },
+            onBack = { selectedPath = null },
+            onExport = onExportRecording,
+            onDelete = { target ->
+                onDeleteRecording(target)
+                selectedPath = null
+            }
+        )
+        return
     }
 
     if (selectedPath != null && category != null) {
@@ -1430,7 +1449,7 @@ private fun ReportsHome(
                             ReportListCard(
                                 title = recordingDisplayName(r.name),
                                 subtitle = "${SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(r.startedAt))} · ${r.simSummary} · ${formatElapsed(r.durationMs)}",
-                                onClick = { onOpenRecording(r.path) }
+                                onClick = { selectedPath = r.path }
                             )
                         }
                     }
@@ -1846,6 +1865,8 @@ private fun MainScreen(
                 ReportsHome(
                     state = state,
                     onOpenRecording = onOpenRecording,
+                    onExportRecording = onExportRecording,
+                    onDeleteRecording = onDeleteRecording,
                     initialCategory = reportsResumeCategory,
                     onInitialCategoryConsumed = onReportsResumeCategoryConsumed,
                     onSubpageChanged = { reportsSubpageVisible = it },

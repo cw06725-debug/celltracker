@@ -1,3 +1,10 @@
+# v1.2.45 (222)
+
+- Fix Network Recording report navigation structurally instead of restoring category state after a root-level detail screen.
+- Network Recording details now render inside ReportsHome, matching YouTube/TikTok report navigation.
+- Back now always follows: Recording Detail -> Network Recording Reports -> Reports by Type.
+- No test, export, signing, or report-format logic changed.
+
 # v1.2.44 (221)
 
 - Fix Reports back-stack behavior for Network Recording details.
