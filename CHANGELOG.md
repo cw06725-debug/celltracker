@@ -1,3 +1,9 @@
+# v1.2.41 (218)
+
+- Simplify per-test export folder names: remove the duplicated leading HHmmss prefix when the report label already contains yyyyMMdd_HHmmss.
+- Change report date storage from a single yyyy-MM-dd folder to nested yyyy/MM/dd folders, e.g. `Downloads/CellTracker/2026/10/01/TikTok Upload/...`.
+- Keep one folder per test session and all v1.2.40 report-review / ADB stability fixes unchanged.
+
 # v1.2.40 (217)
 
 - Fix TikTok report browser: exported summary/XLSX/cell/KML/events files are no longer shown as separate tests; duplicate source rows are collapsed by test identity.
