@@ -1,3 +1,9 @@
+# v1.2.42 (219)
+
+- Restore report date folders to a single `yyyy-MM-dd` directory, e.g. `Downloads/CellTracker/2026-10-05/...`.
+- Keep the v1.2.41 session-folder naming cleanup: no duplicate leading time prefix.
+- No test, report-content, ADB, signing, or UI behavior changes.
+
 # v1.2.41 (218)
 
 - Simplify per-test export folder names: remove the duplicated leading HHmmss prefix when the report label already contains yyyyMMdd_HHmmss.

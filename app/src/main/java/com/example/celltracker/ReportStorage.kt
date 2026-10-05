@@ -10,9 +10,8 @@ object ReportStorage {
         value.replace(Regex("[^A-Za-z0-9 _.-]"), "_").trim().ifBlank { fallback }
 
     fun relativePath(category: String, timestampMs: Long): String {
-        // Use year/month/day folders so the path reads naturally as 2026/10/01.
-        // '/' is a path separator on Android, so this intentionally creates nested folders.
-        val datePath = SimpleDateFormat("yyyy/MM/dd", Locale.US).format(Date(timestampMs))
+        // Keep one date folder per day, e.g. 2026-10-05.
+        val datePath = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(timestampMs))
         return Environment.DIRECTORY_DOWNLOADS + "/CellTracker/" + datePath + "/" + safe(category, "Other")
     }
 
