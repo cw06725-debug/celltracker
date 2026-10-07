@@ -1,3 +1,10 @@
+# v1.2.46 (223)
+
+- Fix screen recording SecurityException on Android 14+/17 devices such as TECNO LK7K.
+- Remove the temporary ImageReader diagnostic probe that created a second VirtualDisplay from the same MediaProjection session.
+- Screen recording now uses one fresh consent result, one MediaProjection, and one VirtualDisplay per recording session.
+- Keep existing YouTube/TikTok timing and report behavior unchanged.
+
 # v1.2.45 (222)
 
 - Fix Network Recording report navigation structurally instead of restoring category state after a root-level detail screen.

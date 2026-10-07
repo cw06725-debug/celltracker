@@ -12,8 +12,6 @@ import android.media.MediaCodecList
 import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
 import android.media.MediaRecorder
-import android.media.ImageReader
-import android.graphics.PixelFormat
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
@@ -32,9 +30,9 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * v1.2.27 intentionally keeps the v1.2.21 recording path and test behavior.
- * The only addition here is detailed diagnostics so an OEM-specific screen-capture
- * failure can be localized without changing YouTube/TikTok event timing logic.
+ * Screen recording uses one fresh MediaProjection consent result per session and
+ * creates exactly one VirtualDisplay for the MediaRecorder surface.
+ * Diagnostics remain enabled without creating any extra capture display.
  */
 class TestScreenRecordingService : Service() {
     private var projection: MediaProjection? = null
@@ -43,9 +41,6 @@ class TestScreenRecordingService : Service() {
     private var outputUri: Uri? = null
     private var outputPfd: ParcelFileDescriptor? = null
     private var recorderStarted = false
-    private var frameProbeReader: ImageReader? = null
-    private var frameProbeDisplay: android.hardware.display.VirtualDisplay? = null
-    private var frameProbeCount = 0
     @Volatile private var stopping = false
 
     private var diagnosticFile: File? = null
@@ -148,37 +143,6 @@ class TestScreenRecordingService : Service() {
                 }
             }, Handler(mainLooper))
 
-            // OEM frame-delivery probe. The previous LK7k logs proved MediaProjection and
-            // VirtualDisplay creation succeed while encoder surfaces receive zero frames.
-            // A tiny ImageReader surface tells us whether MediaProjection itself is delivering pixels.
-            if (Build.MANUFACTURER.equals("TECNO", true) && Build.MODEL.contains("LK7", true)) {
-                runCatching {
-                    val probeW = 360
-                    val probeH = ((probeW.toFloat() * height / width).toInt().coerceAtLeast(2) / 2) * 2
-                    frameProbeReader = ImageReader.newInstance(probeW, probeH, PixelFormat.RGBA_8888, 2)
-                    frameProbeReader?.setOnImageAvailableListener({ r ->
-                        var image: android.media.Image? = null
-                        try {
-                            image = r.acquireLatestImage()
-                            if (image != null) {
-                                frameProbeCount++
-                                if (frameProbeCount <= 3 || frameProbeCount % 30 == 0) {
-                                    diag("ImageReader probe frame=$frameProbeCount size=${probeW}x${probeH}")
-                                }
-                            }
-                        } catch (t: Throwable) {
-                            diag("ImageReader probe error=${t.javaClass.simpleName}:${t.message}")
-                        } finally { runCatching { image?.close() } }
-                    }, Handler(mainLooper))
-                    frameProbeDisplay = projection?.createVirtualDisplay(
-                        "CellTrackerFrameProbe", probeW, probeH, metrics.densityDpi,
-                        DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                        frameProbeReader?.surface, null, null
-                    )
-                    diag("ImageReader probe display created=${frameProbeDisplay != null} ${probeW}x${probeH}")
-                }.onFailure { diagThrowable("ImageReader probe setup FAILED", it) }
-            }
-
             virtualDisplay = projection?.createVirtualDisplay(
                 "CellTrackerTestRecording",
                 width,
@@ -234,12 +198,6 @@ class TestScreenRecordingService : Service() {
         recorder = null
         runCatching { virtualDisplay?.release() }
         virtualDisplay = null
-        diag("ImageReader probe final frames=$frameProbeCount")
-        runCatching { frameProbeDisplay?.release() }
-        frameProbeDisplay = null
-        runCatching { frameProbeReader?.close() }
-        frameProbeReader = null
-        frameProbeCount = 0
         val oldProjection = projection
         projection = null
         runCatching { oldProjection?.stop() }
@@ -301,12 +259,6 @@ class TestScreenRecordingService : Service() {
         recorder = null
         runCatching { virtualDisplay?.release() }
         virtualDisplay = null
-        diag("ImageReader probe final frames=$frameProbeCount")
-        runCatching { frameProbeDisplay?.release() }
-        frameProbeDisplay = null
-        runCatching { frameProbeReader?.close() }
-        frameProbeReader = null
-        frameProbeCount = 0
         val oldProjection = projection
         projection = null
         runCatching { oldProjection?.stop() }
