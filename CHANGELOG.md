@@ -1,11 +1,9 @@
-# v1.2.49 (226)
+# v1.2.50 (227)
 
-- Add a temporary Screen Capture Diagnostic selector under Settings > Test Report for Transsion Android 17 black-screen investigation.
-- Mode A: current AUTO_MIRROR behavior.
-- Mode B: PUBLIC + AUTO_MIRROR.
-- Mode C: SECURE + AUTO_MIRROR (may be rejected by firmware/permissions; the diagnostic log records the failure).
-- Screen recording diagnostic TXT now records the selected mode and requested VirtualDisplay flags.
-- No changes to YouTube/TikTok timing, reports, review logic, or normal recording codec settings.
+- Roll back screen-capture diagnostic A/B/C modes and return to the v1.2.48 system-recording association baseline.
+- Keep automatic matching of OEM/system screen recordings to YouTube and TikTok reports.
+- Keep reviewed export folder marking and existing report/review behavior.
+- No changes to YouTube/TikTok timing logic.
 
 # v1.2.48 (225)
 
