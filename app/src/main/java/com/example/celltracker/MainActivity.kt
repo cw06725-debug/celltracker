@@ -577,9 +577,18 @@ private fun loadTikTokReportsV1(context: Context): Pair<List<TikTokReportRowV1>,
                     }
                 }
                 val detail=if(header>=0) lines.drop(header).filter{it.isNotBlank()}.joinToString("\n") else ""
+                val reportAddedMs=c.getLong(dateI)*1000L
+                val durationMs=fields["Duration ms"]?.toLongOrNull()?.coerceAtLeast(0L) ?: 0L
+                val approxEnd=reportAddedMs
+                val approxStart=(approxEnd-durationMs).takeIf { durationMs>0L } ?: (reportAddedMs-60_000L)
+                SystemScreenRecordingLinker.resolve(context, uri.toString(), approxStart, approxEnd)?.let { linked ->
+                    fields["Screen Recording"] = linked.name
+                    fields["Screen Recording URI"] = linked.uri
+                    fields["Screen Recording Start ms"] = linked.startMs.toString()
+                }
                 val row=TikTokReportRowV1(
                     uri=uri.toString(),name=displayName,
-                    addedMs=c.getLong(dateI)*1000L,
+                    addedMs=reportAddedMs,
                     relativePath=rel,
                     task=fields["Task"].orEmpty(),operator=fields["Operator"].orEmpty(),
                     start=fields["Start"].orEmpty(),fields=fields,detail=detail
@@ -3589,9 +3598,14 @@ private fun SettingsScreen(
     embedded: Boolean = false,
     onSubpageChanged: (Boolean) -> Unit = {}
 ) {
+    val context = LocalContext.current
     var draft by remember(settings) { mutableStateOf(settings) }
     var page by remember { mutableStateOf("root") }
     var newIssue by remember { mutableStateOf("") }
+    var videoAccessGranted by remember { mutableStateOf(SystemScreenRecordingLinker.hasVideoAccess(context)) }
+    val videoAccessLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        videoAccessGranted = granted || SystemScreenRecordingLinker.hasVideoAccess(context)
+    }
     // Keep one root Settings scroll state for this composed Settings destination, but
     // explicitly reset it whenever Main opens a NEW Settings visit.  visitId changes only
     // on Main -> Settings, so Settings child -> Back keeps the in-visit position, while a
@@ -3695,8 +3709,7 @@ private fun SettingsScreen(
                     SettingSwitch("Play sound", draft.soundOnMark) { applySetting(draft.copy(soundOnMark = it)) }
                 }
                 "floating" -> Column(Modifier.padding(16.dp).fillMaxSize().clip(RoundedCornerShape(22.dp)).background(MaterialTheme.colorScheme.surface).border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=.12f), RoundedCornerShape(22.dp)).padding(16.dp).verticalScroll(rememberRetainedScrollState("settings.floating")), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    val context = LocalContext.current
-                    var overlayGranted by remember { mutableStateOf(android.provider.Settings.canDrawOverlays(context)) }
+                                        var overlayGranted by remember { mutableStateOf(android.provider.Settings.canDrawOverlays(context)) }
                     var usageAccessGranted by remember { mutableStateOf(ScreenCaptureService.hasUsageAccess(context)) }
                     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
                         overlayGranted = android.provider.Settings.canDrawOverlays(context)
@@ -3780,6 +3793,14 @@ private fun SettingsScreen(
                     SettingSwitch("TikTok", draft.autoExportTikTok) {
                         applySetting(draft.copy(autoExportTikTok = it))
                     }
+                    HorizontalDivider()
+                    Text("System screen recording link", style = MaterialTheme.typography.titleMedium)
+                    Text("CellTracker can automatically find an OEM/system screen recording whose time overlaps a YouTube or TikTok test and attach it to that report. Start the phone's system recorder before the test and stop it after the test; no file copy is required.", style = MaterialTheme.typography.bodySmall)
+                    Text(if (videoAccessGranted) "Video access: Granted" else "Video access: Required once for automatic matching", style = MaterialTheme.typography.bodyMedium)
+                    if (!videoAccessGranted && Build.VERSION.SDK_INT >= 33) {
+                        Button(onClick = { videoAccessLauncher.launch(Manifest.permission.READ_MEDIA_VIDEO) }) { Text("GRANT VIDEO ACCESS") }
+                    }
+                    Text("When a matching system recording is found it is preferred in the report over CellTracker's own MediaProjection recording. Open or refresh Reports after the system recording has been stopped.", style = MaterialTheme.typography.bodySmall)
                     Text("Manual Export / Share remains available even when automatic export is turned off.", style = MaterialTheme.typography.bodySmall)
                 }
                 "map" -> Column(Modifier.padding(16.dp).fillMaxSize().clip(RoundedCornerShape(22.dp)).background(MaterialTheme.colorScheme.surface).border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=.12f), RoundedCornerShape(22.dp)).padding(16.dp).verticalScroll(rememberRetainedScrollState("settings.map")), verticalArrangement = Arrangement.spacedBy(6.dp)) {

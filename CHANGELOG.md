@@ -1,3 +1,11 @@
+# v1.2.48 (225)
+
+- Add automatic association of OEM/system screen recordings with YouTube and TikTok reports.
+- Matching is based on the test time window and MediaStore video duration; CellTracker-owned recordings and ordinary camera videos are excluded.
+- A matching system recording is preferred in report details/export over CellTracker MediaProjection recordings.
+- Add one-time Video access control under Settings -> Test Report for Android 13+.
+- No change to YouTube/TikTok timing logic or report review logic.
+
 # v1.2.47 (224)
 
 - Reviewed YouTube/TikTok exports now use a clearly marked `_REVIEWED` session folder while preserving the original auto-exported folder.

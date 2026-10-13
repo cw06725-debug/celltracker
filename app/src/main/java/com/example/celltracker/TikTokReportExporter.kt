@@ -19,6 +19,14 @@ object TikTokReportExporter {
         val raw=c.contentResolver.openInputStream(source)?.bufferedReader()?.use{it.readText()}
             ?: error("Unable to read TikTok report")
         val original=parse(raw)
+        val sourceAddedMs=SystemScreenRecordingLinker.mediaAddedMs(c,uriString).takeIf { it>0L } ?: System.currentTimeMillis()
+        val sourceDurationMs=original.fields["Duration ms"]?.toLongOrNull()?.coerceAtLeast(0L) ?: 0L
+        val sourceStartMs=(sourceAddedMs-sourceDurationMs).takeIf { sourceDurationMs>0L } ?: (sourceAddedMs-60_000L)
+        SystemScreenRecordingLinker.resolve(c,uriString,sourceStartMs,sourceAddedMs)?.let { linked ->
+            original.fields["Screen Recording"] = linked.name
+            original.fields["Screen Recording URI"] = linked.uri
+            original.fields["Screen Recording Start ms"] = linked.startMs.toString()
+        }
         val review=ReportReviewV1.load(c,uriString,original.events)
         val reviewedEvents=review.events.mapNotNull { r ->
             if(!r.valid) null else original.events.getOrNull(r.index)?.let { e ->

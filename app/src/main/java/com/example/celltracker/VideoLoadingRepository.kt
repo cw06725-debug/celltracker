@@ -177,8 +177,14 @@ class VideoLoadingRepository(private val context: Context) {
             ?: 0L
         val status = props.getProperty("status", "Completed")
         val recordingPath = props.getProperty("recording")?.takeIf { it.isNotBlank() }
-        val screenRecordingUri = props.getProperty("screen_recording_uri")?.takeIf { it.isNotBlank() }
-        val screenRecordingStartMs = props.getProperty("screen_recording_start_ms")?.toLongOrNull() ?: 0L
+        val storedScreenRecordingUri = props.getProperty("screen_recording_uri")?.takeIf { it.isNotBlank() }
+        val storedScreenRecordingStartMs = props.getProperty("screen_recording_start_ms")?.toLongOrNull() ?: 0L
+        // Prefer an OEM/system screen recording when one overlaps this test. This is especially
+        // useful on recent Transsion Android 17 builds where third-party MediaProjection can
+        // record a valid MP4 but other apps are rendered black.
+        val systemRecording = SystemScreenRecordingLinker.resolve(context, path, startedAt, endedAt)
+        val screenRecordingUri = systemRecording?.uri ?: storedScreenRecordingUri
+        val screenRecordingStartMs = systemRecording?.startMs ?: storedScreenRecordingStartMs
 
         return VideoLoadingDetail(
             path = path,
