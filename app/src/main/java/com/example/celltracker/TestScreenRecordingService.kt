@@ -143,17 +143,26 @@ class TestScreenRecordingService : Service() {
                 }
             }, Handler(mainLooper))
 
+            val captureMode = getSharedPreferences("capture_diag", MODE_PRIVATE)
+                .getString("mode", "CURRENT") ?: "CURRENT"
+            val vdFlags = when (captureMode) {
+                "PUBLIC" -> DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR or DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC
+                "SECURE" -> DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR or DisplayManager.VIRTUAL_DISPLAY_FLAG_SECURE
+                else -> DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR
+            }
+            diag("Capture diagnostic mode=$captureMode requestedVirtualDisplayFlags=$vdFlags")
+
             virtualDisplay = projection?.createVirtualDisplay(
                 "CellTrackerTestRecording",
                 width,
                 height,
                 metrics.densityDpi,
-                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                vdFlags,
                 recorder!!.surface,
                 null,
                 null
             ) ?: error("Unable to create screen capture display")
-            diag("VirtualDisplay created=true name=CellTrackerTestRecording ${width}x${height} dpi=${metrics.densityDpi}")
+            diag("VirtualDisplay created=true name=CellTrackerTestRecording ${width}x${height} dpi=${metrics.densityDpi} mode=$captureMode requestedFlags=$vdFlags")
 
             recorder!!.start()
             recorderStarted = true

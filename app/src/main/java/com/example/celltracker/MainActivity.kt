@@ -3801,6 +3801,37 @@ private fun SettingsScreen(
                         Button(onClick = { videoAccessLauncher.launch(Manifest.permission.READ_MEDIA_VIDEO) }) { Text("GRANT VIDEO ACCESS") }
                     }
                     Text("When a matching system recording is found it is preferred in the report over CellTracker's own MediaProjection recording. Open or refresh Reports after the system recording has been stopped.", style = MaterialTheme.typography.bodySmall)
+                    HorizontalDivider()
+                    Text("Screen capture diagnostic", style = MaterialTheme.typography.titleMedium)
+                    Text("Temporary A/B test for Android 17 black-screen investigation. Run the same short YouTube/Chrome test with each mode. Current is the normal production behavior.", style = MaterialTheme.typography.bodySmall)
+                    val captureDiagPrefs = remember { context.getSharedPreferences("capture_diag", Context.MODE_PRIVATE) }
+                    var captureDiagMode by remember { mutableStateOf(captureDiagPrefs.getString("mode", "CURRENT") ?: "CURRENT") }
+                    fun setCaptureDiagMode(mode: String) {
+                        captureDiagMode = mode
+                        captureDiagPrefs.edit().putString("mode", mode).apply()
+                    }
+                    listOf(
+                        Triple("CURRENT", "Mode A · Current", "AUTO_MIRROR (normal CellTracker recording)"),
+                        Triple("PUBLIC", "Mode B · Public", "PUBLIC + AUTO_MIRROR"),
+                        Triple("SECURE", "Mode C · Secure", "SECURE + AUTO_MIRROR; may be rejected by the firmware")
+                    ).forEach { (value, title, subtitle) ->
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(16.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                            onClick = { setCaptureDiagMode(value) }
+                        ) {
+                            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                RadioButton(selected = captureDiagMode == value, onClick = { setCaptureDiagMode(value) })
+                                Spacer(Modifier.width(8.dp))
+                                Column {
+                                    Text(title, fontWeight = FontWeight.SemiBold)
+                                    Text(subtitle, style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
+                        }
+                    }
+                    Text("Each screen-recording diagnostic TXT now records the selected mode and requested VirtualDisplay flags.", style = MaterialTheme.typography.bodySmall)
                     Text("Manual Export / Share remains available even when automatic export is turned off.", style = MaterialTheme.typography.bodySmall)
                 }
                 "map" -> Column(Modifier.padding(16.dp).fillMaxSize().clip(RoundedCornerShape(22.dp)).background(MaterialTheme.colorScheme.surface).border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=.12f), RoundedCornerShape(22.dp)).padding(16.dp).verticalScroll(rememberRetainedScrollState("settings.map")), verticalArrangement = Arrangement.spacedBy(6.dp)) {
