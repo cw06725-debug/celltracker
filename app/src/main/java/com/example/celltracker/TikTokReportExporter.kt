@@ -84,7 +84,9 @@ object TikTokReportExporter {
         val kmlName="${base}_track.kml"
         val rawName="${base}_events.csv"
         val exportCategory=if(p.isLag)"TikTok Video Lag" else "TikTok Upload"
-        val relativePath=ReportStorage.sessionRelativePath(exportCategory,started,base)
+        val reviewedExport = ReportReviewV1.modifiedAt(c, uriString) > 0L
+        val exportFolderLabel = if (reviewedExport) "${base}_REVIEWED" else base
+        val relativePath=ReportStorage.sessionRelativePath(exportCategory,started,exportFolderLabel)
         val existingHtml=ExportMediaStore.findDownload(c,htmlName,relativePath)
         val existingXlsx=ExportMediaStore.findDownload(c,xlsxName,relativePath)
         val existingCell=ExportMediaStore.findDownload(c,cellName,relativePath)

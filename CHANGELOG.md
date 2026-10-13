@@ -1,3 +1,9 @@
+# v1.2.47 (224)
+
+- Reviewed YouTube/TikTok exports now use a clearly marked `_REVIEWED` session folder while preserving the original auto-exported folder.
+- Android 14+ screen-capture requests now explicitly request the default/full display instead of allowing single-app capture. This targets black recordings seen after recent Android 17 firmware updates on LK7K and X6878 when the recording file itself is otherwise valid.
+- Existing one-MediaProjection / one-VirtualDisplay recording path is retained.
+
 # v1.2.46 (223)
 
 - Fix screen recording SecurityException on Android 14+/17 devices such as TECNO LK7K.

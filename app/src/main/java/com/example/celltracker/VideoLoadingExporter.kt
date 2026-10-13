@@ -15,7 +15,9 @@ object VideoLoadingExporter {
         val d = original
         val src = File(path)
         val base = src.nameWithoutExtension
-        val relativePath = ReportStorage.sessionRelativePath("YouTube", d.startedAt, base)
+        val reviewedExport = ReportReviewV1.modifiedAt(c, path) > 0L
+        val exportFolderLabel = if (reviewedExport) "${base}_REVIEWED" else base
+        val relativePath = ReportStorage.sessionRelativePath("YouTube", d.startedAt, exportFolderLabel)
         val htmlName = "${base}_summary.html"
         val xlsxName = "${base}_report.xlsx"
         val existingCsv = ExportMediaStore.findDownload(c, src.name, relativePath)

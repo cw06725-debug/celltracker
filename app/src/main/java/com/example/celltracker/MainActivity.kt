@@ -253,7 +253,11 @@ class MainActivity : ComponentActivity() {
                     } else if (state.settings.floatingCaptureScreenshotOnMark && !ScreenCaptureService.isReady && !capturePermissionRequestedForRecording) {
                         capturePermissionRequestedForRecording = true
                         val mgr = getSystemService(android.media.projection.MediaProjectionManager::class.java)
-                        capturePermissionLauncher.launch(mgr.createScreenCaptureIntent())
+                        capturePermissionLauncher.launch(if (Build.VERSION.SDK_INT >= 34) {
+                            mgr.createScreenCaptureIntent(android.media.projection.MediaProjectionConfig.createConfigForDefaultDisplay())
+                        } else {
+                            mgr.createScreenCaptureIntent()
+                        })
                     }
                 }
 
@@ -4858,7 +4862,11 @@ private fun VisualAiCollectorScreen(onBack: () -> Unit) {
                     } else {
                         ScreenCaptureService.collectorSaveFailures = 0
                         val mgr = context.getSystemService(android.media.projection.MediaProjectionManager::class.java)
-                        permissionLauncher.launch(mgr.createScreenCaptureIntent())
+                        permissionLauncher.launch(if (Build.VERSION.SDK_INT >= 34) {
+                            mgr.createScreenCaptureIntent(android.media.projection.MediaProjectionConfig.createConfigForDefaultDisplay())
+                        } else {
+                            mgr.createScreenCaptureIntent()
+                        })
                     }
                 }, modifier = Modifier.fillMaxWidth()) { Text("START COLLECTION") }
                 Text("First enable floating-window permission if requested. Then Android asks for screen-sharing permission and opens YouTube. A top floating bar will show Frames and T0 / PLAY / RECS / STOP.", style = MaterialTheme.typography.bodySmall)
@@ -4996,7 +5004,11 @@ private fun VideoLoadingScreen(onBack: () -> Unit, onVisualAiCollector: () -> Un
                 }else if(autoScreenRecord){
                     pendingYouTubeMeta=meta
                     val mgr=context.getSystemService(android.media.projection.MediaProjectionManager::class.java)
-                    youtubeScreenRecordLauncher.launch(mgr.createScreenCaptureIntent())
+                    youtubeScreenRecordLauncher.launch(if (Build.VERSION.SDK_INT >= 34) {
+                            mgr.createScreenCaptureIntent(android.media.projection.MediaProjectionConfig.createConfigForDefaultDisplay())
+                        } else {
+                            mgr.createScreenCaptureIntent()
+                        })
                 }else{
                     YouTubeLoadingAccessibilityService.requestOverlay()
                     context.startActivity(launch)
@@ -6109,7 +6121,11 @@ private fun ScenarioTestsV1(
                                 if(tikTokScreenRecord){
                                     pendingTikTokStart=tool
                                     val mgr=context.getSystemService(android.media.projection.MediaProjectionManager::class.java)
-                                    tikTokScreenRecordLauncher.launch(mgr.createScreenCaptureIntent())
+                                    tikTokScreenRecordLauncher.launch(if (Build.VERSION.SDK_INT >= 34) {
+                            mgr.createScreenCaptureIntent(android.media.projection.MediaProjectionConfig.createConfigForDefaultDisplay())
+                        } else {
+                            mgr.createScreenCaptureIntent()
+                        })
                                 }else{
                                     context.startActivity(launch)
                                     android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
@@ -6315,7 +6331,11 @@ private fun TikTokQuickLaunchDialogV123(
                             if (screenRecord) {
                                 pendingTool = tool
                                 val mgr = context.getSystemService(android.media.projection.MediaProjectionManager::class.java)
-                                screenRecordLauncher.launch(mgr.createScreenCaptureIntent())
+                                screenRecordLauncher.launch(if (Build.VERSION.SDK_INT >= 34) {
+                            mgr.createScreenCaptureIntent(android.media.projection.MediaProjectionConfig.createConfigForDefaultDisplay())
+                        } else {
+                            mgr.createScreenCaptureIntent()
+                        })
                             } else {
                                 context.startActivity(launch)
                                 android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
