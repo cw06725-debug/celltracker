@@ -22,6 +22,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.result.IntentSenderRequest
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedContentTransitionScope
@@ -695,7 +696,6 @@ private fun ReportsHome(
     var deleteTarget by remember { mutableStateOf<Pair<String,String>?>(null) }
     var reviewEdit by remember { mutableStateOf<ReviewEditRequestV1?>(null) }
     var reviewPlayer by remember { mutableStateOf<ReviewPlayerRequest?>(null) }
-
     fun reloadReports() {
         scope.launch {
             val loaded = withContext(Dispatchers.IO) {
@@ -711,6 +711,45 @@ private fun ReportsHome(
             val tt = withContext(Dispatchers.IO) { loadTikTokReportsV1(context) }
             tikTokLagReports = tt.first
             tikTokUploadReports = tt.second
+        }
+    }
+
+
+    data class PendingRecordingRename(val reportKey:String,val desiredName:String)
+    var pendingRecordingRename by remember { mutableStateOf<PendingRecordingRename?>(null) }
+    val recordingRenamePermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
+        val pending = pendingRecordingRename
+        pendingRecordingRename = null
+        if (result.resultCode == Activity.RESULT_OK && pending != null) {
+            val ok = runCatching { SystemScreenRecordingLinker.renameLinked(context,pending.reportKey,pending.desiredName) }.getOrDefault(false)
+            Toast.makeText(context, if(ok) "Screen recording renamed" else "Unable to rename screen recording", Toast.LENGTH_SHORT).show()
+            if(ok) reloadReports()
+        }
+    }
+
+    fun renameLinkedRecording(reportKey:String, desiredName:String) {
+        val direct = runCatching { SystemScreenRecordingLinker.renameLinked(context,reportKey,desiredName) }
+        if (direct.getOrDefault(false)) {
+            Toast.makeText(context,"Screen recording renamed",Toast.LENGTH_SHORT).show()
+            reloadReports()
+            return
+        }
+        val uri = SystemScreenRecordingLinker.linkedUri(context,reportKey)
+        if (uri == null) {
+            Toast.makeText(context,"No linked screen recording",Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (Build.VERSION.SDK_INT >= 30) {
+            runCatching {
+                pendingRecordingRename = PendingRecordingRename(reportKey,desiredName)
+                val request = android.provider.MediaStore.createWriteRequest(context.contentResolver, listOf(uri))
+                recordingRenamePermissionLauncher.launch(IntentSenderRequest.Builder(request.intentSender).build())
+            }.onFailure {
+                pendingRecordingRename = null
+                Toast.makeText(context,"System did not allow renaming this recording",Toast.LENGTH_SHORT).show()
+            }
+        } else {
+            Toast.makeText(context,"System did not allow renaming this recording",Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -1040,9 +1079,14 @@ private fun ReportsHome(
                         }
                         GlassSection("Screen Recording") {
                             val screenUri=r.screenRecordingUri
+                            val desiredRecordingName=File(r.path).nameWithoutExtension+"_Screen.mp4"
                             Field("Linked",if(screenUri.isNullOrBlank())"No" else "Yes")
-                            if(screenUri.isNullOrBlank()) Text("Older reports may not contain a screen-recording link. Run a new YouTube test with Auto Screen Recording enabled to use frame calibration.",style=MaterialTheme.typography.bodySmall)
-                            else Text("Use the Actions card below to play the full recording or calibrate an individual attempt.",style=MaterialTheme.typography.bodySmall)
+                            if(screenUri.isNullOrBlank()) Text("Older reports may not contain a screen-recording link. Run a new YouTube test with system screen recording enabled to use frame calibration.",style=MaterialTheme.typography.bodySmall)
+                            else {
+                                Text("Use the Actions card below to play the full recording or calibrate an individual attempt.",style=MaterialTheme.typography.bodySmall)
+                                OutlinedButton(onClick={renameLinkedRecording(r.path,desiredRecordingName)},modifier=Modifier.fillMaxWidth()){Text("RENAME TO TEST NAME")}
+                                Text(desiredRecordingName,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                         }
                     }
                     "WHATSAPP" -> whatsappReports.firstOrNull { it.path == path }?.let { r ->
@@ -1115,7 +1159,9 @@ private fun ReportsHome(
                         val screenUri=r.fields["Screen Recording URI"].orEmpty()
                         GlassSection("Screen Recording") {
                             Field("File",screenName.ifBlank{"--"})
-                            if(screenUri.isNotBlank()) Button(onClick={
+                            if(screenUri.isNotBlank()) {
+                                OutlinedButton(onClick={renameLinkedRecording(r.uri,r.name.substringBeforeLast('.',r.name)+"_Screen.mp4")},modifier=Modifier.fillMaxWidth()){Text("RENAME TO TEST NAME")}
+                                Button(onClick={
                                 val first=parsed?.events?.firstOrNull()
                                 val rev=reviewState?.events?.firstOrNull()
                                 if(first!=null&&rev!=null){
@@ -1127,8 +1173,8 @@ private fun ReportsHome(
                                     var off=ec-rc;if(off<0)off+=24L*60*60*1000
                                     reviewPlayer=ReviewPlayerRequest(r.uri,0,screenUri,recordedAt,(off-5000L).coerceAtLeast(0L),if(cat=="TIKTOK_LAG")"Lag #1" else "Upload #1")
                                 }else Toast.makeText(context,"No reviewable event in this report",Toast.LENGTH_SHORT).show()
-                            },modifier=Modifier.fillMaxWidth()){Text("PLAY / REVIEW RECORDING")}
-                            else Text("No recording is associated with this report.",style=MaterialTheme.typography.bodySmall)
+                                },modifier=Modifier.fillMaxWidth()){Text("PLAY / REVIEW RECORDING")}
+                            } else Text("No recording is associated with this report.",style=MaterialTheme.typography.bodySmall)
                         }
                         GlassSection("Conclusion") {
                             Text("Use Export Report to generate the full HTML summary, Excel workbook, Cell Info and Track KML. Excel correlates each T0–T1 event with the Cell Info samples recorded in that exact window.", style=MaterialTheme.typography.bodySmall)
@@ -1193,7 +1239,9 @@ private fun ReportsHome(
                         val screenUri=r.fields["Screen Recording URI"].orEmpty()
                         GlassSection("Screen Recording") {
                             Field("File",screenName.ifBlank{"--"})
-                            if(screenUri.isNotBlank()) Button(onClick={
+                            if(screenUri.isNotBlank()) {
+                                OutlinedButton(onClick={renameLinkedRecording(r.uri,r.name.substringBeforeLast('.',r.name)+"_Screen.mp4")},modifier=Modifier.fillMaxWidth()){Text("RENAME TO TEST NAME")}
+                                Button(onClick={
                                 val first=parsed?.events?.firstOrNull()
                                 val rev=reviewState?.events?.firstOrNull()
                                 if(first!=null&&rev!=null){
@@ -1205,8 +1253,8 @@ private fun ReportsHome(
                                     var off=ec-rc;if(off<0)off+=24L*60*60*1000
                                     reviewPlayer=ReviewPlayerRequest(r.uri,0,screenUri,recordedAt,(off-5000L).coerceAtLeast(0L),if(cat=="TIKTOK_LAG")"Lag #1" else "Upload #1")
                                 }else Toast.makeText(context,"No reviewable event in this report",Toast.LENGTH_SHORT).show()
-                            },modifier=Modifier.fillMaxWidth()){Text("PLAY / REVIEW RECORDING")}
-                            else Text("No recording is associated with this report.",style=MaterialTheme.typography.bodySmall)
+                                },modifier=Modifier.fillMaxWidth()){Text("PLAY / REVIEW RECORDING")}
+                            } else Text("No recording is associated with this report.",style=MaterialTheme.typography.bodySmall)
                         }
                         GlassSection("Conclusion") {
                             Text("Use Export Report for the complete correlated package. Slow attempts can then be checked against radio quality, RAT/cell transitions, location and REF behavior at the same timestamps.",style=MaterialTheme.typography.bodySmall)

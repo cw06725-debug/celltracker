@@ -1,3 +1,9 @@
+# v1.2.51
+
+- Added one-tap rename for linked OEM/system screen recordings in YouTube and TikTok report details.
+- Recording name follows the matching CellTracker test/report base name and appends `_Screen.mp4`.
+- On Android 11+, if the OEM recording is owned by the system recorder, CellTracker requests the standard MediaStore write confirmation and retries automatically.
+
 # v1.2.50 (227)
 
 - Roll back screen-capture diagnostic A/B/C modes and return to the v1.2.48 system-recording association baseline.

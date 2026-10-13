@@ -2,6 +2,7 @@ package com.example.celltracker
 
 import android.Manifest
 import android.content.ContentUris
+import android.content.ContentValues
 import android.content.Context
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -62,6 +63,28 @@ object SystemScreenRecordingLinker {
             .apply()
         return found
     }
+
+
+    fun renameLinked(context: Context, reportKey: String, desiredDisplayName: String): Boolean {
+        val match = linked(context, reportKey) ?: return false
+        val uri = Uri.parse(match.uri)
+        val safeName = desiredDisplayName
+            .replace(Regex("[\\/:*?\"<>|\r\n]+"), "_")
+            .trim()
+            .take(160)
+            .ifBlank { return false }
+        val values = ContentValues().apply { put(MediaStore.MediaColumns.DISPLAY_NAME, safeName) }
+        val changed = context.contentResolver.update(uri, values, null, null) > 0
+        if (changed) {
+            context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit()
+                .putString("$reportKey.name", safeName)
+                .apply()
+        }
+        return changed
+    }
+
+    fun linkedUri(context: Context, reportKey: String): Uri? =
+        linked(context, reportKey)?.uri?.takeIf { it.isNotBlank() }?.let(Uri::parse)
 
     fun mediaAddedMs(context: Context, uriString: String): Long {
         return runCatching {

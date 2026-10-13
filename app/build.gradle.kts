@@ -18,8 +18,8 @@ android {
         applicationId = "com.example.celltracker"
         minSdk = 29
         targetSdk = 34
-        versionCode = 227
-        versionName = "1.2.50"
+        versionCode = 228
+        versionName = "1.2.51"
     }
 
     // Stable internal-test signing for in-place APK upgrades.
