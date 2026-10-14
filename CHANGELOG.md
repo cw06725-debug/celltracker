@@ -1,3 +1,12 @@
+# CellTracker v1.2.55
+
+- Fix TikTok Auto Beta false INITIAL lag events caused by counting normal swipe/capture warm-up as loading lag. INITIAL is now emitted only after a sustained post-transition stall before dynamic playback begins.
+- Make playback lag detection more conservative with consecutive static samples and a grace period after dynamic playback is confirmed.
+- Replace Auto Beta preset chips with manual numeric inputs.
+- Support two Auto Beta test-length modes: stop by video count or stop by total duration in minutes.
+- Add manual seconds-per-video input.
+- Keep static/image posts excluded from lag statistics.
+
 # v1.2.54
 
 - Fixed TikTok Video Lag manual state: after NEXT VIDEO, LAG can start a later playback-stall event even when the initial LOADED button was never used.

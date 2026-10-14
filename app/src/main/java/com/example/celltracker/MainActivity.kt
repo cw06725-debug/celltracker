@@ -5917,8 +5917,10 @@ private fun ScenarioTestsV1(
     var tikTokTool by remember { mutableStateOf<String?>(null) }
     var tikTokAutoSwipe by remember { mutableStateOf(true) }
     var tikTokLagMode by rememberSaveable { mutableStateOf("SEMI") }
-    var tikTokAutoVideoCount by rememberSaveable { mutableIntStateOf(10) }
-    var tikTokAutoWatchSeconds by rememberSaveable { mutableIntStateOf(15) }
+    var tikTokAutoRunMode by rememberSaveable { mutableStateOf("COUNT") }
+    var tikTokAutoVideoCountText by rememberSaveable { mutableStateOf("10") }
+    var tikTokAutoDurationMinutesText by rememberSaveable { mutableStateOf("10") }
+    var tikTokAutoWatchSecondsText by rememberSaveable { mutableStateOf("15") }
     var tikTokTaskName by remember { mutableStateOf("") }
     var tikTokOperator by remember { mutableStateOf("") }
     var tikTokOperatorHint by remember { mutableStateOf("Detecting current data SIM…") }
@@ -5945,8 +5947,10 @@ private fun ScenarioTestsV1(
                         tool, tikTokLagMode != "MANUAL",
                         tikTokTaskName.trim().ifBlank { "Session" }, tikTokOperator.trim(), tikTokUploadType,
                         autoDetectLag = tool=="LAG" && tikTokLagMode=="AUTO_BETA",
-                        autoVideoCount = tikTokAutoVideoCount,
-                        autoWatchSeconds = tikTokAutoWatchSeconds
+                        autoVideoCount = tikTokAutoVideoCountText.toIntOrNull()?.coerceIn(1,500) ?: 10,
+                        autoWatchSeconds = tikTokAutoWatchSecondsText.toIntOrNull()?.coerceIn(3,120) ?: 15,
+                        autoRunMode = tikTokAutoRunMode,
+                        autoDurationMinutes = tikTokAutoDurationMinutesText.toIntOrNull()?.coerceIn(1,180) ?: 10
                     )
                 },650)
             }
@@ -6184,12 +6188,32 @@ private fun ScenarioTestsV1(
                         }
                         if(tikTokLagMode=="AUTO_BETA"){
                             Text("Static/image candidates are classified first and excluded instead of being counted as lag.", style=MaterialTheme.typography.bodySmall)
-                            Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){
-                                listOf(10,20,30).forEach{n->FilterChip(selected=tikTokAutoVideoCount==n,onClick={tikTokAutoVideoCount=n},label={Text("$n videos")})}
+                            Text("Test length", style = MaterialTheme.typography.titleSmall)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                RadioButton(selected=tikTokAutoRunMode=="COUNT", onClick={tikTokAutoRunMode="COUNT"})
+                                Text("By videos", modifier=Modifier.width(92.dp))
+                                OutlinedTextField(
+                                    value=tikTokAutoVideoCountText,
+                                    onValueChange={tikTokAutoVideoCountText=it.filter { ch -> ch.isDigit() }.take(3)},
+                                    label={Text("Videos")}, singleLine=true, modifier=Modifier.weight(1f)
+                                )
                             }
-                            Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){
-                                listOf(10,15,20).forEach{n->FilterChip(selected=tikTokAutoWatchSeconds==n,onClick={tikTokAutoWatchSeconds=n},label={Text("${n}s")})}
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                RadioButton(selected=tikTokAutoRunMode=="DURATION", onClick={tikTokAutoRunMode="DURATION"})
+                                Text("By duration", modifier=Modifier.width(92.dp))
+                                OutlinedTextField(
+                                    value=tikTokAutoDurationMinutesText,
+                                    onValueChange={tikTokAutoDurationMinutesText=it.filter { ch -> ch.isDigit() }.take(3)},
+                                    label={Text("Minutes")}, singleLine=true, modifier=Modifier.weight(1f)
+                                )
                             }
+                            OutlinedTextField(
+                                value=tikTokAutoWatchSecondsText,
+                                onValueChange={tikTokAutoWatchSecondsText=it.filter { ch -> ch.isDigit() }.take(3)},
+                                label={Text("Seconds per video")},
+                                supportingText={Text("How long Auto Beta observes each video before swiping")},
+                                singleLine=true, modifier=Modifier.fillMaxWidth()
+                            )
                         } else {
                             Text(if (tikTokLagMode=="SEMI")
                                 "NEXT VIDEO records T0 and auto swipes. LAG can be tapped directly even if initial LOADED was not used."
@@ -6259,8 +6283,10 @@ private fun ScenarioTestsV1(
                                             tool, tikTokLagMode != "MANUAL",
                                             tikTokTaskName.trim().ifBlank { "Session" }, tikTokOperator.trim(), tikTokUploadType,
                                             autoDetectLag = tool=="LAG" && tikTokLagMode=="AUTO_BETA",
-                                            autoVideoCount = tikTokAutoVideoCount,
-                                            autoWatchSeconds = tikTokAutoWatchSeconds
+                                            autoVideoCount = tikTokAutoVideoCountText.toIntOrNull()?.coerceIn(1,500) ?: 10,
+                                            autoWatchSeconds = tikTokAutoWatchSecondsText.toIntOrNull()?.coerceIn(3,120) ?: 15,
+                                            autoRunMode = tikTokAutoRunMode,
+                                            autoDurationMinutes = tikTokAutoDurationMinutesText.toIntOrNull()?.coerceIn(1,180) ?: 10
                                         )
                                     },650)
                                 }
@@ -6316,8 +6342,10 @@ private fun TikTokQuickLaunchDialogV123(
     var operatorHint by remember(tool) { mutableStateOf("Detecting current data SIM…") }
     var autoSwipe by rememberSaveable(tool) { mutableStateOf(true) }
     var lagMode by rememberSaveable(tool) { mutableStateOf("SEMI") }
-    var autoVideoCount by rememberSaveable(tool) { mutableIntStateOf(10) }
-    var autoWatchSeconds by rememberSaveable(tool) { mutableIntStateOf(15) }
+    var autoRunMode by rememberSaveable(tool) { mutableStateOf("COUNT") }
+    var autoVideoCountText by rememberSaveable(tool) { mutableStateOf("10") }
+    var autoDurationMinutesText by rememberSaveable(tool) { mutableStateOf("10") }
+    var autoWatchSecondsText by rememberSaveable(tool) { mutableStateOf("15") }
     var uploadType by rememberSaveable(tool) { mutableStateOf("Video") }
     var screenRecord by rememberSaveable(tool) { mutableStateOf(true) }
     var pendingTool by remember { mutableStateOf<String?>(null) }
@@ -6342,8 +6370,10 @@ private fun TikTokQuickLaunchDialogV123(
                         pending, lagMode != "MANUAL",
                         taskName.trim().ifBlank { "Session" }, operator.trim(), uploadType,
                         autoDetectLag = pending=="LAG" && lagMode=="AUTO_BETA",
-                        autoVideoCount = autoVideoCount,
-                        autoWatchSeconds = autoWatchSeconds
+                        autoVideoCount = autoVideoCountText.toIntOrNull()?.coerceIn(1,500) ?: 10,
+                        autoWatchSeconds = autoWatchSecondsText.toIntOrNull()?.coerceIn(3,120) ?: 15,
+                        autoRunMode = autoRunMode,
+                        autoDurationMinutes = autoDurationMinutesText.toIntOrNull()?.coerceIn(1,180) ?: 10
                     )
                 }, 650)
             }
@@ -6424,12 +6454,32 @@ private fun TikTokQuickLaunchDialogV123(
                     }
                     if(lagMode=="AUTO_BETA"){
                         Text("Static/image candidates are classified first and excluded instead of being counted as lag.",style=MaterialTheme.typography.bodySmall)
-                        Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){
-                            listOf(10,20,30).forEach{n->FilterChip(selected=autoVideoCount==n,onClick={autoVideoCount=n},label={Text("$n videos")})}
+                        Text("Test length", style = MaterialTheme.typography.titleSmall)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(selected=autoRunMode=="COUNT", onClick={autoRunMode="COUNT"})
+                            Text("By videos", modifier=Modifier.width(92.dp))
+                            OutlinedTextField(
+                                value=autoVideoCountText,
+                                onValueChange={autoVideoCountText=it.filter { ch -> ch.isDigit() }.take(3)},
+                                label={Text("Videos")}, singleLine=true, modifier=Modifier.weight(1f)
+                            )
                         }
-                        Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){
-                            listOf(10,15,20).forEach{n->FilterChip(selected=autoWatchSeconds==n,onClick={autoWatchSeconds=n},label={Text("${n}s")})}
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(selected=autoRunMode=="DURATION", onClick={autoRunMode="DURATION"})
+                            Text("By duration", modifier=Modifier.width(92.dp))
+                            OutlinedTextField(
+                                value=autoDurationMinutesText,
+                                onValueChange={autoDurationMinutesText=it.filter { ch -> ch.isDigit() }.take(3)},
+                                label={Text("Minutes")}, singleLine=true, modifier=Modifier.weight(1f)
+                            )
                         }
+                        OutlinedTextField(
+                            value=autoWatchSecondsText,
+                            onValueChange={autoWatchSecondsText=it.filter { ch -> ch.isDigit() }.take(3)},
+                            label={Text("Seconds per video")},
+                            supportingText={Text("How long Auto Beta observes each video before swiping")},
+                            singleLine=true, modifier=Modifier.fillMaxWidth()
+                        )
                     } else {
                         Text(if (lagMode=="SEMI") "NEXT VIDEO records T0 and auto swipes. LAG can be tapped directly even if initial LOADED was not used." else "Swipe manually after NEXT VIDEO. LAG can be tapped directly even if initial LOADED was not used.")
                     }
@@ -6493,8 +6543,10 @@ private fun TikTokQuickLaunchDialogV123(
                                         tool, lagMode != "MANUAL",
                                         taskName.trim().ifBlank { "Session" }, operator.trim(), uploadType,
                                         autoDetectLag = tool=="LAG" && lagMode=="AUTO_BETA",
-                                        autoVideoCount = autoVideoCount,
-                                        autoWatchSeconds = autoWatchSeconds
+                                        autoVideoCount = autoVideoCountText.toIntOrNull()?.coerceIn(1,500) ?: 10,
+                                        autoWatchSeconds = autoWatchSecondsText.toIntOrNull()?.coerceIn(3,120) ?: 15,
+                                        autoRunMode = autoRunMode,
+                                        autoDurationMinutes = autoDurationMinutesText.toIntOrNull()?.coerceIn(1,180) ?: 10
                                     )
                                 }, 650)
                                 onDismiss()

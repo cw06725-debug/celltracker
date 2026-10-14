@@ -60,14 +60,16 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             uploadType: String,
             autoDetectLag: Boolean = false,
             autoVideoCount: Int = 10,
-            autoWatchSeconds: Int = 15
+            autoWatchSeconds: Int = 15,
+            autoRunMode: String = "COUNT",
+            autoDurationMinutes: Int = 10
         ) {
             val instance=activeInstance ?: return
             instance.scope.launch {
                 runCatching {
                     instance.dismissOverlay()
                     instance.dismissWhatsAppOverlay()
-                    instance.showTikTokOverlay(mode, autoSwipe, taskName, operator, uploadType, autoDetectLag, autoVideoCount, autoWatchSeconds)
+                    instance.showTikTokOverlay(mode, autoSwipe, taskName, operator, uploadType, autoDetectLag, autoVideoCount, autoWatchSeconds, autoRunMode, autoDurationMinutes)
                 }.onFailure { e ->
                     android.util.Log.e("CellTrackerTikTok", "Unable to open TikTok tool", e)
                     instance.dismissTikTokOverlay()
@@ -2183,7 +2185,9 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         configuredUploadType: String,
         autoDetectLag: Boolean = false,
         autoVideoCount: Int = 10,
-        autoWatchSeconds: Int = 15
+        autoWatchSeconds: Int = 15,
+        autoRunMode: String = "COUNT",
+        autoDurationMinutes: Int = 10
     ) {
         dismissTikTokOverlay()
         val wm = getSystemService(WindowManager::class.java)
@@ -2346,6 +2350,10 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                     appendLine("Videos,$video")
                     appendLine("Auto Detect,${if(autoDetectLag)"Auto Beta" else "Off"}")
                     if(autoDetectLag){
+                        appendLine("Auto Run Mode,${if(autoRunMode=="DURATION")"Duration" else "Video Count"}")
+                        appendLine("Auto Video Limit,${autoVideoCount.coerceAtLeast(1)}")
+                        appendLine("Auto Duration Minutes,${autoDurationMinutes.coerceAtLeast(1)}")
+                        appendLine("Watch Seconds Per Video,${autoWatchSeconds.coerceAtLeast(1)}")
                         appendLine("Dynamic Videos,$dynamicVideos")
                         appendLine("Static/Image Posts,$staticOrImagePosts")
                     }
@@ -2397,32 +2405,61 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             autoJob?.cancel()
             autoJob = scope.launch {
                 val sampleMs = 500L
-                val freezeConfirmMs = 1200L
                 val dynamicMeanThreshold = 4.5
                 val dynamicRatioThreshold = 0.07
-                val count = autoVideoCount.coerceIn(1, 50)
-                val watchMs = autoWatchSeconds.coerceIn(5, 60) * 1000L
+                // Do not treat the normal swipe/transition/capture warm-up as INITIAL lag.
+                // INITIAL is only emitted when a dynamic video stays visually stalled for a
+                // sustained period AFTER the transition settle window, then starts moving.
+                val transitionSettleMs = 900L
+                val initialLagConfirmMs = 2500L
+                val playbackGraceAfterDynamicMs = 1500L
+                val countLimit = autoVideoCount.coerceIn(1, 500)
+                val watchMs = autoWatchSeconds.coerceIn(3, 120) * 1000L
+                val durationLimitMs = autoDurationMinutes.coerceIn(1, 180) * 60_000L
+                val durationMode = autoRunMode.equals("DURATION", true)
+                val autoStartedElapsed = SystemClock.elapsedRealtime()
+                var completedVideos = 0
 
-                repeat(count) { idx ->
-                    if (!running) return@launch
+                fun hasMore(): Boolean = running && if (durationMode) {
+                    SystemClock.elapsedRealtime() - autoStartedElapsed < durationLimitMs
+                } else {
+                    completedVideos < countLimit
+                }
+
+                while (hasMore()) {
                     video++
+                    completedVideos++
                     clearPending()
-                    val swipeT0Wall=System.currentTimeMillis()
-                    val swipeT0Elapsed=SystemClock.elapsedRealtime()
-                    status.text="AUTO BETA · Video #$video/$count · swiping…"
+                    val swipeT0Wall = System.currentTimeMillis()
+                    val swipeT0Elapsed = SystemClock.elapsedRealtime()
+                    val targetText = if (durationMode) {
+                        val elapsedMin = (SystemClock.elapsedRealtime() - autoStartedElapsed) / 60_000.0
+                        "${String.format(java.util.Locale.US, "%.1f", elapsedMin)}/${autoDurationMinutes} min"
+                    } else "$completedVideos/$countLimit"
+                    status.text = "AUTO BETA · Video #$video · $targetText · swiping…"
                     swipe()
-                    delay(900)
+                    delay(transitionSettleMs)
 
+                    val analysisStartElapsed = SystemClock.elapsedRealtime()
                     var previous = capturePlayerSignature()
                     var firstDynamicWall = 0L
                     var firstDynamicElapsed = 0L
-                    var recentDynamic = ArrayDeque<Boolean>()
+                    var dynamicCandidateWall = 0L
+                    var dynamicCandidateElapsed = 0L
+                    var dynamicStreak = 0
+                    var staticStreak = 0
                     var freezeStartWall = 0L
                     var freezeStartElapsed = 0L
                     var confirmedDynamic = false
+                    var confirmedDynamicElapsed = 0L
                     val started = SystemClock.elapsedRealtime()
+                    val remainingTotal = if (durationMode) {
+                        (durationLimitMs - (started - autoStartedElapsed)).coerceAtLeast(0L)
+                    } else watchMs
+                    val thisWatchMs = minOf(watchMs, remainingTotal.takeIf { durationMode } ?: watchMs)
+                    if (thisWatchMs < 1000L) break
 
-                    while (running && SystemClock.elapsedRealtime() - started < watchMs) {
+                    while (running && SystemClock.elapsedRealtime() - started < thisWatchMs) {
                         delay(sampleMs)
                         val current = capturePlayerSignature()
                         if (previous == null || current == null) {
@@ -2433,53 +2470,66 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                         val dynamic = motion.first >= dynamicMeanThreshold || motion.second >= dynamicRatioThreshold
                         previous = current
 
-                        recentDynamic.addLast(dynamic)
-                        while (recentDynamic.size > 8) recentDynamic.removeFirst()
-                        val dynamicRecentCount = recentDynamic.count { it }
-
-                        if (dynamic && firstDynamicWall == 0L) {
-                            firstDynamicWall = System.currentTimeMillis()
-                            firstDynamicElapsed = SystemClock.elapsedRealtime()
-                        }
-                        if (!confirmedDynamic && dynamicRecentCount >= 3) {
-                            confirmedDynamic = true
-                            dynamicVideos++
-                            if (firstDynamicWall > 0L) {
-                                val d=(firstDynamicElapsed-swipeT0Elapsed).coerceAtLeast(0L)
-                                if (d >= 700L) {
-                                    addLagEvent("INITIAL", swipeT0Wall, swipeT0Elapsed, firstDynamicWall, firstDynamicElapsed)
-                                }
+                        if (dynamic) {
+                            staticStreak = 0
+                            if (dynamicStreak == 0) {
+                                dynamicCandidateWall = System.currentTimeMillis()
+                                dynamicCandidateElapsed = SystemClock.elapsedRealtime()
                             }
-                            status.text="AUTO BETA · Video #$video · dynamic · monitoring lag"
+                            dynamicStreak++
+                        } else {
+                            dynamicStreak = 0
+                            staticStreak++
                         }
 
-                        if (confirmedDynamic) {
-                            if (!dynamic && dynamicRecentCount >= 3 && freezeStartElapsed == 0L) {
-                                freezeStartWall=System.currentTimeMillis()
-                                freezeStartElapsed=SystemClock.elapsedRealtime()
+                        if (!confirmedDynamic && dynamicStreak >= 3) {
+                            confirmedDynamic = true
+                            confirmedDynamicElapsed = SystemClock.elapsedRealtime()
+                            dynamicVideos++
+                            firstDynamicWall = dynamicCandidateWall
+                            firstDynamicElapsed = dynamicCandidateElapsed
+                            val postSettleStall = (firstDynamicElapsed - analysisStartElapsed).coerceAtLeast(0L)
+                            if (postSettleStall >= initialLagConfirmMs) {
+                                addLagEvent("INITIAL", swipeT0Wall, swipeT0Elapsed, firstDynamicWall, firstDynamicElapsed)
+                                status.text = "AUTO BETA · Initial loading ${String.format(java.util.Locale.US,"%.2f",(firstDynamicElapsed-swipeT0Elapsed)/1000.0)} s · #$lagCount"
+                            } else {
+                                status.text = "AUTO BETA · Video #$video · dynamic · monitoring lag"
+                            }
+                        }
+
+                        if (confirmedDynamic && SystemClock.elapsedRealtime() - confirmedDynamicElapsed >= playbackGraceAfterDynamicMs) {
+                            // Require consecutive static samples. This avoids a single low-motion
+                            // frame or a normal scene cut starting a false PLAYBACK lag.
+                            if (!dynamic && staticStreak == 3 && freezeStartElapsed == 0L) {
+                                val nowElapsed = SystemClock.elapsedRealtime()
+                                val back = (staticStreak - 1) * sampleMs
+                                freezeStartElapsed = (nowElapsed - back).coerceAtLeast(confirmedDynamicElapsed)
+                                freezeStartWall = System.currentTimeMillis() - back
                             } else if (dynamic && freezeStartElapsed > 0L) {
-                                val endWall=System.currentTimeMillis()
-                                val endElapsed=SystemClock.elapsedRealtime()
-                                val freezeMs=endElapsed-freezeStartElapsed
-                                if (freezeMs >= freezeConfirmMs) {
+                                val endWall = System.currentTimeMillis()
+                                val endElapsed = SystemClock.elapsedRealtime()
+                                val freezeMs = endElapsed - freezeStartElapsed
+                                // Three consecutive static samples already imply >= ~1 s freeze.
+                                if (freezeMs >= 1000L) {
                                     addLagEvent("PLAYBACK", freezeStartWall, freezeStartElapsed, endWall, endElapsed)
-                                    status.text="AUTO BETA · Lag ${String.format(java.util.Locale.US,"%.2f",freezeMs/1000.0)} s · #$lagCount"
+                                    status.text = "AUTO BETA · Lag ${String.format(java.util.Locale.US,"%.2f",freezeMs/1000.0)} s · #$lagCount"
                                 }
-                                freezeStartWall=0L
-                                freezeStartElapsed=0L
+                                freezeStartWall = 0L
+                                freezeStartElapsed = 0L
                             }
                         }
                     }
 
                     if (!confirmedDynamic) {
                         staticOrImagePosts++
-                        status.text="AUTO BETA · Video #$video · static/image candidate · excluded"
+                        status.text = "AUTO BETA · Video #$video · static/image candidate · excluded"
                     }
                     clearPending()
-                    if (idx < count-1 && running) delay(500)
+                    if (hasMore()) delay(500)
                 }
                 if (running) {
-                    status.text="AUTO BETA complete · $video videos · $lagCount lag events · tap FINISH"
+                    val completedText = if (durationMode) "${autoDurationMinutes} min · $completedVideos videos" else "$completedVideos videos"
+                    status.text = "AUTO BETA complete · $completedText · $lagCount lag events · tap FINISH"
                 }
             }
         }
@@ -2542,7 +2592,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                     b3.visibility=if(isLag && autoDetectLag) View.GONE else View.VISIBLE
                     stop.visibility=View.VISIBLE
                     status.text=if(isLag) {
-                        if(autoDetectLag) "AUTO BETA · $autoVideoCount videos · ${autoWatchSeconds}s/video · starting…"
+                        if(autoDetectLag) "AUTO BETA · ${if(autoRunMode.equals("DURATION",true)) "${autoDurationMinutes} min" else "${autoVideoCount} videos"} · ${autoWatchSeconds}s/video · starting…"
                         else "Running · ${if(autoSwipe)"NEXT VIDEO = T0 + auto swipe" else "NEXT VIDEO = T0, then swipe manually"}"
                     } else "Running · POST = T0"
                     if(isLag && autoDetectLag) startAutoBeta()
