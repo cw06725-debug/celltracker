@@ -1,3 +1,10 @@
+# v1.2.53 (versionCode 230)
+
+- Review validity is now the single source of truth for in-app Summary statistics.
+- Mark INVALID removes that event from Average, Fastest, Slowest, Median, P90/P95 and reviewed success/count metrics immediately.
+- TikTok Upload export summary now recalculates Average/Fastest/Slowest from valid reviewed uploads only.
+- TikTok Lag/Upload review mapping now follows each review event index explicitly to avoid stale/positional statistics.
+
 # v1.2.51
 
 - Added one-tap rename for linked OEM/system screen recordings in YouTube and TikTok report details.

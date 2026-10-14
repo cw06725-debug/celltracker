@@ -60,7 +60,7 @@ object TikTokReportExporter {
 
         val summary=mutableListOf<List<String>>()
         summary+=listOf("CellTracker ${if(p.isLag)"TikTok Video Lag" else "TikTok Upload"} Report")
-        listOf("Task","Operator","Swipe Mode","Upload Type","Start","End","Duration ms","Videos","Lag Count","Total Lag ms","Average Lag ms","Completed","Recording Path","Screen Recording","Screen Recording URI").forEach{
+        listOf("Task","Operator","Swipe Mode","Upload Type","Start","End","Duration ms","Videos","Lag Count","Total Lag ms","Average Lag ms","Completed","Average Upload ms","Fastest Upload ms","Slowest Upload ms","Recording Path","Screen Recording","Screen Recording URI").forEach{
             p.fields[it]?.let{v->summary+=listOf(it,v)}
         }
         summary+=listOf("Analysis",analysis(p,cellHeader,cellData))
@@ -174,6 +174,11 @@ object TikTokReportExporter {
             return Parsed(f,src.header,rows,events,true)
         }
         f["Completed"]=events.size.toString()
+        val ds=events.mapNotNull{it.durationMs}
+        val avg=if(ds.isEmpty()) null else ds.average()
+        f["Average Upload ms"]=avg?.let{String.format(Locale.US,"%.0f",it)} ?: ""
+        f["Fastest Upload ms"]=ds.minOrNull()?.toString().orEmpty()
+        f["Slowest Upload ms"]=ds.maxOrNull()?.toString().orEmpty()
         val rows=events.mapIndexed{i,e->listOf((i+1).toString(),e.item,e.t0,e.t1,e.durationMs?.toString().orEmpty(),"Success")}
         return Parsed(f,src.header,rows,events,false)
     }

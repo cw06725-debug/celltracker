@@ -1106,10 +1106,15 @@ private fun ReportsHome(
                             context.contentResolver.openInputStream(Uri.parse(r.uri))?.bufferedReader()?.use { TikTokReportExporter.parse(it.readText()) }
                         }.getOrNull()
                         val reviewState=parsed?.let{remember(r.uri,reviewRevision){ReportReviewV1.load(context,r.uri,it.events)}}
-                        val reviewedEvents=parsed?.events?.mapIndexedNotNull { i,e ->
-                            val rev=reviewState?.events?.getOrNull(i) ?: ReviewedEventV1(i,true,e.t0,e.t1)
-                            if(!rev.valid) null else e.copy(t0=rev.t0,t1=rev.t1,durationMs=ReportReviewV1.durationMs(rev.t0,rev.t1))
-                        }.orEmpty()
+                        val reviewedEvents=if(parsed!=null && reviewState!=null) {
+                            reviewState.events.mapNotNull { rev ->
+                                if(!rev.valid) null else parsed.events.getOrNull(rev.index)?.copy(
+                                    t0=rev.t0,
+                                    t1=rev.t1,
+                                    durationMs=ReportReviewV1.durationMs(rev.t0,rev.t1)
+                                )
+                            }
+                        } else emptyList()
                         val durations=reviewedEvents.mapNotNull{it.durationMs}
                         val summaryFiles=reportFilesInRelativePath(context,r.relativePath)
                             .filterNot { it.endsWith(".mp4",true) }
@@ -1194,10 +1199,15 @@ private fun ReportsHome(
                             context.contentResolver.openInputStream(Uri.parse(r.uri))?.bufferedReader()?.use { TikTokReportExporter.parse(it.readText()) }
                         }.getOrNull()
                         val reviewState=parsed?.let{remember(r.uri,reviewRevision){ReportReviewV1.load(context,r.uri,it.events)}}
-                        val reviewedEvents=parsed?.events?.mapIndexedNotNull { i,e ->
-                            val rev=reviewState?.events?.getOrNull(i) ?: ReviewedEventV1(i,true,e.t0,e.t1)
-                            if(!rev.valid) null else e.copy(t0=rev.t0,t1=rev.t1,durationMs=ReportReviewV1.durationMs(rev.t0,rev.t1))
-                        }.orEmpty()
+                        val reviewedEvents=if(parsed!=null && reviewState!=null) {
+                            reviewState.events.mapNotNull { rev ->
+                                if(!rev.valid) null else parsed.events.getOrNull(rev.index)?.copy(
+                                    t0=rev.t0,
+                                    t1=rev.t1,
+                                    durationMs=ReportReviewV1.durationMs(rev.t0,rev.t1)
+                                )
+                            }
+                        } else emptyList()
                         val durations=reviewedEvents.mapNotNull{it.durationMs}
                         val summaryFiles=reportFilesInRelativePath(context,r.relativePath)
                             .filterNot { it.endsWith(".mp4",true) }
@@ -5103,12 +5113,11 @@ private fun VideoLoadingScreen(onBack: () -> Unit, onVisualAiCollector: () -> Un
     }
 
     preview?.let { d ->
-        val values = d.samples.filter { it.result == "PASS" }.mapNotNull { it.delayMs }.sorted()
-        fun pct(p: Double): Long? = if (values.isEmpty()) null else values[((values.size - 1) * p).toInt().coerceIn(0, values.lastIndex)]
         var detailTab by remember(d.path) { mutableIntStateOf(0) }
         val detailTabs = listOf("Summary", "Attempts", "Map")
         val reviewState = remember(d.path, reviewRevision) { ReportReviewV1.loadYouTube(context, d.path, d.samples) }
-        val reviewedDurations = reviewState.events.filter { it.valid }.mapNotNull { ReportReviewV1.durationMs(it.t0, it.t1) }
+        val reviewedDurations = reviewState.events.filter { it.valid }.mapNotNull { ReportReviewV1.durationMs(it.t0, it.t1) }.sorted()
+        fun reviewedPct(p: Double): Long? = if (reviewedDurations.isEmpty()) null else reviewedDurations[((reviewedDurations.size - 1) * p).toInt().coerceIn(0, reviewedDurations.lastIndex)]
         Dialog(onDismissRequest = { preview = null }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
             Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                 Scaffold(
@@ -5145,11 +5154,13 @@ private fun VideoLoadingScreen(onBack: () -> Unit, onVisualAiCollector: () -> Un
                                         GlassSection("YouTube Summary") {
                                             Field("Status", d.status)
                                             Field("Attempts", d.samples.size.toString())
-                                            Field("Success", d.samples.count { it.result == "PASS" }.toString())
+                                            Field("Success", reviewedDurations.size.toString())
                                             Field("Reviewed Valid", reviewState.events.count { it.valid }.toString())
                                             Field("Average", reviewedDurations.takeIf { it.isNotEmpty() }?.average()?.let { String.format(Locale.US, "%.0f ms", it) } ?: "--")
-                                            Field("Median", pct(.5)?.let { "$it ms" } ?: "--")
-                                            Field("P90 / P95", "${pct(.9)?.let { "$it ms" } ?: "--"} / ${pct(.95)?.let { "$it ms" } ?: "--"}")
+                                            Field("Fastest", reviewedDurations.minOrNull()?.let { "$it ms" } ?: "--")
+                                            Field("Slowest", reviewedDurations.maxOrNull()?.let { "$it ms" } ?: "--")
+                                            Field("Median", reviewedPct(.5)?.let { "$it ms" } ?: "--")
+                                            Field("P90 / P95", "${reviewedPct(.9)?.let { "$it ms" } ?: "--"} / ${reviewedPct(.95)?.let { "$it ms" } ?: "--"}")
                                             Field("Review Status", if (reviewState.confirmed) "Confirmed" else "Draft / Not Confirmed")
                                         }
                                     }
