@@ -1,3 +1,11 @@
+# v1.2.56 (versionCode 233)
+
+- TikTok Auto Beta: compact dedicated overlay to reduce visual interference.
+- TikTok Auto Beta: overlay area is masked out of screenshot motion analysis.
+- TikTok Auto Beta: central TikTok content ROI excludes top tabs, right action rail and bottom captions/navigation.
+- TikTok Auto Beta: per-video adaptive motion baseline and stricter relative freeze/recovery detection to reduce false lag events.
+- TikTok Auto Beta: compact debug status shows current motion and learned baseline during tuning.
+
 # CellTracker v1.2.55
 
 - Fix TikTok Auto Beta false INITIAL lag events caused by counting normal swipe/capture warm-up as loading lag. INITIAL is now emitted only after a sustained post-transition stall before dynamic playback begins.

@@ -565,6 +565,93 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
     }
 
     /**
+     * TikTok Auto Beta uses a dedicated ROI instead of the broad YouTube player ROI.
+     * It intentionally avoids the top tabs, right-side action rail and bottom captions/navigation.
+     * Any sample point covered by the CellTracker overlay is marked -1 and ignored by motion math.
+     */
+    private suspend fun captureTikTokSignature(overlayRect: Rect?): IntArray? =
+        suspendCancellableCoroutine { cont ->
+            if (Build.VERSION.SDK_INT < 30) {
+                cont.resume(null)
+                return@suspendCancellableCoroutine
+            }
+            runCatching {
+                takeScreenshot(
+                    Display.DEFAULT_DISPLAY,
+                    visualExecutor,
+                    object : AccessibilityService.TakeScreenshotCallback {
+                        override fun onSuccess(screenshot: AccessibilityService.ScreenshotResult) {
+                            val buffer = screenshot.hardwareBuffer
+                            try {
+                                val hardware = Bitmap.wrapHardwareBuffer(buffer, screenshot.colorSpace)
+                                val bitmap = hardware?.copy(Bitmap.Config.ARGB_8888, false)
+                                val signature = bitmap?.let { tikTokPlayerSignature(it, overlayRect) }
+                                bitmap?.recycle()
+                                if (cont.isActive) cont.resume(signature)
+                            } catch (_: Throwable) {
+                                if (cont.isActive) cont.resume(null)
+                            } finally {
+                                runCatching { buffer.close() }
+                            }
+                        }
+
+                        override fun onFailure(errorCode: Int) {
+                            autoCaptureFailureCount++
+                            autoLastCaptureError = errorCode
+                            if (cont.isActive) cont.resume(null)
+                        }
+                    }
+                )
+            }.onFailure {
+                if (cont.isActive) cont.resume(null)
+            }
+        }
+
+    private fun tikTokPlayerSignature(bitmap: Bitmap, overlayRect: Rect?): IntArray {
+        // Central content ROI: exclude TikTok tabs/status area, right action buttons and bottom text/nav.
+        val left = (bitmap.width * 0.08f).toInt()
+        val right = (bitmap.width * 0.80f).toInt().coerceAtLeast(left + 1)
+        val top = (bitmap.height * 0.18f).toInt()
+        val bottom = (bitmap.height * 0.78f).toInt().coerceAtLeast(top + 1)
+        val cols = 28
+        val rows = 18
+        val out = IntArray(cols * rows)
+        var n = 0
+        for (r in 0 until rows) {
+            val yy = top + ((bottom - top - 1) * (r + 1)) / (rows + 1)
+            for (c in 0 until cols) {
+                val xx = left + ((right - left - 1) * (c + 1)) / (cols + 1)
+                if (overlayRect != null && overlayRect.contains(xx, yy)) {
+                    out[n++] = -1
+                    continue
+                }
+                val color = bitmap.getPixel(xx.coerceIn(0, bitmap.width - 1), yy.coerceIn(0, bitmap.height - 1))
+                val red = (color shr 16) and 0xff
+                val green = (color shr 8) and 0xff
+                val blue = color and 0xff
+                out[n++] = (red * 30 + green * 59 + blue * 11) / 100
+            }
+        }
+        return out
+    }
+
+    private fun tikTokVisualMotion(a: IntArray, b: IntArray): Pair<Double, Double> {
+        if (a.size != b.size || a.isEmpty()) return 0.0 to 0.0
+        var total = 0L
+        var changed = 0
+        var valid = 0
+        for (i in a.indices) {
+            if (a[i] < 0 || b[i] < 0) continue
+            val diff = kotlin.math.abs(a[i] - b[i])
+            total += diff
+            valid++
+            if (diff >= 18) changed++
+        }
+        if (valid == 0) return 0.0 to 0.0
+        return (total.toDouble() / valid) to (changed.toDouble() / valid)
+    }
+
+    /**
      * Read only the clicked node and its immediate family. The previous whole-page walk could
      * freeze the Accessibility/UI thread when YouTube emitted a burst of events.
      */
@@ -2194,8 +2281,8 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         val isLag = mode == "LAG"
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(18, 12, 18, 12)
-            setBackgroundColor(0xE6202124.toInt())
+            setPadding(if(autoDetectLag) 10 else 18, if(autoDetectLag) 8 else 12, if(autoDetectLag) 10 else 18, if(autoDetectLag) 8 else 12)
+            setBackgroundColor(if(autoDetectLag) 0xD918191C.toInt() else 0xE6202124.toInt())
         }
         val header = TextView(this).apply {
             setTextColor(0xffffffff.toInt())
@@ -2244,13 +2331,23 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         row2.addView(b3,LinearLayout.LayoutParams(bw))
         row2.addView(stop,LinearLayout.LayoutParams(bw))
         box.addView(header);box.addView(meta);box.addView(realtime);box.addView(clock);box.addView(status);box.addView(row1);box.addView(row2)
+        if(autoDetectLag){
+            // Auto Beta uses a compact overlay so the test UI itself does not dominate the visual ROI.
+            meta.visibility=View.GONE
+            realtime.visibility=View.GONE
+            clock.visibility=View.GONE
+            header.text="AUTO · Ready"
+            status.text="Press START"
+            header.textSize=14f
+            status.textSize=12f
+        }
         val lp=WindowManager.LayoutParams(
-            (resources.displayMetrics.widthPixels*0.82f).toInt(),
+            (resources.displayMetrics.widthPixels*(if(autoDetectLag) 0.42f else 0.82f)).toInt(),
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
             PixelFormat.TRANSLUCENT
-        ).apply{ gravity=Gravity.TOP or Gravity.START;x=12;y=120 }
+        ).apply{ gravity=Gravity.TOP or Gravity.START;x=12;y=if(autoDetectLag) 104 else 120 }
         var dx=0f;var dy=0f;var sx=0;var sy=0
         val dragTouch=View.OnTouchListener{_,e->when(e.actionMasked){
             MotionEvent.ACTION_DOWN->{dx=e.rawX;dy=e.rawY;sx=lp.x;sy=lp.y;true}
@@ -2401,18 +2498,25 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             lines += "$seq,$video,$type,${nowText(startWall)},${nowText(endWall)},$d"
         }
 
+        fun currentTikTokOverlayRect(): Rect? = runCatching {
+            if (!box.isShown || box.width <= 0 || box.height <= 0) return@runCatching null
+            val loc = IntArray(2)
+            box.getLocationOnScreen(loc)
+            Rect(loc[0], loc[1], loc[0] + box.width, loc[1] + box.height)
+        }.getOrNull()
+
         fun startAutoBeta() {
             autoJob?.cancel()
             autoJob = scope.launch {
                 val sampleMs = 500L
-                val dynamicMeanThreshold = 4.5
-                val dynamicRatioThreshold = 0.07
-                // Do not treat the normal swipe/transition/capture warm-up as INITIAL lag.
-                // INITIAL is only emitted when a dynamic video stays visually stalled for a
-                // sustained period AFTER the transition settle window, then starts moving.
-                val transitionSettleMs = 900L
-                val initialLagConfirmMs = 2500L
-                val playbackGraceAfterDynamicMs = 1500L
+                // These thresholds only establish that the post is genuinely dynamic.
+                // PLAYBACK lag itself is judged relative to each video's learned baseline.
+                val initialDynamicMean = 4.0
+                val initialDynamicRatio = 0.06
+                val transitionSettleMs = 1000L
+                val initialLagConfirmMs = 3500L
+                val playbackGraceAfterDynamicMs = 2000L
+                val playbackFreezeConfirmMs = 1600L
                 val countLimit = autoVideoCount.coerceIn(1, 500)
                 val watchMs = autoWatchSeconds.coerceIn(3, 120) * 1000L
                 val durationLimitMs = autoDurationMinutes.coerceIn(1, 180) * 60_000L
@@ -2434,24 +2538,33 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                     val swipeT0Elapsed = SystemClock.elapsedRealtime()
                     val targetText = if (durationMode) {
                         val elapsedMin = (SystemClock.elapsedRealtime() - autoStartedElapsed) / 60_000.0
-                        "${String.format(java.util.Locale.US, "%.1f", elapsedMin)}/${autoDurationMinutes} min"
+                        "${String.format(java.util.Locale.US, "%.1f", elapsedMin)}/${autoDurationMinutes}m"
                     } else "$completedVideos/$countLimit"
-                    status.text = "AUTO BETA · Video #$video · $targetText · swiping…"
+                    header.text = "AUTO · V$video · L$lagCount"
+                    status.text = "$targetText · swiping…"
                     swipe()
                     delay(transitionSettleMs)
 
                     val analysisStartElapsed = SystemClock.elapsedRealtime()
-                    var previous = capturePlayerSignature()
+                    var previous = captureTikTokSignature(currentTikTokOverlayRect())
                     var firstDynamicWall = 0L
                     var firstDynamicElapsed = 0L
                     var dynamicCandidateWall = 0L
                     var dynamicCandidateElapsed = 0L
                     var dynamicStreak = 0
-                    var staticStreak = 0
-                    var freezeStartWall = 0L
-                    var freezeStartElapsed = 0L
                     var confirmedDynamic = false
                     var confirmedDynamicElapsed = 0L
+
+                    // Per-video adaptive motion baseline.  It is learned only from clearly moving
+                    // frames, so a game UI/static scene is not compared against one global value.
+                    var baselineMean = 0.0
+                    var baselineRatio = 0.0
+                    var baselineSamples = 0
+                    var freezeStartWall = 0L
+                    var freezeStartElapsed = 0L
+                    var freezeStaticStreak = 0
+                    var recoveryStreak = 0
+
                     val started = SystemClock.elapsedRealtime()
                     val remainingTotal = if (durationMode) {
                         (durationLimitMs - (started - autoStartedElapsed)).coerceAtLeast(0L)
@@ -2461,75 +2574,112 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
 
                     while (running && SystemClock.elapsedRealtime() - started < thisWatchMs) {
                         delay(sampleMs)
-                        val current = capturePlayerSignature()
+                        val current = captureTikTokSignature(currentTikTokOverlayRect())
                         if (previous == null || current == null) {
                             previous = current ?: previous
                             continue
                         }
-                        val motion = visualMotion(previous!!, current)
-                        val dynamic = motion.first >= dynamicMeanThreshold || motion.second >= dynamicRatioThreshold
+                        val motion = tikTokVisualMotion(previous!!, current)
                         previous = current
+                        val clearlyDynamic = motion.first >= initialDynamicMean || motion.second >= initialDynamicRatio
 
-                        if (dynamic) {
-                            staticStreak = 0
-                            if (dynamicStreak == 0) {
-                                dynamicCandidateWall = System.currentTimeMillis()
-                                dynamicCandidateElapsed = SystemClock.elapsedRealtime()
-                            }
-                            dynamicStreak++
-                        } else {
-                            dynamicStreak = 0
-                            staticStreak++
-                        }
-
-                        if (!confirmedDynamic && dynamicStreak >= 3) {
-                            confirmedDynamic = true
-                            confirmedDynamicElapsed = SystemClock.elapsedRealtime()
-                            dynamicVideos++
-                            firstDynamicWall = dynamicCandidateWall
-                            firstDynamicElapsed = dynamicCandidateElapsed
-                            val postSettleStall = (firstDynamicElapsed - analysisStartElapsed).coerceAtLeast(0L)
-                            if (postSettleStall >= initialLagConfirmMs) {
-                                addLagEvent("INITIAL", swipeT0Wall, swipeT0Elapsed, firstDynamicWall, firstDynamicElapsed)
-                                status.text = "AUTO BETA · Initial loading ${String.format(java.util.Locale.US,"%.2f",(firstDynamicElapsed-swipeT0Elapsed)/1000.0)} s · #$lagCount"
-                            } else {
-                                status.text = "AUTO BETA · Video #$video · dynamic · monitoring lag"
-                            }
-                        }
-
-                        if (confirmedDynamic && SystemClock.elapsedRealtime() - confirmedDynamicElapsed >= playbackGraceAfterDynamicMs) {
-                            // Require consecutive static samples. This avoids a single low-motion
-                            // frame or a normal scene cut starting a false PLAYBACK lag.
-                            if (!dynamic && staticStreak == 3 && freezeStartElapsed == 0L) {
-                                val nowElapsed = SystemClock.elapsedRealtime()
-                                val back = (staticStreak - 1) * sampleMs
-                                freezeStartElapsed = (nowElapsed - back).coerceAtLeast(confirmedDynamicElapsed)
-                                freezeStartWall = System.currentTimeMillis() - back
-                            } else if (dynamic && freezeStartElapsed > 0L) {
-                                val endWall = System.currentTimeMillis()
-                                val endElapsed = SystemClock.elapsedRealtime()
-                                val freezeMs = endElapsed - freezeStartElapsed
-                                // Three consecutive static samples already imply >= ~1 s freeze.
-                                if (freezeMs >= 1000L) {
-                                    addLagEvent("PLAYBACK", freezeStartWall, freezeStartElapsed, endWall, endElapsed)
-                                    status.text = "AUTO BETA · Lag ${String.format(java.util.Locale.US,"%.2f",freezeMs/1000.0)} s · #$lagCount"
+                        if (!confirmedDynamic) {
+                            if (clearlyDynamic) {
+                                if (dynamicStreak == 0) {
+                                    dynamicCandidateWall = System.currentTimeMillis()
+                                    dynamicCandidateElapsed = SystemClock.elapsedRealtime()
                                 }
-                                freezeStartWall = 0L
-                                freezeStartElapsed = 0L
+                                dynamicStreak++
+                            } else {
+                                dynamicStreak = 0
                             }
+
+                            if (dynamicStreak >= 3) {
+                                confirmedDynamic = true
+                                confirmedDynamicElapsed = SystemClock.elapsedRealtime()
+                                dynamicVideos++
+                                firstDynamicWall = dynamicCandidateWall
+                                firstDynamicElapsed = dynamicCandidateElapsed
+                                baselineMean = motion.first.coerceAtLeast(initialDynamicMean)
+                                baselineRatio = motion.second.coerceAtLeast(initialDynamicRatio)
+                                baselineSamples = 1
+                                val postSettleStall = (firstDynamicElapsed - analysisStartElapsed).coerceAtLeast(0L)
+                                if (postSettleStall >= initialLagConfirmMs) {
+                                    addLagEvent("INITIAL", swipeT0Wall, swipeT0Elapsed, firstDynamicWall, firstDynamicElapsed)
+                                }
+                            }
+                        } else {
+                            // Learn a conservative EMA baseline from frames that still contain a
+                            // meaningful amount of motion. Very-low samples never drag the baseline
+                            // down during a real freeze.
+                            val baselineReady = baselineSamples >= 3
+                            val learnFloorMean = if (baselineMean > 0.0) baselineMean * 0.40 else initialDynamicMean
+                            val learnFloorRatio = if (baselineRatio > 0.0) baselineRatio * 0.40 else initialDynamicRatio
+                            if (freezeStartElapsed == 0L && (motion.first >= learnFloorMean || motion.second >= learnFloorRatio)) {
+                                if (baselineSamples == 0) {
+                                    baselineMean = motion.first
+                                    baselineRatio = motion.second
+                                } else {
+                                    baselineMean = baselineMean * 0.82 + motion.first * 0.18
+                                    baselineRatio = baselineRatio * 0.82 + motion.second * 0.18
+                                }
+                                baselineSamples++
+                            }
+
+                            if (SystemClock.elapsedRealtime() - confirmedDynamicElapsed >= playbackGraceAfterDynamicMs && baselineReady) {
+                                val freezeMeanThreshold = kotlin.math.max(0.60, baselineMean * 0.16)
+                                val freezeRatioThreshold = kotlin.math.max(0.008, baselineRatio * 0.16)
+                                val veryStatic = motion.first <= freezeMeanThreshold && motion.second <= freezeRatioThreshold
+                                val recovered = motion.first >= kotlin.math.max(1.8, baselineMean * 0.45) ||
+                                    motion.second >= kotlin.math.max(0.025, baselineRatio * 0.45)
+
+                                if (freezeStartElapsed == 0L) {
+                                    freezeStaticStreak = if (veryStatic) freezeStaticStreak + 1 else 0
+                                    if (freezeStaticStreak >= 4) {
+                                        val nowElapsed = SystemClock.elapsedRealtime()
+                                        val back = (freezeStaticStreak - 1) * sampleMs
+                                        freezeStartElapsed = (nowElapsed - back).coerceAtLeast(confirmedDynamicElapsed)
+                                        freezeStartWall = System.currentTimeMillis() - back
+                                        recoveryStreak = 0
+                                    }
+                                } else {
+                                    recoveryStreak = if (recovered) recoveryStreak + 1 else 0
+                                    if (recoveryStreak >= 2) {
+                                        val endWall = System.currentTimeMillis()
+                                        val endElapsed = SystemClock.elapsedRealtime()
+                                        val freezeMs = endElapsed - freezeStartElapsed
+                                        if (freezeMs >= playbackFreezeConfirmMs) {
+                                            addLagEvent("PLAYBACK", freezeStartWall, freezeStartElapsed, endWall, endElapsed)
+                                        }
+                                        freezeStartWall = 0L
+                                        freezeStartElapsed = 0L
+                                        freezeStaticStreak = 0
+                                        recoveryStreak = 0
+                                    }
+                                }
+                            }
+                        }
+
+                        header.text = "AUTO · V$video · L$lagCount"
+                        status.text = if (confirmedDynamic) {
+                            "M ${String.format(java.util.Locale.US,"%.1f",motion.first)} · B ${String.format(java.util.Locale.US,"%.1f",baselineMean)}"
+                        } else {
+                            "Classifying · M ${String.format(java.util.Locale.US,"%.1f",motion.first)}"
                         }
                     }
 
                     if (!confirmedDynamic) {
                         staticOrImagePosts++
-                        status.text = "AUTO BETA · Video #$video · static/image candidate · excluded"
+                        header.text = "AUTO · V$video · L$lagCount"
+                        status.text = "Static/image · excluded"
                     }
                     clearPending()
                     if (hasMore()) delay(500)
                 }
                 if (running) {
-                    val completedText = if (durationMode) "${autoDurationMinutes} min · $completedVideos videos" else "$completedVideos videos"
-                    status.text = "AUTO BETA complete · $completedText · $lagCount lag events · tap FINISH"
+                    val completedText = if (durationMode) "${autoDurationMinutes}m · $completedVideos videos" else "$completedVideos videos"
+                    header.text = "AUTO · DONE · L$lagCount"
+                    status.text = "$completedText · tap FINISH"
                 }
             }
         }
@@ -2584,6 +2734,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                         if(autoDetectLag){
                             b1.text="AUTO RUNNING"
                             b1.isEnabled=false
+                            b1.visibility=View.GONE
                         } else {
                             b1.text="NEXT VIDEO"
                         }
@@ -2592,7 +2743,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                     b3.visibility=if(isLag && autoDetectLag) View.GONE else View.VISIBLE
                     stop.visibility=View.VISIBLE
                     status.text=if(isLag) {
-                        if(autoDetectLag) "AUTO BETA · ${if(autoRunMode.equals("DURATION",true)) "${autoDurationMinutes} min" else "${autoVideoCount} videos"} · ${autoWatchSeconds}s/video · starting…"
+                        if(autoDetectLag) "${if(autoRunMode.equals("DURATION",true)) "${autoDurationMinutes}m" else "${autoVideoCount} videos"} · ${autoWatchSeconds}s/video"
                         else "Running · ${if(autoSwipe)"NEXT VIDEO = T0 + auto swipe" else "NEXT VIDEO = T0, then swipe manually"}"
                     } else "Running · POST = T0"
                     if(isLag && autoDetectLag) startAutoBeta()
