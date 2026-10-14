@@ -1287,3 +1287,7 @@ Build note: local assembleDebug could not run because this environment cannot re
 - Added continuous REF AP logcat capture and custom logcat command.
 - Added arbitrary ADB shell command console plus radio/getprop/telephony presets.
 - Added explicit no-Wi-Fi/legacy TCP experiment guidance; USB-OTG transport is not falsely reported as implemented until hardware validation.
+
+## v1.2.52
+- Fix Reports detail Summary not refreshing after Mark INVALID / Mark VALID or T0/T1 review edits.
+- YouTube and TikTok in-app summaries now use the same reviewed-valid event set as export.

@@ -696,6 +696,7 @@ private fun ReportsHome(
     var deleteTarget by remember { mutableStateOf<Pair<String,String>?>(null) }
     var reviewEdit by remember { mutableStateOf<ReviewEditRequestV1?>(null) }
     var reviewPlayer by remember { mutableStateOf<ReviewPlayerRequest?>(null) }
+    var reviewRevision by remember { mutableIntStateOf(0) }
     fun reloadReports() {
         scope.launch {
             val loaded = withContext(Dispatchers.IO) {
@@ -913,6 +914,7 @@ private fun ReportsHome(
                                 val nt1=clockFmt.format(Date(req.recordingStartMs+markedT1!!))
                                 val updated=state.events.mapIndexed{i,x->if(i==req.eventIndex)x.copy(t0=nt0,t1=nt1,valid=true) else x}
                                 ReportReviewV1.save(context,req.reportUri,state.copy(confirmed=false,confirmedAt=0L,events=updated))
+                                reviewRevision++
                                 Toast.makeText(context,"T0/T1 calibrated from recording",Toast.LENGTH_SHORT).show()
                                 reviewPlayer=null
                             }
@@ -949,7 +951,7 @@ private fun ReportsHome(
                     ReportReviewV1.load(context,reportKey,parsed.events)
                 }
                 val updated=reviewState.events.mapIndexed{i,e->if(i==idx)e.copy(t0=t0.trim(),t1=t1.trim(),note=note.trim()) else e}
-                ReportReviewV1.save(context,reportKey,reviewState.copy(confirmed=false,confirmedAt=0L,events=updated));reviewEdit=null
+                ReportReviewV1.save(context,reportKey,reviewState.copy(confirmed=false,confirmedAt=0L,events=updated));reviewRevision++;reviewEdit=null
             }){Text("SAVE")}},
             dismissButton={TextButton(onClick={reviewEdit=null}){Text("Cancel")}}
         )
@@ -1029,7 +1031,7 @@ private fun ReportsHome(
                         }
                     }
                     "YOUTUBE" -> videoReports.firstOrNull { it.path == path }?.let { r ->
-                        val reviewState=ReportReviewV1.loadYouTube(context,r.path,r.samples)
+                        val reviewState=remember(r.path,reviewRevision){ReportReviewV1.loadYouTube(context,r.path,r.samples)}
                         val reviewedDurations=reviewState.events.filter{it.valid}.mapNotNull{ReportReviewV1.durationMs(it.t0,it.t1)}
                         val base=File(r.path).nameWithoutExtension
                         val exportPath=ReportStorage.sessionRelativePath("YouTube",r.startedAt,base)
@@ -1074,6 +1076,7 @@ private fun ReportsHome(
                                 TextButton(onClick={
                                     val current=ReportReviewV1.loadYouTube(context,r.path,r.samples)
                                     ReportReviewV1.save(context,r.path,current.copy(confirmed=false,confirmedAt=0L,events=current.events.mapIndexed{j,x->if(j==i)x.copy(valid=!x.valid) else x}))
+                                    reviewRevision++
                                 }){Text(if(rev.valid)"MARK INVALID" else "MARK VALID")}
                             }
                         }
@@ -1102,7 +1105,12 @@ private fun ReportsHome(
                         val parsed = runCatching {
                             context.contentResolver.openInputStream(Uri.parse(r.uri))?.bufferedReader()?.use { TikTokReportExporter.parse(it.readText()) }
                         }.getOrNull()
-                        val durations=parsed?.events?.mapNotNull{it.durationMs}.orEmpty()
+                        val reviewState=parsed?.let{remember(r.uri,reviewRevision){ReportReviewV1.load(context,r.uri,it.events)}}
+                        val reviewedEvents=parsed?.events?.mapIndexedNotNull { i,e ->
+                            val rev=reviewState?.events?.getOrNull(i) ?: ReviewedEventV1(i,true,e.t0,e.t1)
+                            if(!rev.valid) null else e.copy(t0=rev.t0,t1=rev.t1,durationMs=ReportReviewV1.durationMs(rev.t0,rev.t1))
+                        }.orEmpty()
+                        val durations=reviewedEvents.mapNotNull{it.durationMs}
                         val summaryFiles=reportFilesInRelativePath(context,r.relativePath)
                             .filterNot { it.endsWith(".mp4",true) }
                         val summaryScreenName=r.fields["Screen Recording"].orEmpty()
@@ -1113,7 +1121,8 @@ private fun ReportsHome(
                             Field("Started", r.start)
                             Field("Swipe Mode", r.fields["Swipe Mode"] ?: "--")
                             Field("Videos", r.fields["Videos"] ?: "0")
-                            Field("Lag Count", r.fields["Lag Count"] ?: "0")
+                            Field("Lag Count", reviewedEvents.size.toString())
+                            Field("Reviewed Valid", reviewedEvents.size.toString())
                             Field("Total Lag", durations.sum().let { String.format(Locale.US,"%.3f s",it/1000.0) })
                             Field("Average", durations.takeIf{it.isNotEmpty()}?.average()?.let { String.format(Locale.US,"%.3f s",it/1000.0) } ?: "--")
                             Field("Longest", durations.maxOrNull()?.let { String.format(Locale.US,"%.3f s",it/1000.0) } ?: "--")
@@ -1121,7 +1130,6 @@ private fun ReportsHome(
                             LongField("Recording File", summaryScreenName.ifBlank { "--" })
                             LongField("Report Files", if(summaryFiles.isEmpty()) r.name else summaryFiles.joinToString("\n"))
                         }
-                        val reviewState=parsed?.let{ReportReviewV1.load(context,r.uri,it.events)}
                         parsed?.events?.forEachIndexed { i,e ->
                             val rev=reviewState?.events?.getOrNull(i)?:ReviewedEventV1(i,true,e.t0,e.t1)
                             GlassSection("Lag #${i+1} · ${e.type.replace('_',' ')}") {
@@ -1151,6 +1159,7 @@ private fun ReportsHome(
                                 TextButton(onClick={
                                     val s=ReportReviewV1.load(context,r.uri,parsed.events)
                                     ReportReviewV1.save(context,r.uri,s.copy(confirmed=false,confirmedAt=0L,events=s.events.mapIndexed{j,x->if(j==i)x.copy(valid=!x.valid) else x}))
+                                    reviewRevision++
                                 }){Text(if (rev.valid) "MARK INVALID" else "MARK VALID")}
                             }
                         }
@@ -1184,7 +1193,12 @@ private fun ReportsHome(
                         val parsed = runCatching {
                             context.contentResolver.openInputStream(Uri.parse(r.uri))?.bufferedReader()?.use { TikTokReportExporter.parse(it.readText()) }
                         }.getOrNull()
-                        val durations=parsed?.events?.mapNotNull{it.durationMs}.orEmpty()
+                        val reviewState=parsed?.let{remember(r.uri,reviewRevision){ReportReviewV1.load(context,r.uri,it.events)}}
+                        val reviewedEvents=parsed?.events?.mapIndexedNotNull { i,e ->
+                            val rev=reviewState?.events?.getOrNull(i) ?: ReviewedEventV1(i,true,e.t0,e.t1)
+                            if(!rev.valid) null else e.copy(t0=rev.t0,t1=rev.t1,durationMs=ReportReviewV1.durationMs(rev.t0,rev.t1))
+                        }.orEmpty()
+                        val durations=reviewedEvents.mapNotNull{it.durationMs}
                         val summaryFiles=reportFilesInRelativePath(context,r.relativePath)
                             .filterNot { it.endsWith(".mp4",true) }
                         val summaryScreenName=r.fields["Screen Recording"].orEmpty()
@@ -1194,7 +1208,8 @@ private fun ReportsHome(
                             Field("Operator", r.operator)
                             Field("Started", r.start)
                             Field("Upload Type", r.fields["Upload Type"] ?: "--")
-                            Field("Completed", durations.size.toString())
+                            Field("Completed", reviewedEvents.size.toString())
+                            Field("Reviewed Valid", reviewedEvents.size.toString())
                             Field("Average", durations.takeIf{it.isNotEmpty()}?.average()?.let{String.format(Locale.US,"%.3f s",it/1000.0)} ?: "--")
                             Field("Fastest", durations.minOrNull()?.let{String.format(Locale.US,"%.3f s",it/1000.0)} ?: "--")
                             Field("Slowest", durations.maxOrNull()?.let{String.format(Locale.US,"%.3f s",it/1000.0)} ?: "--")
@@ -1202,7 +1217,6 @@ private fun ReportsHome(
                             LongField("Recording File", summaryScreenName.ifBlank { "--" })
                             LongField("Report Files", if(summaryFiles.isEmpty()) r.name else summaryFiles.joinToString("\n"))
                         }
-                        val reviewState=parsed?.let{ReportReviewV1.load(context,r.uri,it.events)}
                         parsed?.events?.forEachIndexed { i,e ->
                             val rev=reviewState?.events?.getOrNull(i)?:ReviewedEventV1(i,true,e.t0,e.t1)
                             GlassSection("Upload #${i+1}") {
@@ -1232,6 +1246,7 @@ private fun ReportsHome(
                                 TextButton(onClick={
                                     val s=ReportReviewV1.load(context,r.uri,parsed.events)
                                     ReportReviewV1.save(context,r.uri,s.copy(confirmed=false,confirmedAt=0L,events=s.events.mapIndexed{j,x->if(j==i)x.copy(valid=!x.valid) else x}))
+                                    reviewRevision++
                                 }){Text(if (rev.valid) "MARK INVALID" else "MARK VALID")}
                             }
                         }
@@ -1342,6 +1357,7 @@ private fun ReportsHome(
                                 if(detail!=null){
                                     val rs=ReportReviewV1.loadYouTube(context,path,detail.samples)
                                     ReportReviewV1.save(context,path,rs.copy(confirmed=true,confirmedAt=System.currentTimeMillis()))
+                                    reviewRevision++
                                     Toast.makeText(context,"Review confirmed · export will use reviewed timings",Toast.LENGTH_SHORT).show()
                                 }
                             },
