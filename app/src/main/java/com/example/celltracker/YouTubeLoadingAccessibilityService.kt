@@ -52,13 +52,22 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             }
         }
 
-        fun requestTikTokTool(mode: String, autoSwipe: Boolean, taskName: String, operator: String, uploadType: String) {
+        fun requestTikTokTool(
+            mode: String,
+            autoSwipe: Boolean,
+            taskName: String,
+            operator: String,
+            uploadType: String,
+            autoDetectLag: Boolean = false,
+            autoVideoCount: Int = 10,
+            autoWatchSeconds: Int = 15
+        ) {
             val instance=activeInstance ?: return
             instance.scope.launch {
                 runCatching {
                     instance.dismissOverlay()
                     instance.dismissWhatsAppOverlay()
-                    instance.showTikTokOverlay(mode, autoSwipe, taskName, operator, uploadType)
+                    instance.showTikTokOverlay(mode, autoSwipe, taskName, operator, uploadType, autoDetectLag, autoVideoCount, autoWatchSeconds)
                 }.onFailure { e ->
                     android.util.Log.e("CellTrackerTikTok", "Unable to open TikTok tool", e)
                     instance.dismissTikTokOverlay()
@@ -2166,7 +2175,16 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
     private var ttUploadAwaitingExternalTouch = false
     private var ttUploadExternalTouchCallback: (() -> Unit)? = null
 
-    private fun showTikTokOverlay(mode: String, autoSwipe: Boolean, taskName: String, operator: String, configuredUploadType: String) {
+    private fun showTikTokOverlay(
+        mode: String,
+        autoSwipe: Boolean,
+        taskName: String,
+        operator: String,
+        configuredUploadType: String,
+        autoDetectLag: Boolean = false,
+        autoVideoCount: Int = 10,
+        autoWatchSeconds: Int = 15
+    ) {
         dismissTikTokOverlay()
         val wm = getSystemService(WindowManager::class.java)
         val isLag = mode == "LAG"
@@ -2178,7 +2196,8 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         val header = TextView(this).apply {
             setTextColor(0xffffffff.toInt())
             text = if (isLag) {
-                listOf(taskName.takeUnless { it == "Session" }, if(autoSwipe)"AUTO" else "MANUAL", operator).filterNotNull().joinToString(" · ")
+                val modeLabel = if (autoDetectLag) "AUTO BETA" else if(autoSwipe) "SEMI AUTO" else "MANUAL"
+                listOf(taskName.takeUnless { it == "Session" }, modeLabel, operator).filterNotNull().joinToString(" · ")
             } else {
                 listOf(taskName.takeUnless { it == "Session" }, configuredUploadType, operator).filterNotNull().joinToString(" · ")
             }
@@ -2271,6 +2290,9 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         var uploadAwaitingTouch=false
         var ownsRecording=false
         var recordingPath=""
+        var autoJob: Job? = null
+        var staticOrImagePosts = 0
+        var dynamicVideos = 0
 
         fun nowText(ms:Long)=fmt.format(java.util.Date(ms))
         fun setPending(type:String){
@@ -2322,6 +2344,11 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                 appendLine("Screen Recording Start ms,${TestScreenRecordingService.currentStartedAt.takeIf{it>0} ?: TestScreenRecordingService.lastStartedAt}")
                 if(isLag){
                     appendLine("Videos,$video")
+                    appendLine("Auto Detect,${if(autoDetectLag)"Auto Beta" else "Off"}")
+                    if(autoDetectLag){
+                        appendLine("Dynamic Videos,$dynamicVideos")
+                        appendLine("Static/Image Posts,$staticOrImagePosts")
+                    }
                     appendLine("Lag Count,$lagCount")
                     appendLine("Total Lag ms,$totalLag")
                     appendLine("Average Lag ms,${if(lagCount>0) totalLag/lagCount else 0}")
@@ -2356,6 +2383,105 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             }.onFailure{
                 status.text="Report save failed · ${it.message ?: "unknown"}"
             }.getOrNull()
+        }
+
+        fun addLagEvent(type:String, startWall:Long, startElapsed:Long, endWall:Long, endElapsed:Long) {
+            val d=(endElapsed-startElapsed).coerceAtLeast(0L)
+            seq++
+            lagCount++
+            totalLag+=d
+            lines += "$seq,$video,$type,${nowText(startWall)},${nowText(endWall)},$d"
+        }
+
+        fun startAutoBeta() {
+            autoJob?.cancel()
+            autoJob = scope.launch {
+                val sampleMs = 500L
+                val freezeConfirmMs = 1200L
+                val dynamicMeanThreshold = 4.5
+                val dynamicRatioThreshold = 0.07
+                val count = autoVideoCount.coerceIn(1, 50)
+                val watchMs = autoWatchSeconds.coerceIn(5, 60) * 1000L
+
+                repeat(count) { idx ->
+                    if (!running) return@launch
+                    video++
+                    clearPending()
+                    val swipeT0Wall=System.currentTimeMillis()
+                    val swipeT0Elapsed=SystemClock.elapsedRealtime()
+                    status.text="AUTO BETA · Video #$video/$count · swiping…"
+                    swipe()
+                    delay(900)
+
+                    var previous = capturePlayerSignature()
+                    var firstDynamicWall = 0L
+                    var firstDynamicElapsed = 0L
+                    var recentDynamic = ArrayDeque<Boolean>()
+                    var freezeStartWall = 0L
+                    var freezeStartElapsed = 0L
+                    var confirmedDynamic = false
+                    val started = SystemClock.elapsedRealtime()
+
+                    while (running && SystemClock.elapsedRealtime() - started < watchMs) {
+                        delay(sampleMs)
+                        val current = capturePlayerSignature()
+                        if (previous == null || current == null) {
+                            previous = current ?: previous
+                            continue
+                        }
+                        val motion = visualMotion(previous!!, current)
+                        val dynamic = motion.first >= dynamicMeanThreshold || motion.second >= dynamicRatioThreshold
+                        previous = current
+
+                        recentDynamic.addLast(dynamic)
+                        while (recentDynamic.size > 8) recentDynamic.removeFirst()
+                        val dynamicRecentCount = recentDynamic.count { it }
+
+                        if (dynamic && firstDynamicWall == 0L) {
+                            firstDynamicWall = System.currentTimeMillis()
+                            firstDynamicElapsed = SystemClock.elapsedRealtime()
+                        }
+                        if (!confirmedDynamic && dynamicRecentCount >= 3) {
+                            confirmedDynamic = true
+                            dynamicVideos++
+                            if (firstDynamicWall > 0L) {
+                                val d=(firstDynamicElapsed-swipeT0Elapsed).coerceAtLeast(0L)
+                                if (d >= 700L) {
+                                    addLagEvent("INITIAL", swipeT0Wall, swipeT0Elapsed, firstDynamicWall, firstDynamicElapsed)
+                                }
+                            }
+                            status.text="AUTO BETA · Video #$video · dynamic · monitoring lag"
+                        }
+
+                        if (confirmedDynamic) {
+                            if (!dynamic && dynamicRecentCount >= 3 && freezeStartElapsed == 0L) {
+                                freezeStartWall=System.currentTimeMillis()
+                                freezeStartElapsed=SystemClock.elapsedRealtime()
+                            } else if (dynamic && freezeStartElapsed > 0L) {
+                                val endWall=System.currentTimeMillis()
+                                val endElapsed=SystemClock.elapsedRealtime()
+                                val freezeMs=endElapsed-freezeStartElapsed
+                                if (freezeMs >= freezeConfirmMs) {
+                                    addLagEvent("PLAYBACK", freezeStartWall, freezeStartElapsed, endWall, endElapsed)
+                                    status.text="AUTO BETA · Lag ${String.format(java.util.Locale.US,"%.2f",freezeMs/1000.0)} s · #$lagCount"
+                                }
+                                freezeStartWall=0L
+                                freezeStartElapsed=0L
+                            }
+                        }
+                    }
+
+                    if (!confirmedDynamic) {
+                        staticOrImagePosts++
+                        status.text="AUTO BETA · Video #$video · static/image candidate · excluded"
+                    }
+                    clearPending()
+                    if (idx < count-1 && running) delay(500)
+                }
+                if (running) {
+                    status.text="AUTO BETA complete · $video videos · $lagCount lag events · tap FINISH"
+                }
+            }
         }
 
         var startGuard=false
@@ -2404,9 +2530,22 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                             }
                         }
                     }
-                    if(isLag) b1.text="NEXT VIDEO" else { b1.text="RUNNING"; b1.isEnabled=false }
-                    b2.visibility=View.VISIBLE;b3.visibility=View.VISIBLE;stop.visibility=View.VISIBLE
-                    status.text=if(isLag) "Running · ${if(autoSwipe)"NEXT VIDEO = T0 + auto swipe" else "NEXT VIDEO = T0, then swipe manually"}" else "Running · POST = T0"
+                    if(isLag) {
+                        if(autoDetectLag){
+                            b1.text="AUTO RUNNING"
+                            b1.isEnabled=false
+                        } else {
+                            b1.text="NEXT VIDEO"
+                        }
+                    } else { b1.text="RUNNING"; b1.isEnabled=false }
+                    b2.visibility=if(isLag && autoDetectLag) View.GONE else View.VISIBLE
+                    b3.visibility=if(isLag && autoDetectLag) View.GONE else View.VISIBLE
+                    stop.visibility=View.VISIBLE
+                    status.text=if(isLag) {
+                        if(autoDetectLag) "AUTO BETA · $autoVideoCount videos · ${autoWatchSeconds}s/video · starting…"
+                        else "Running · ${if(autoSwipe)"NEXT VIDEO = T0 + auto swipe" else "NEXT VIDEO = T0, then swipe manually"}"
+                    } else "Running · POST = T0"
+                    if(isLag && autoDetectLag) startAutoBeta()
                 }else if(isLag){
                     if(pendingType=="INITIAL") clearPending()
                     video++;setPending("INITIAL")
@@ -2428,7 +2567,15 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         b2.setOnClickListener{
             if(!running)return@setOnClickListener
             if(isLag){
-                if(pendingWall>0L){status.text="Active ${pendingType.lowercase()} · tap LOADED first";return@setOnClickListener}
+                if(pendingWall>0L && pendingType=="INITIAL"){
+                    // NEXT VIDEO only opens an initial-loading candidate. If playback was normal
+                    // and a later stall occurs, LAG must be allowed immediately: discard the
+                    // unconfirmed initial candidate and start the playback-lag timer now.
+                    clearPending()
+                } else if(pendingWall>0L){
+                    status.text="Active ${pendingType.lowercase()} · tap LOADED first"
+                    return@setOnClickListener
+                }
                 setPending("PLAYBACK");status.text="Playback lag T0 ${nowText(pendingWall)}"
             }else{
                 if(pendingWall>0L){status.text="Upload active · tap POSTED first";return@setOnClickListener}
@@ -2465,6 +2612,8 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             }
             ttUploadAwaitingExternalTouch=false
             uploadAwaitingTouch=false
+            autoJob?.cancel()
+            autoJob=null
             val end=System.currentTimeMillis()
             val reportUri=saveReport(end);running=false
             if(reportUri!=null){

@@ -1,3 +1,11 @@
+# v1.2.54
+
+- Fixed TikTok Video Lag manual state: after NEXT VIDEO, LAG can start a later playback-stall event even when the initial LOADED button was never used.
+- Added TikTok Video Lag test modes: Manual, Semi Auto, and Auto Beta.
+- Auto Beta automatically swipes through 10/20/30 videos, watches each for 10/15/20 seconds, classifies static/image candidates before lag detection, and excludes those candidates from lag counts.
+- Auto Beta uses conservative visual-motion history before declaring a playback freeze; detected initial loading and playback lag events remain reviewable in the normal TikTok report flow.
+- Fixed narrow-screen ADB diagnostics layout so labels such as USB ADB and USB reason keep a stable label column instead of wrapping one character per line.
+
 # v1.2.53 (versionCode 230)
 
 - Review validity is now the single source of truth for in-app Summary statistics.

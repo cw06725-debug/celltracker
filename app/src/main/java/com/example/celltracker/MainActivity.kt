@@ -4226,20 +4226,24 @@ private fun Field(name: String, value: String) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = Alignment.Top
     ) {
         Text(
             name,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.width(116.dp),
             style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 2,
+            softWrap = true
         )
         Text(
             value,
+            modifier = Modifier.weight(1f),
             style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 2
+            maxLines = 3,
+            softWrap = true
         )
     }
 }
@@ -5912,6 +5916,9 @@ private fun ScenarioTestsV1(
     var selectedScenario by remember { mutableStateOf<ScenarioV1Type?>(null) }
     var tikTokTool by remember { mutableStateOf<String?>(null) }
     var tikTokAutoSwipe by remember { mutableStateOf(true) }
+    var tikTokLagMode by rememberSaveable { mutableStateOf("SEMI") }
+    var tikTokAutoVideoCount by rememberSaveable { mutableIntStateOf(10) }
+    var tikTokAutoWatchSeconds by rememberSaveable { mutableIntStateOf(15) }
     var tikTokTaskName by remember { mutableStateOf("") }
     var tikTokOperator by remember { mutableStateOf("") }
     var tikTokOperatorHint by remember { mutableStateOf("Detecting current data SIM…") }
@@ -5934,7 +5941,13 @@ private fun ScenarioTestsV1(
             if(launch!=null){
                 context.startActivity(launch)
                 android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                    YouTubeLoadingAccessibilityService.requestTikTokTool(tool,tikTokAutoSwipe,tikTokTaskName.trim().ifBlank { "Session" },tikTokOperator.trim(),tikTokUploadType)
+                    YouTubeLoadingAccessibilityService.requestTikTokTool(
+                        tool, tikTokLagMode != "MANUAL",
+                        tikTokTaskName.trim().ifBlank { "Session" }, tikTokOperator.trim(), tikTokUploadType,
+                        autoDetectLag = tool=="LAG" && tikTokLagMode=="AUTO_BETA",
+                        autoVideoCount = tikTokAutoVideoCount,
+                        autoWatchSeconds = tikTokAutoWatchSeconds
+                    )
                 },650)
             }
         } else if(tool!=null) Toast.makeText(context,"Screen recording permission cancelled",Toast.LENGTH_SHORT).show()
@@ -6154,17 +6167,34 @@ private fun ScenarioTestsV1(
                         }
                     }
                     if (tool == "LAG") {
-                        Text("Swipe Mode", style = MaterialTheme.typography.titleSmall)
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            RadioButton(selected = !tikTokAutoSwipe, onClick = { tikTokAutoSwipe = false })
-                            Text("Manual")
-                            Spacer(Modifier.width(18.dp))
-                            RadioButton(selected = tikTokAutoSwipe, onClick = { tikTokAutoSwipe = true })
-                            Text("Auto")
+                        Text("Test Mode", style = MaterialTheme.typography.titleSmall)
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                RadioButton(selected = tikTokLagMode=="MANUAL", onClick = { tikTokLagMode="MANUAL"; tikTokAutoSwipe=false })
+                                Text("Manual · manual swipe + manual events")
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                RadioButton(selected = tikTokLagMode=="SEMI", onClick = { tikTokLagMode="SEMI"; tikTokAutoSwipe=true })
+                                Text("Semi Auto · auto swipe + manual events")
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                RadioButton(selected = tikTokLagMode=="AUTO_BETA", onClick = { tikTokLagMode="AUTO_BETA"; tikTokAutoSwipe=true })
+                                Text("Auto Beta · auto swipe + visual detection")
+                            }
                         }
-                        Text(if (tikTokAutoSwipe)
-                            "NEXT VIDEO records T0 first, then CellTracker performs one upward swipe."
-                        else "NEXT VIDEO records T0. Swipe TikTok manually immediately after.")
+                        if(tikTokLagMode=="AUTO_BETA"){
+                            Text("Static/image candidates are classified first and excluded instead of being counted as lag.", style=MaterialTheme.typography.bodySmall)
+                            Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){
+                                listOf(10,20,30).forEach{n->FilterChip(selected=tikTokAutoVideoCount==n,onClick={tikTokAutoVideoCount=n},label={Text("$n videos")})}
+                            }
+                            Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){
+                                listOf(10,15,20).forEach{n->FilterChip(selected=tikTokAutoWatchSeconds==n,onClick={tikTokAutoWatchSeconds=n},label={Text("${n}s")})}
+                            }
+                        } else {
+                            Text(if (tikTokLagMode=="SEMI")
+                                "NEXT VIDEO records T0 and auto swipes. LAG can be tapped directly even if initial LOADED was not used."
+                            else "Swipe manually after NEXT VIDEO. LAG can be tapped directly even if initial LOADED was not used.")
+                        }
                     } else {
                         Text("Upload Type", style = MaterialTheme.typography.titleSmall)
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -6226,7 +6256,11 @@ private fun ScenarioTestsV1(
                                     context.startActivity(launch)
                                     android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
                                         YouTubeLoadingAccessibilityService.requestTikTokTool(
-                                            tool,tikTokAutoSwipe,tikTokTaskName.trim().ifBlank { "Session" },tikTokOperator.trim(),tikTokUploadType
+                                            tool, tikTokLagMode != "MANUAL",
+                                            tikTokTaskName.trim().ifBlank { "Session" }, tikTokOperator.trim(), tikTokUploadType,
+                                            autoDetectLag = tool=="LAG" && tikTokLagMode=="AUTO_BETA",
+                                            autoVideoCount = tikTokAutoVideoCount,
+                                            autoWatchSeconds = tikTokAutoWatchSeconds
                                         )
                                     },650)
                                 }
@@ -6281,6 +6315,9 @@ private fun TikTokQuickLaunchDialogV123(
     var operator by rememberSaveable(tool) { mutableStateOf("") }
     var operatorHint by remember(tool) { mutableStateOf("Detecting current data SIM…") }
     var autoSwipe by rememberSaveable(tool) { mutableStateOf(true) }
+    var lagMode by rememberSaveable(tool) { mutableStateOf("SEMI") }
+    var autoVideoCount by rememberSaveable(tool) { mutableIntStateOf(10) }
+    var autoWatchSeconds by rememberSaveable(tool) { mutableIntStateOf(15) }
     var uploadType by rememberSaveable(tool) { mutableStateOf("Video") }
     var screenRecord by rememberSaveable(tool) { mutableStateOf(true) }
     var pendingTool by remember { mutableStateOf<String?>(null) }
@@ -6302,11 +6339,11 @@ private fun TikTokQuickLaunchDialogV123(
                 context.startActivity(launch)
                 android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
                     YouTubeLoadingAccessibilityService.requestTikTokTool(
-                        pending,
-                        autoSwipe,
-                        taskName.trim().ifBlank { "Session" },
-                        operator.trim(),
-                        uploadType
+                        pending, lagMode != "MANUAL",
+                        taskName.trim().ifBlank { "Session" }, operator.trim(), uploadType,
+                        autoDetectLag = pending=="LAG" && lagMode=="AUTO_BETA",
+                        autoVideoCount = autoVideoCount,
+                        autoWatchSeconds = autoWatchSeconds
                     )
                 }, 650)
             }
@@ -6370,15 +6407,32 @@ private fun TikTokQuickLaunchDialogV123(
                     }
                 }
                 if (tool == "LAG") {
-                    Text("Swipe Mode", style = MaterialTheme.typography.titleSmall)
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(selected = !autoSwipe, onClick = { autoSwipe = false })
-                        Text("Manual")
-                        Spacer(Modifier.width(18.dp))
-                        RadioButton(selected = autoSwipe, onClick = { autoSwipe = true })
-                        Text("Auto")
+                    Text("Test Mode", style = MaterialTheme.typography.titleSmall)
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(selected = lagMode=="MANUAL", onClick = { lagMode="MANUAL"; autoSwipe=false })
+                            Text("Manual · manual swipe + manual events")
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(selected = lagMode=="SEMI", onClick = { lagMode="SEMI"; autoSwipe=true })
+                            Text("Semi Auto · auto swipe + manual events")
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(selected = lagMode=="AUTO_BETA", onClick = { lagMode="AUTO_BETA"; autoSwipe=true })
+                            Text("Auto Beta · auto swipe + visual detection")
+                        }
                     }
-                    Text(if (autoSwipe) "NEXT VIDEO records T0 first, then CellTracker performs one upward swipe." else "NEXT VIDEO records T0. Swipe TikTok manually immediately after.")
+                    if(lagMode=="AUTO_BETA"){
+                        Text("Static/image candidates are classified first and excluded instead of being counted as lag.",style=MaterialTheme.typography.bodySmall)
+                        Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){
+                            listOf(10,20,30).forEach{n->FilterChip(selected=autoVideoCount==n,onClick={autoVideoCount=n},label={Text("$n videos")})}
+                        }
+                        Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){
+                            listOf(10,15,20).forEach{n->FilterChip(selected=autoWatchSeconds==n,onClick={autoWatchSeconds=n},label={Text("${n}s")})}
+                        }
+                    } else {
+                        Text(if (lagMode=="SEMI") "NEXT VIDEO records T0 and auto swipes. LAG can be tapped directly even if initial LOADED was not used." else "Swipe manually after NEXT VIDEO. LAG can be tapped directly even if initial LOADED was not used.")
+                    }
                 } else {
                     Text("Upload Type", style = MaterialTheme.typography.titleSmall)
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -6435,7 +6489,13 @@ private fun TikTokQuickLaunchDialogV123(
                             } else {
                                 context.startActivity(launch)
                                 android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                                    YouTubeLoadingAccessibilityService.requestTikTokTool(tool, autoSwipe, taskName.trim().ifBlank { "Session" }, operator.trim(), uploadType)
+                                    YouTubeLoadingAccessibilityService.requestTikTokTool(
+                                        tool, lagMode != "MANUAL",
+                                        taskName.trim().ifBlank { "Session" }, operator.trim(), uploadType,
+                                        autoDetectLag = tool=="LAG" && lagMode=="AUTO_BETA",
+                                        autoVideoCount = autoVideoCount,
+                                        autoWatchSeconds = autoWatchSeconds
+                                    )
                                 }, 650)
                                 onDismiss()
                             }
