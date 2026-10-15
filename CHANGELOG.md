@@ -1,3 +1,11 @@
+## v1.2.57
+
+- Store all newly exported ADB / AP / DUT logs under the same date folder structure as reports.
+- New layout: `Download/CellTracker/yyyy-MM-dd/Logs/...` instead of a top-level `Download/CellTracker/Logs/...`.
+- AP logs keep REF subfolders; DUT debuglogger pulls and ZIPs use `yyyy-MM-dd/Logs/DUT/`.
+- Device Logs UI now shows the dated log destination.
+- Existing historical `Download/CellTracker/Logs` content is left untouched.
+
 # v1.2.56 (versionCode 233)
 
 - TikTok Auto Beta: compact dedicated overlay to reduce visual interference.

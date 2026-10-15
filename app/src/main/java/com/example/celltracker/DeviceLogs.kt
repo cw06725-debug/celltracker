@@ -332,10 +332,12 @@ object CellTrackerAdbEngine {
         val host=UsbAdbHost.get(context)
         if(!host.connected) host.connect()
         logcatUsesUsb=true
-        val resolver=context.contentResolver;val stamp=SimpleDateFormat("yyyyMMdd_HHmmss",Locale.US).format(Date());val safe=refLabel.replace(Regex("[^A-Za-z0-9._-]"),"_")
-        val name="${safe}_AP_Log_$stamp.txt";val values=ContentValues().apply{put(MediaStore.Downloads.DISPLAY_NAME,name);put(MediaStore.Downloads.MIME_TYPE,"text/plain");put(MediaStore.Downloads.RELATIVE_PATH,"${Environment.DIRECTORY_DOWNLOADS}/CellTracker/Logs/$safe")}
+        val resolver=context.contentResolver;val now=Date();val stamp=SimpleDateFormat("yyyyMMdd_HHmmss",Locale.US).format(now);val date=SimpleDateFormat("yyyy-MM-dd",Locale.US).format(now);val safe=refLabel.replace(Regex("[^A-Za-z0-9._-]"),"_")
+        val logRoot="${Environment.DIRECTORY_DOWNLOADS}/CellTracker/$date/Logs/$safe"
+        val publicRoot="Download/CellTracker/$date/Logs/$safe"
+        val name="${safe}_AP_Log_$stamp.txt";val values=ContentValues().apply{put(MediaStore.Downloads.DISPLAY_NAME,name);put(MediaStore.Downloads.MIME_TYPE,"text/plain");put(MediaStore.Downloads.RELATIVE_PATH,logRoot)}
         val uri=resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI,values)?:error("Cannot create AP log")
-        AdbToolStore.state.value=AdbToolStore.state.value.copy(logcatRunning=true,logcatBytes=0,logcatPath="Download/CellTracker/Logs/$safe/$name",message="USB logcat recording")
+        AdbToolStore.state.value=AdbToolStore.state.value.copy(logcatRunning=true,logcatBytes=0,logcatPath="$publicRoot/$name",message="USB logcat recording")
         logcatJob=scope.launch(Dispatchers.IO){try{resolver.openOutputStream(uri,"w")!!.use{out->host.shell(command){b->out.write(b);out.flush();AdbToolStore.state.value=AdbToolStore.state.value.copy(logcatBytes=AdbToolStore.state.value.logcatBytes+b.size)}}}catch(_:CancellationException){}catch(e:Throwable){AdbToolStore.state.value=AdbToolStore.state.value.copy(message="USB AP log stopped: ${e.message ?: e.javaClass.simpleName}")}finally{logcatUsesUsb=false;AdbToolStore.state.value=AdbToolStore.state.value.copy(logcatRunning=false)}}
         "USB AP log started"
     }}
@@ -493,15 +495,15 @@ object CellTrackerAdbEngine {
     suspend fun exportDebuglogger(context:Context,path:String="/data/debuglogger",logName:String="",compress:Boolean=false,deleteAfterZip:Boolean=false):Result<String> = withContext(Dispatchers.IO){ runCatching {
         check(exportJob?.isActive!=true){"An export is already running"}
         ensureLocalReady(context,"DUT log pull")
-        val source=path.trim().ifBlank{"/data/debuglogger"};val started=System.currentTimeMillis();val stamp=SimpleDateFormat("yyyyMMdd_HHmmss",Locale.US).format(Date())
+        val source=path.trim().ifBlank{"/data/debuglogger"};val started=System.currentTimeMillis();val startedDate=Date(started);val stamp=SimpleDateFormat("yyyyMMdd_HHmmss",Locale.US).format(startedDate);val date=SimpleDateFormat("yyyy-MM-dd",Locale.US).format(startedDate)
         val isModemLog=source.trimEnd('/')=="/data/debuglogger/diag_mdlog"
         val remark=logName.trim().replace(Regex("[^A-Za-z0-9._-]+"),"_").trim('_').ifBlank{if(isModemLog) "DUT" else "DUT_debuglogger"}
         val safe=if(isModemLog && !remark.contains("MODEM_LOG",ignoreCase=true)) "${remark}_MODEM_LOG" else remark
-        val session="${safe}_$stamp";val folderPath="Download/CellTracker/Logs/DUT/$session/"
+        val session="${safe}_$stamp";val folderPath="Download/CellTracker/$date/Logs/DUT/$session/"
         AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=true,exportPhase="Starting ADB Sync pull…",exportBytes=0,exportTotalBytes=0,exportFiles=0,exportFound=0,exportSkipped=0,exportStartedMs=started,exportPullMs=0,exportTotalMs=0,exportZipMs=0,exportPullBytes=0,exportDeleted=0,exportDeleteFailed=0,exportSymlinks=0,exportListFailed=0,exportPath="",exportResult="",exportError="")
         exportJob=scope.launch{
             adbSessionMutex.lock()
-            try{val puller=AdbSyncPuller(context)
+            try{val puller=AdbSyncPuller(context,date)
             // Avoid a full recursive ADB Sync scan before the actual pull. On large debuglogger
             // trees that doubled directory traversal and made export startup unpredictably slow.
             // A short remote `du` gives us an approximate byte total for percentage progress;
@@ -550,7 +552,7 @@ object CellTrackerAdbEngine {
     }.onFailure{e->AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=false,exportPhase="Failed",exportResult="FAILED",exportPath="",exportError=e.message?:e.javaClass.simpleName)} }
     suspend fun deleteLocalExportOutput(context:Context,publicPath:String):Result<Int> = withContext(Dispatchers.IO) { runCatching {
         val normalized=publicPath.trim().trimStart('/').let{if(it.endsWith('/')) it else "$it/"}
-        require(normalized.startsWith("Download/CellTracker/Logs/DUT/")){"Refusing to delete outside CellTracker DUT log folder"}
+        require(Regex("^Download/CellTracker/\d{4}-\d{2}-\d{2}/Logs/DUT/").containsMatchIn(normalized)){"Refusing to delete outside dated CellTracker DUT log folder"}
         val resolver=context.contentResolver
         val deleted=resolver.delete(
             MediaStore.Downloads.EXTERNAL_CONTENT_URI,
@@ -565,14 +567,14 @@ object CellTrackerAdbEngine {
     fun startLogcat(context:Context,command:String="logcat -v threadtime",refLabel:String="vivo_REF") {
         if(logcatJob?.isActive==true)return
         logcatJob=scope.launch { runCatching {
-            val stamp=SimpleDateFormat("yyyyMMdd_HHmmss",Locale.US).format(Date())
+            val now=Date();val stamp=SimpleDateFormat("yyyyMMdd_HHmmss",Locale.US).format(now);val date=SimpleDateFormat("yyyy-MM-dd",Locale.US).format(now)
             val safeLabel=refLabel.trim().ifBlank{"REF"}.replace(Regex("[^A-Za-z0-9._-]"),"_")
             val name="${safeLabel}_AP_Log_$stamp.txt"
-            val publicPath="Download/CellTracker/Logs/$safeLabel/$name"
+            val publicPath="Download/CellTracker/$date/Logs/$safeLabel/$name"
             val values=android.content.ContentValues().apply{
                 put(MediaStore.Downloads.DISPLAY_NAME,name)
                 put(MediaStore.Downloads.MIME_TYPE,"text/plain")
-                put(MediaStore.Downloads.RELATIVE_PATH,"${Environment.DIRECTORY_DOWNLOADS}/CellTracker/Logs/$safeLabel")
+                put(MediaStore.Downloads.RELATIVE_PATH,"${Environment.DIRECTORY_DOWNLOADS}/CellTracker/$date/Logs/$safeLabel")
                 put(MediaStore.Downloads.IS_PENDING,1)
             }
             val resolver=context.contentResolver

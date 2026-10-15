@@ -5790,7 +5790,7 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
                     Text("REF: enable Developer options → USB debugging. Connect REF to this phone with an OTG/data cable; accept 'Allow USB debugging' on REF.",style=MaterialTheme.typography.bodySmall)
                 }
                 if(refTransport=="Wireless") Text("Wireless ADB controls below remain available as fallback.",style=MaterialTheme.typography.bodySmall)
-                Field("Log folder","Download/CellTracker/Logs/$refLabel")
+                Field("Log folder","Download/CellTracker/${SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())}/Logs/$refLabel")
                 if(refTransport=="Wireless" || (refTransport=="Auto" && adb.usbStatus!="Connected")){
                 OutlinedTextField(remoteHost,{remoteHost=it},label={Text("REF IP")},singleLine=true,modifier=Modifier.fillMaxWidth())
                 Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
@@ -5817,7 +5817,7 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
             }
             GlassSection("4 · $refType REF AP Log") {
                 Field("REF device",if(refType=="Custom") customRefName.ifBlank{"Custom"} else refType)
-                Field("Log folder","Download/CellTracker/Logs/$refLabel")
+                Field("Log folder","Download/CellTracker/${SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())}/Logs/$refLabel")
                 OutlinedTextField(logcatCommand,{logcatCommand=it},label={Text("Logcat command")},modifier=Modifier.fillMaxWidth())
                 Field("Status",if(adb.logcatRunning)"RECORDING" else "Stopped"); Field("Size",String.format(java.util.Locale.US,"%.1f MB",adb.logcatBytes/1048576.0)); if(adb.logcatPath.isNotBlank())Field("File",adb.logcatPath)
                 Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
