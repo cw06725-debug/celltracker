@@ -1,3 +1,7 @@
+# v1.2.58
+- Fix Kotlin compile error in dated DUT log cleanup path regex (`\d` escaping).
+- Keeps v1.2.57 dated log-folder behavior unchanged.
+
 ## v1.2.57
 
 - Store all newly exported ADB / AP / DUT logs under the same date folder structure as reports.

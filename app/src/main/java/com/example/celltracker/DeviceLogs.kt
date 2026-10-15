@@ -552,7 +552,7 @@ object CellTrackerAdbEngine {
     }.onFailure{e->AdbToolStore.state.value=AdbToolStore.state.value.copy(exportRunning=false,exportPhase="Failed",exportResult="FAILED",exportPath="",exportError=e.message?:e.javaClass.simpleName)} }
     suspend fun deleteLocalExportOutput(context:Context,publicPath:String):Result<Int> = withContext(Dispatchers.IO) { runCatching {
         val normalized=publicPath.trim().trimStart('/').let{if(it.endsWith('/')) it else "$it/"}
-        require(Regex("^Download/CellTracker/\d{4}-\d{2}-\d{2}/Logs/DUT/").containsMatchIn(normalized)){"Refusing to delete outside dated CellTracker DUT log folder"}
+        require(Regex("^Download/CellTracker/\\d{4}-\\d{2}-\\d{2}/Logs/DUT/").containsMatchIn(normalized)){"Refusing to delete outside dated CellTracker DUT log folder"}
         val resolver=context.contentResolver
         val deleted=resolver.delete(
             MediaStore.Downloads.EXTERNAL_CONTENT_URI,
