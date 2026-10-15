@@ -1335,3 +1335,9 @@ Build note: local assembleDebug could not run because this environment cannot re
 ## v1.2.52
 - Fix Reports detail Summary not refreshing after Mark INVALID / Mark VALID or T0/T1 review edits.
 - YouTube and TikTok in-app summaries now use the same reviewed-valid event set as export.
+
+## v1.2.59
+- TikTok Auto Beta: add a separate playback-progress ROI as supporting evidence for real playback freezes.
+- Make playback freeze detection more sensitive relative to each video's learned motion baseline while keeping photo/static posts conservative.
+- Persist a pending PLAYBACK lag when the video remains frozen until the next automatic swipe instead of silently dropping it.
+- Reduce playback freeze confirmation to ~1.2 s / 3 samples and show progress-motion debug value (P) beside Motion/Baseline.

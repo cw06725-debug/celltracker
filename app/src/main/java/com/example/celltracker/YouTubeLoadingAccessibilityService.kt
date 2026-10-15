@@ -569,7 +569,9 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
      * It intentionally avoids the top tabs, right-side action rail and bottom captions/navigation.
      * Any sample point covered by the CellTracker overlay is marked -1 and ignored by motion math.
      */
-    private suspend fun captureTikTokSignature(overlayRect: Rect?): IntArray? =
+    private data class TikTokVisualFrame(val main: IntArray, val progress: IntArray)
+
+    private suspend fun captureTikTokVisualFrame(overlayRect: Rect?): TikTokVisualFrame? =
         suspendCancellableCoroutine { cont ->
             if (Build.VERSION.SDK_INT < 30) {
                 cont.resume(null)
@@ -585,9 +587,14 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                             try {
                                 val hardware = Bitmap.wrapHardwareBuffer(buffer, screenshot.colorSpace)
                                 val bitmap = hardware?.copy(Bitmap.Config.ARGB_8888, false)
-                                val signature = bitmap?.let { tikTokPlayerSignature(it, overlayRect) }
+                                val frame = bitmap?.let {
+                                    TikTokVisualFrame(
+                                        main = tikTokPlayerSignature(it, overlayRect),
+                                        progress = tikTokProgressSignature(it, overlayRect)
+                                    )
+                                }
                                 bitmap?.recycle()
-                                if (cont.isActive) cont.resume(signature)
+                                if (cont.isActive) cont.resume(frame)
                             } catch (_: Throwable) {
                                 if (cont.isActive) cont.resume(null)
                             } finally {
@@ -615,6 +622,39 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         val bottom = (bitmap.height * 0.78f).toInt().coerceAtLeast(top + 1)
         val cols = 28
         val rows = 18
+        val out = IntArray(cols * rows)
+        var n = 0
+        for (r in 0 until rows) {
+            val yy = top + ((bottom - top - 1) * (r + 1)) / (rows + 1)
+            for (c in 0 until cols) {
+                val xx = left + ((right - left - 1) * (c + 1)) / (cols + 1)
+                if (overlayRect != null && overlayRect.contains(xx, yy)) {
+                    out[n++] = -1
+                    continue
+                }
+                val color = bitmap.getPixel(xx.coerceIn(0, bitmap.width - 1), yy.coerceIn(0, bitmap.height - 1))
+                val red = (color shr 16) and 0xff
+                val green = (color shr 8) and 0xff
+                val blue = color and 0xff
+                out[n++] = (red * 30 + green * 59 + blue * 11) / 100
+            }
+        }
+        return out
+    }
+
+
+    /**
+     * Narrow strip around TikTok's playback progress area.  It is intentionally kept out of the
+     * main motion ROI: during a real playback freeze the video pixels can stop while this strip
+     * continues to advance, which is useful supporting evidence instead of noise.
+     */
+    private fun tikTokProgressSignature(bitmap: Bitmap, overlayRect: Rect?): IntArray {
+        val left = (bitmap.width * 0.06f).toInt()
+        val right = (bitmap.width * 0.84f).toInt().coerceAtLeast(left + 1)
+        val top = (bitmap.height * 0.80f).toInt()
+        val bottom = (bitmap.height * 0.90f).toInt().coerceAtLeast(top + 1)
+        val cols = 48
+        val rows = 5
         val out = IntArray(cols * rows)
         var n = 0
         for (r in 0 until rows) {
@@ -2516,7 +2556,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                 val transitionSettleMs = 1000L
                 val initialLagConfirmMs = 3500L
                 val playbackGraceAfterDynamicMs = 2000L
-                val playbackFreezeConfirmMs = 1600L
+                val playbackFreezeConfirmMs = 1200L
                 val countLimit = autoVideoCount.coerceIn(1, 500)
                 val watchMs = autoWatchSeconds.coerceIn(3, 120) * 1000L
                 val durationLimitMs = autoDurationMinutes.coerceIn(1, 180) * 60_000L
@@ -2546,7 +2586,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                     delay(transitionSettleMs)
 
                     val analysisStartElapsed = SystemClock.elapsedRealtime()
-                    var previous = captureTikTokSignature(currentTikTokOverlayRect())
+                    var previousFrame = captureTikTokVisualFrame(currentTikTokOverlayRect())
                     var firstDynamicWall = 0L
                     var firstDynamicElapsed = 0L
                     var dynamicCandidateWall = 0L
@@ -2564,6 +2604,8 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                     var freezeStartElapsed = 0L
                     var freezeStaticStreak = 0
                     var recoveryStreak = 0
+                    var progressMovingStreak = 0
+                    var progressEvidenceSamples = 0
 
                     val started = SystemClock.elapsedRealtime()
                     val remainingTotal = if (durationMode) {
@@ -2574,14 +2616,21 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
 
                     while (running && SystemClock.elapsedRealtime() - started < thisWatchMs) {
                         delay(sampleMs)
-                        val current = captureTikTokSignature(currentTikTokOverlayRect())
-                        if (previous == null || current == null) {
-                            previous = current ?: previous
+                        val currentFrame = captureTikTokVisualFrame(currentTikTokOverlayRect())
+                        if (previousFrame == null || currentFrame == null) {
+                            previousFrame = currentFrame ?: previousFrame
                             continue
                         }
-                        val motion = tikTokVisualMotion(previous!!, current)
-                        previous = current
+                        val motion = tikTokVisualMotion(previousFrame!!.main, currentFrame.main)
+                        val progressMotion = tikTokVisualMotion(previousFrame!!.progress, currentFrame.progress)
+                        previousFrame = currentFrame
                         val clearlyDynamic = motion.first >= initialDynamicMean || motion.second >= initialDynamicRatio
+                        // TikTok's thin playback/progress strip often keeps advancing even when the
+                        // decoded video picture freezes. Treat it as supporting evidence only; it
+                        // never creates a lag event by itself.
+                        val progressMoving = progressMotion.first >= 0.25 || progressMotion.second >= 0.004
+                        progressMovingStreak = if (progressMoving) progressMovingStreak + 1 else 0
+                        if (progressMoving) progressEvidenceSamples++
 
                         if (!confirmedDynamic) {
                             if (clearlyDynamic) {
@@ -2627,15 +2676,24 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                             }
 
                             if (SystemClock.elapsedRealtime() - confirmedDynamicElapsed >= playbackGraceAfterDynamicMs && baselineReady) {
-                                val freezeMeanThreshold = kotlin.math.max(0.60, baselineMean * 0.16)
-                                val freezeRatioThreshold = kotlin.math.max(0.008, baselineRatio * 0.16)
+                                // Relative thresholds are deliberately more sensitive than v1.2.58.
+                                // A freeze is strongest when the MAIN ROI collapses while TikTok's
+                                // progress strip still moves. A very deep freeze can still be detected
+                                // even if the progress strip is hidden on a particular TikTok build.
+                                val freezeMeanThreshold = kotlin.math.max(0.85, baselineMean * 0.28)
+                                val freezeRatioThreshold = kotlin.math.max(0.012, baselineRatio * 0.30)
+                                val deepFreezeMean = kotlin.math.max(0.45, baselineMean * 0.12)
+                                val deepFreezeRatio = kotlin.math.max(0.006, baselineRatio * 0.12)
                                 val veryStatic = motion.first <= freezeMeanThreshold && motion.second <= freezeRatioThreshold
-                                val recovered = motion.first >= kotlin.math.max(1.8, baselineMean * 0.45) ||
-                                    motion.second >= kotlin.math.max(0.025, baselineRatio * 0.45)
+                                val deepStatic = motion.first <= deepFreezeMean && motion.second <= deepFreezeRatio
+                                val progressSupportsFreeze = progressMovingStreak >= 2
+                                val freezeCandidate = veryStatic && (progressSupportsFreeze || deepStatic)
+                                val recovered = motion.first >= kotlin.math.max(1.6, baselineMean * 0.40) ||
+                                    motion.second >= kotlin.math.max(0.022, baselineRatio * 0.40)
 
                                 if (freezeStartElapsed == 0L) {
-                                    freezeStaticStreak = if (veryStatic) freezeStaticStreak + 1 else 0
-                                    if (freezeStaticStreak >= 4) {
+                                    freezeStaticStreak = if (freezeCandidate) freezeStaticStreak + 1 else 0
+                                    if (freezeStaticStreak >= 3) {
                                         val nowElapsed = SystemClock.elapsedRealtime()
                                         val back = (freezeStaticStreak - 1) * sampleMs
                                         freezeStartElapsed = (nowElapsed - back).coerceAtLeast(confirmedDynamicElapsed)
@@ -2662,16 +2720,32 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
 
                         header.text = "AUTO · V$video · L$lagCount"
                         status.text = if (confirmedDynamic) {
-                            "M ${String.format(java.util.Locale.US,"%.1f",motion.first)} · B ${String.format(java.util.Locale.US,"%.1f",baselineMean)}"
+                            "M ${String.format(java.util.Locale.US,"%.1f",motion.first)} · B ${String.format(java.util.Locale.US,"%.1f",baselineMean)} · P ${String.format(java.util.Locale.US,"%.2f",progressMotion.second)}"
                         } else {
-                            "Classifying · M ${String.format(java.util.Locale.US,"%.1f",motion.first)}"
+                            "Classifying · M ${String.format(java.util.Locale.US,"%.1f",motion.first)} · P ${String.format(java.util.Locale.US,"%.2f",progressMotion.second)}"
                         }
                     }
 
+                    // Do not drop a freeze just because the next automatic swipe arrives before the
+                    // picture recovers.  Close the pending event at the end of this video's watch
+                    // window; this is the main v1.2.59 fix for long stalls being missed.
+                    if (confirmedDynamic && freezeStartElapsed > 0L) {
+                        val endWall = System.currentTimeMillis()
+                        val endElapsed = SystemClock.elapsedRealtime()
+                        val freezeMs = endElapsed - freezeStartElapsed
+                        if (freezeMs >= playbackFreezeConfirmMs) {
+                            addLagEvent("PLAYBACK", freezeStartWall, freezeStartElapsed, endWall, endElapsed)
+                        }
+                        freezeStartWall = 0L
+                        freezeStartElapsed = 0L
+                    }
+
                     if (!confirmedDynamic) {
+                        // Keep static/photo handling conservative: progress activity is useful evidence
+                        // that this is intentional static content rather than a decoder freeze.
                         staticOrImagePosts++
                         header.text = "AUTO · V$video · L$lagCount"
-                        status.text = "Static/image · excluded"
+                        status.text = if (progressEvidenceSamples >= 2) "Static/image · progress active · excluded" else "Static/image · excluded"
                     }
                     clearPending()
                     if (hasMore()) delay(500)
