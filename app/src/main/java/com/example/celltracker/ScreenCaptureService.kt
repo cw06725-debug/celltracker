@@ -201,7 +201,7 @@ class ScreenCaptureService : Service() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(6, 2, 6, 2)
-            setBackgroundColor(0xDD202124.toInt())
+            background = OverlayStyleV130.card(this, .90f)
         }
         val status = TextView(this).apply {
             text = "AI F:0 A:0"
@@ -219,6 +219,9 @@ class ScreenCaptureService : Service() {
                 textSize = 10f
                 minHeight = 0
                 minWidth = 0
+                setPadding(2, 0, 2, 0)
+                OverlayStyleV130.button(this@ScreenCaptureService, this, label == "STOP")
+                textSize = 10f
                 setPadding(2, 0, 2, 0)
                 setOnClickListener { action() }
             }

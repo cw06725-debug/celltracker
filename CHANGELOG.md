@@ -1,3 +1,10 @@
+## v1.3.0 preview — visual unification & LTE SINR acquisition (2026-10-22)
+- Standardized blue-card style in all currently identified interactive floating test overlays.
+- Improved YouTube / WhatsApp Accessibility + Prepare Test layout.
+- Restored icon-free Cell Info section headers.
+- LTE RSSNR subscription- and serving-cell-aware second public-API source with validity checks.
+- This is a source preview, not a validated stable release. See V130_PREVIEW_VALIDATION.md.
+
 ## v1.2.70 Preview 5 — Home icon/card alignment fix
 
 - Vendor logger cards (TranLog, MTK Logger, QTI LogKit) use a single slot of the same three-column Home grid, even when only one logger is installed. Previously a lone card filled half the row.

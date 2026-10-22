@@ -852,7 +852,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(20, 14, 20, 14)
-            setBackgroundColor(0xE6202124.toInt())
+            background = OverlayStyleV130.card(this)
         }
         val header = TextView(this).apply {
             setTextColor(0xffffffff.toInt())
@@ -875,10 +875,10 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.END
         }
-        val start = Button(this).apply { text = "START" }
+        val start = Button(this).apply { text = "START"; OverlayStyleV130.button(this@YouTubeLoadingAccessibilityService, this) }
         overlayStartButton = start
-        val loaded = Button(this).apply { text = "LOADED"; visibility = View.GONE }
-        val stop = Button(this).apply { text = "STOP"; visibility = View.GONE }
+        val loaded = Button(this).apply { text = "LOADED"; visibility = View.GONE; OverlayStyleV130.button(this@YouTubeLoadingAccessibilityService, this) }
+        val stop = Button(this).apply { text = "STOP"; visibility = View.GONE; OverlayStyleV130.button(this@YouTubeLoadingAccessibilityService, this, true) }
         val weighted = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         rowTop.addView(start, weighted)
         rowTop.addView(loaded, weighted)
@@ -1538,16 +1538,16 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(20, 14, 20, 14)
-            setBackgroundColor(0xE6202124.toInt())
+            background = OverlayStyleV130.card(this)
         }
         val header = TextView(this).apply { setTextColor(0xffffffff.toInt()); text = "WhatsApp Image Send  ·  drag here"; setPadding(8,8,8,12) }
         val status = TextView(this).apply { setTextColor(0xffffffff.toInt()); text = "Ready · open WhatsApp image preview"; setPadding(8,0,8,8) }
         waStatusView = status
         val clock = TextView(this).apply { setTextColor(0xffffffff.toInt()); text = "TIME --:--:--.---"; setPadding(8,0,8,8) }
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val start = Button(this).apply { text = "START" }
-        val sent = Button(this).apply { text = "SENT"; visibility = View.GONE }
-        val stop = Button(this).apply { text = "STOP"; visibility = View.GONE }
+        val start = Button(this).apply { text = "START"; OverlayStyleV130.button(this@YouTubeLoadingAccessibilityService, this) }
+        val sent = Button(this).apply { text = "SENT"; visibility = View.GONE; OverlayStyleV130.button(this@YouTubeLoadingAccessibilityService, this) }
+        val stop = Button(this).apply { text = "STOP"; visibility = View.GONE; OverlayStyleV130.button(this@YouTubeLoadingAccessibilityService, this, true) }
         waStartButton = start; waSentButton = sent
         val weighted = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         val stopWidth = (92 * resources.displayMetrics.density).toInt()
@@ -2419,7 +2419,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(if(autoDetectLag) 10 else 18, if(autoDetectLag) 8 else 12, if(autoDetectLag) 10 else 18, if(autoDetectLag) 8 else 12)
-            setBackgroundColor(if(autoDetectLag) 0xD918191C.toInt() else 0xE6202124.toInt())
+            background = OverlayStyleV130.card(this, if (autoDetectLag) .79f else .90f)
         }
         val header = TextView(this).apply {
             setTextColor(0xffffffff.toInt())
@@ -2455,6 +2455,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             text=label
             isAllCaps=false
             minWidth=0
+            OverlayStyleV130.button(this@YouTubeLoadingAccessibilityService, this, label == "FINISH")
         }
         val b1=actionButton("START")
         val b2=actionButton(if(isLag)"LAG" else "POST").apply{visibility=View.GONE}

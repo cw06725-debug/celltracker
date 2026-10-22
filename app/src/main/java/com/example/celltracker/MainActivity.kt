@@ -2091,7 +2091,7 @@ private fun MainScreen(
                 ) {
             CellInfoSummaryCardV128(c = c, simLabel = "SIM ${((pageSelected?.simSlotIndex ?: 0) + 1)}")
 
-            CellInfoCardV128("Network", "⌁") {
+            CellInfoCardV128("Network") {
                 Field("Operator", c.operator)
                 Field("RAT", c.displayRat.ifBlank { c.rat })
                 fun plmn(mcc: String, mnc: String): String = if (mcc == "--" || mnc == "--") "--" else "$mcc / $mnc"
@@ -2109,7 +2109,7 @@ private fun MainScreen(
                 Field("Roaming", c.roaming)
                 Field("Registered", if (c.registered) "Yes" else "No")
             }
-            CellInfoCardV128("Serving Cell", "◎") {
+            CellInfoCardV128("Serving Cell") {
                 Field("Serving Cell PLMN", if (c.mcc == "--" || c.mnc == "--") "--" else "${c.mcc} / ${c.mnc}")
                 Field("TAC", c.tac)
                 Field(if (c.rat == "NR") "NCI" else "Cell ID", c.cellId)
@@ -2121,7 +2121,7 @@ private fun MainScreen(
             }
             val nrInfo = pageSelected?.nrConnection ?: NrConnectionData()
             if (nrInfo.state != "NOT_ACTIVE" || c.displayRat.contains("5G", ignoreCase = true)) {
-                CellInfoCardV128("NR / EN-DC Details", "5G") {
+                CellInfoCardV128("NR / EN-DC Details") {
                     Field("NR State", when (nrInfo.state) {
                         "NSA_CONNECTED" -> "NSA Connected"
                         "SA_CONNECTED" -> "SA Connected"
@@ -2193,10 +2193,11 @@ private fun MainScreen(
                     }
                 }
             }
-            CellInfoCardV128("Signal", "▥") {
+            CellInfoCardV128("Signal") {
                 Field(if (c.rat == "NR") "SS-RSRP" else "RSRP", valueWithUnit(c.rsrp, "dBm"))
                 Field(if (c.rat == "NR") "SS-RSRQ" else "RSRQ", valueWithUnit(c.rsrq, "dB"))
                 Field(if (c.rat == "NR") "SS-SINR" else "SINR", valueWithUnit(c.sinr, "dB"))
+                if (c.rat == "LTE" && c.sinrSource != "--") Field("SINR Source", c.sinrSource)
                 if (c.rssi != "--") Field("RSSI", valueWithUnit(c.rssi, "dBm"))
                 if (c.timingAdvance != "--") Field("Timing Advance", c.timingAdvance)
                 if (c.csiRsrp != "--") Field("CSI-RSRP", valueWithUnit(c.csiRsrp, "dBm"))
@@ -2249,7 +2250,7 @@ private fun MainScreen(
             }
 
             val l = state.location
-            CellInfoCardV128("Location", "⌖") {
+            CellInfoCardV128("Location") {
                 Field("Latitude", l.latitude); Field("Longitude", l.longitude); Field("Altitude", l.altitude)
                 Field("Accuracy", l.accuracy); Field("Speed", l.speedKmh); Field("Bearing", l.bearing)
             }
@@ -4254,7 +4255,6 @@ private fun CellInfoSummaryCardV128(c: CellData, simLabel: String) {
 @Composable
 private fun CellInfoCardV128(
     title: String,
-    symbol: String,
     content: @Composable ColumnScope.() -> Unit
 ) {
     Surface(
@@ -4271,19 +4271,6 @@ private fun CellInfoCardV128(
                     .padding(horizontal = 16.dp, vertical = 13.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.primary
-                ) {
-                    Text(
-                        symbol,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
-                        color = MaterialTheme.colorScheme.onPrimary,
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-                Spacer(Modifier.width(10.dp))
                 Text(
                     title,
                     style = MaterialTheme.typography.titleMedium,
@@ -4448,11 +4435,23 @@ private fun WhatsAppSendScreen(onBack: () -> Unit, setupOnly: Boolean = false, o
     var showSetup by remember { mutableStateOf(true) }
 
     // Initial Test Setup overlays Home rather than a legacy test page.
-            if (showSetup) UnifiedTestSetupDialogV1270("WhatsApp Image Send", onDismiss=onBack) {
+            if (showSetup) UnifiedTestSetupDialogV1270("WhatsApp Image Send", onDismiss=onBack,
+                footer = {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically) {
+                        TextButton(onClick=onBack) { Text("Cancel", maxLines=1) }
+                        Spacer(Modifier.width(8.dp))
+                        Button(onClick = { showSetup = false; onSetupFinished(); showMetadata = true }) {
+                            Text("Prepare Test", maxLines=1, style=MaterialTheme.typography.labelMedium)
+                        }
+                    }
+                }
+            ) {
                 Text("Open a WhatsApp chat and prepare an image. For each sample: START → ARMED → tap Send (T0) → tap SENT (T1).", style = MaterialTheme.typography.bodySmall)
                 Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(autoRecord, { autoRecord = it }); Text("Auto Network Recording") }
-                Button(onClick = { context.startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }, modifier = Modifier.fillMaxWidth()) { Text("1. ENABLE WHATSAPP SEND ACCESSIBILITY") }
-                Button(onClick = { showSetup = false; onSetupFinished(); showMetadata = true }, modifier = Modifier.fillMaxWidth()) { Text("2. PREPARE TEST / OPEN WHATSAPP") }
+                SetupAccessibilityCardV130("WhatsAppSendAccessibilityService") {
+                    context.startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                }
             }
 
     if (!setupOnly) {
@@ -5130,7 +5129,26 @@ private fun VideoLoadingScreen(onBack: () -> Unit, onVisualAiCollector: () -> Un
     }
 
     // Initial Test Setup overlays Home rather than a legacy test page.
-            if (showSetup) UnifiedTestSetupDialogV1270("YouTube Video Loading", onDismiss=onBack) {
+            if (showSetup) UnifiedTestSetupDialogV1270("YouTube Video Loading", onDismiss=onBack,
+                footer = {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically) {
+                        TextButton(onClick=onBack) { Text("Cancel", maxLines=1) }
+                        Spacer(Modifier.width(8.dp))
+                Button(onClick = {
+                    pendingConfig = VideoLoadingConfig(
+                        count = (count.toIntOrNull() ?: 10).coerceIn(1, 50),
+                        timeoutMs = ((timeout.toLongOrNull() ?: 15) * 1000).coerceAtLeast(3000),
+                        returnWaitMs = (((returnWait.toDoubleOrNull() ?: 2.0) * 1000).toLong()).coerceAtLeast(500),
+                        autoRecord = autoRecord, semiAuto = semiAuto
+                    )
+                    showSetup = false
+                    onSetupFinished()
+                    showMetadata = true
+                }) { Text("Prepare Test", maxLines=1, style=MaterialTheme.typography.labelMedium) }
+                    }
+                }
+            ) {
                 Text("On every DUT/REF: open YouTube → the same creator → Videos, with the same first video visible. Each phone measures its own loading delay; simultaneous start is not required.", style = MaterialTheme.typography.bodySmall)
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
@@ -5151,18 +5169,9 @@ private fun VideoLoadingScreen(onBack: () -> Unit, onVisualAiCollector: () -> Un
                 Text("Android shows the system capture confirmation before the test. The MP4 is named from the test metadata and stops when the YouTube test finishes.",style=MaterialTheme.typography.bodySmall)
                 Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(semiAuto, { semiAuto = it }); Text("Semi-auto mode (START → click video → LOADED)") }
                 if (semiAuto) Text("Semi-auto has no fixed test count. For EACH sample: press START on the YouTube list, then tap one video; that tap is T0. CellTracker automatically detects playback start as T1. LOADED is only the manual T1 fallback if AUTO is not confirmed. Between samples you can scroll freely. Advertisements can be corrected during report review/calibration.", style = MaterialTheme.typography.bodySmall)
-                Button(onClick = { context.startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }, modifier = Modifier.fillMaxWidth()) { Text("1. ENABLE CELLTRACKER ACCESSIBILITY") }
-                Button(onClick = {
-                    pendingConfig = VideoLoadingConfig(
-                        count = (count.toIntOrNull() ?: 10).coerceIn(1, 50),
-                        timeoutMs = ((timeout.toLongOrNull() ?: 15) * 1000).coerceAtLeast(3000),
-                        returnWaitMs = (((returnWait.toDoubleOrNull() ?: 2.0) * 1000).toLong()).coerceAtLeast(500),
-                        autoRecord = autoRecord, semiAuto = semiAuto
-                    )
-                    showSetup = false
-                    onSetupFinished()
-                    showMetadata = true
-                }, modifier = Modifier.fillMaxWidth()) { Text("2. PREPARE TEST / OPEN YOUTUBE") }
+                SetupAccessibilityCardV130("YouTubeLoadingAccessibilityService") {
+                    context.startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                }
                 Text(if (semiAuto) "Semi-auto: for every sample, START → tap one video (T0) → AUTO T1 when playback starts (LOADED is fallback) → return → freely scroll → START again. Android Back before T1 cancels the unfinished sample." else "AUTO Visual AI (Beta): CellTracker selects a new video, then requires BOTH PLAY and recommendation-list readiness before T1 → Back → next video → auto-scroll. First-pass thresholds are tuned from the labelled Visual AI collector set; Semi-auto remains unchanged.", style = MaterialTheme.typography.bodySmall)
             }
 

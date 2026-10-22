@@ -113,6 +113,7 @@ class FloatingOverlayService : Service() {
             setPadding(0, 0, 0, 0)
             setOnClickListener { setCompact(!compact) }
         }
+        OverlayStyleV130.button(this, toggleButton, destructive = false)
         closeButton = Button(this).apply {
             text = "×"
             textSize = 17f
@@ -121,6 +122,7 @@ class FloatingOverlayService : Service() {
             setPadding(0, 0, 0, 0)
             setOnClickListener { confirmCloseOverlay() }
         }
+        OverlayStyleV130.button(this, closeButton, destructive = true)
         headerRow.addView(headerText, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         headerRow.addView(toggleButton, LinearLayout.LayoutParams(dp(38), dp(36)).apply { marginEnd = dp(3) })
         headerRow.addView(closeButton, LinearLayout.LayoutParams(dp(36), dp(36)))
@@ -144,11 +146,13 @@ class FloatingOverlayService : Service() {
             textSize = 13f
             setOnClickListener { showIssueMenu() }
         }
+        OverlayStyleV130.button(this, markButton, destructive = false)
         stopButton = Button(this).apply {
             text = "STOP"
             textSize = 13f
             setOnClickListener { stopRecordingFromOverlay() }
         }
+        OverlayStyleV130.button(this, stopButton, destructive = true)
         controlsRow.addView(markButton, LinearLayout.LayoutParams(0, dp(42), 1f).apply { marginEnd = dp(4) })
         controlsRow.addView(stopButton, LinearLayout.LayoutParams(0, dp(42), 1f).apply { marginStart = dp(4) })
         root.addView(controlsRow)
@@ -158,10 +162,11 @@ class FloatingOverlayService : Service() {
             textSize = 14f
             setOnClickListener { showStartMenu() }
         }
+        OverlayStyleV130.button(this, startButton, destructive = false)
         root.addView(startButton, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(42)))
 
         val params = WindowManager.LayoutParams(
-            dp(230),
+            dp(224),
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
@@ -245,7 +250,7 @@ class FloatingOverlayService : Service() {
         dataText.visibility = if (compact) View.GONE else View.VISIBLE
         updateControls(RecordingState.status.value.isRecording)
         overlayParams?.let { p ->
-            p.width = if (compact) dp(175) else dp(230)
+            p.width = if (compact) dp(172) else dp(224)
             overlayView?.let { runCatching { windowManager.updateViewLayout(it, p) } }
         }
     }
@@ -604,13 +609,8 @@ class FloatingOverlayService : Service() {
         setPadding(dp(2), dp(2), dp(2), dp(2))
     }
 
-    /** Background alpha only: text and buttons remain fully legible. */
-    private fun roundedBackground(opacity: Float) = GradientDrawable().apply {
-        cornerRadius = dp(12).toFloat()
-        val alpha = (opacity.coerceIn(0.20f, 1f) * 235f).toInt().coerceIn(40, 235)
-        setColor(Color.argb(alpha, 25, 28, 34))
-        setStroke(dp(1), Color.argb(120, 255, 255, 255))
-    }
+    /** Keep existing opacity control while adopting the common CellTracker card style. */
+    private fun roundedBackground(opacity: Float) = OverlayStyleV130.card(this, opacity)
 
     private fun unit(value: String, suffix: String) = if (value.isBlank() || value == "--") "--" else "$value $suffix"
     private fun formatElapsed(ms: Long): String {

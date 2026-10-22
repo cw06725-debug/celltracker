@@ -183,8 +183,13 @@ class CellularRepository(private val context: Context) {
 
         val caInfo = carrierAggregationInfo(tm, parsed, commonBase, nrNsaActive, nrConnection)
         val common = commonBase.copy(carrierAggregation = caInfo)
-        val serving = if (common.rat == "LTE" && common.sinr == "--") {
-            common.copy(sinr = readLteSinrFallback(tm))
+        // On some OEM RILs CellInfo LTE RSSNR is frozen at 0 while the more recent
+        // subscription-scoped SignalStrength has an updated value. Both are public APIs:
+        // prefer the SignalStrength reading ONLY if its RSRP matches this serving LTE cell.
+        // A genuine 0 dB remains a valid measurement; never invent a replacement.
+        val serving = if (common.rat == "LTE") {
+            val (sinr, sinrSource) = readLteServingSinr(tm, common)
+            common.copy(sinr = sinr, sinrSource = sinrSource)
         } else common
 
         // Secondary-serving NR is part of the active EN-DC connection, not a neighbor.
@@ -293,7 +298,7 @@ class CellularRepository(private val context: Context) {
                 arfcn = intValue(id.earfcn),
                 rsrp = intDbValue(s.rsrp),
                 rsrq = intDbValue(s.rsrq),
-                sinr = intDbValue(s.rssnr),
+                sinr = lteRssnrValue(s.rssnr),
                 band = if (android.os.Build.VERSION.SDK_INT >= 30) bandValue(id.bands) else lteBandFromEarfcn(id.earfcn),
                 bandwidth = bandwidthValue(id.bandwidth),
                 rssi = intDbValue(s.rssi),
@@ -390,32 +395,35 @@ class CellularRepository(private val context: Context) {
         else -> null
     }
 
-    /**
-     * LTE SINR is inconsistently populated in CellInfo on some vendor builds.
-     * Try the latest SignalStrength snapshot as a second public-API source, then
-     * parse the framework/vendor toString as a compatibility fallback.
+    /** LTE RSSNR is a reference-signal SNR in dB (-20..30), not NR SS-SINR.
+     * Zero is an entirely valid reading. All fallback APIs are scoped to the SAME
+     * subscription via [tm], not the system default/data SIM.
      */
-    private fun readLteSinrFallback(tm: TelephonyManager): String {
-        val latest = runCatching { tm.signalStrength }.getOrNull()
-        val lte = runCatching { latest?.getCellSignalStrengths(CellSignalStrengthLte::class.java)?.firstOrNull() }.getOrNull()
-        val direct = lte?.rssnr
-        if (direct != null && direct != CellInfo.UNAVAILABLE) return direct.toString()
+    private fun lteRssnrValue(raw: Int): String =
+        raw.takeIf { it != CellInfo.UNAVAILABLE && it in -20..30 }?.toString() ?: "--"
 
-        // Some Transsion/vendor frameworks keep rssnr in the object string while
-        // the public getter is reported unavailable. Use it only when it is a sane
-        // LTE RSSNR value, and otherwise keep showing -- rather than invent data.
-        val candidates = listOfNotNull(lte?.toString(), latest?.toString())
-        val patterns = listOf(
-            Regex("(?:rssnr|rssnrDb|sinr)\\s*[=:]\\s*(-?\\d+)", RegexOption.IGNORE_CASE),
-            Regex("mRssnr\\s*=\\s*(-?\\d+)", RegexOption.IGNORE_CASE)
-        )
-        for (text in candidates) {
-            for (pattern in patterns) {
-                val value = pattern.find(text)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: continue
-                if (value in -20..30) return value.toString()
-            }
-        }
-        return "--"
+    private fun readLteServingSinr(tm: TelephonyManager, serving: CellData): Pair<String, String> {
+        val fromCellInfo = serving.sinr.takeIf { it != "--" }
+        val fallback = (fromCellInfo ?: "--") to (if (fromCellInfo != null) "CellInfo LTE RSSNR" else "Unavailable")
+        val latest = runCatching { tm.signalStrength }.getOrNull() ?: return fallback
+        val lte = runCatching {
+            latest.getCellSignalStrengths(CellSignalStrengthLte::class.java).firstOrNull()
+        }.getOrNull() ?: return fallback
+        val sameServingCell = serving.rsrp.toIntOrNull()?.let { cellRsrp ->
+            val snapshotRsrp = lte.rsrp
+            snapshotRsrp != CellInfo.UNAVAILABLE && kotlin.math.abs(snapshotRsrp - cellRsrp) <= 3
+        } ?: false
+        if (!sameServingCell) return fallback
+
+        // The getter is the authoritative public API; parse only the LTE object
+        // for OEM builds that omit the getter, never a generic NR/LTE mixed string.
+        val direct = lteRssnrValue(lte.rssnr)
+        if (direct != "--") return direct to "SignalStrength LTE RSSNR (RSRP match)"
+        val rawText = lte.toString()
+        val parsed = Regex("(?:mRssnr|rssnr|rssnrDb)\\s*[=:]\\s*(-?\\d+)", RegexOption.IGNORE_CASE)
+            .find(rawText)?.groupValues?.getOrNull(1)?.toIntOrNull()
+        val vendorValue = parsed?.let { lteRssnrValue(it) } ?: "--"
+        return if (vendorValue != "--") vendorValue to "LTE framework string (RSRP match)" else fallback
     }
 
     private fun carrierAggregationInfo(

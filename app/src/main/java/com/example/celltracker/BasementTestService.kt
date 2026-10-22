@@ -1364,7 +1364,7 @@ $roundSections
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(10), dp(8), dp(10), dp(8))
-            setBackgroundColor(0xE6202124.toInt())
+            background = OverlayStyleV130.card(this)
         }
         overlayTitle = TextView(this).apply {
             setTextColor(Color.WHITE); textSize = 14f
@@ -1377,6 +1377,7 @@ $roundSections
         }
         overlayButton = Button(this).apply {
             textSize = 11f
+            OverlayStyleV130.button(this@BasementTestService, this)
             setOnClickListener { handlePrimaryAction() }
         }
         root.addView(overlayTitle)

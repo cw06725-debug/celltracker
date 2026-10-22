@@ -22,6 +22,7 @@ data class CellData(
     val rsrp: String = "--",
     val rsrq: String = "--",
     val sinr: String = "--",
+    val sinrSource: String = "--",
     val band: String = "--",
     val bandwidth: String = "--",
     val rssi: String = "--",

@@ -97,16 +97,16 @@ class WhatsAppSendAccessibilityService : AccessibilityService() {
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(20, 14, 20, 14)
-            setBackgroundColor(0xE6202124.toInt())
+            background = OverlayStyleV130.card(this)
         }
         val header = TextView(this).apply { setTextColor(0xffffffff.toInt()); text = "WhatsApp Image Send  ·  drag here"; setPadding(8,8,8,12) }
         val status = TextView(this).apply { setTextColor(0xffffffff.toInt()); text = "Ready · open WhatsApp image preview"; setPadding(8,0,8,8) }
         statusView = status
         val clock = TextView(this).apply { setTextColor(0xffffffff.toInt()); text = "TIME --:--:--.---"; setPadding(8,0,8,8) }
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val start = Button(this).apply { text = "START" }
-        val sent = Button(this).apply { text = "SENT"; visibility = View.GONE }
-        val stop = Button(this).apply { text = "STOP"; visibility = View.GONE }
+        val start = Button(this).apply { text = "START"; OverlayStyleV130.button(this@WhatsAppSendAccessibilityService, this) }
+        val sent = Button(this).apply { text = "SENT"; visibility = View.GONE; OverlayStyleV130.button(this@WhatsAppSendAccessibilityService, this) }
+        val stop = Button(this).apply { text = "STOP"; visibility = View.GONE; OverlayStyleV130.button(this@WhatsAppSendAccessibilityService, this, true) }
         startButton = start; sentButton = sent
         val weighted = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         val stopWidth = (92 * resources.displayMetrics.density).toInt()
