@@ -401,10 +401,8 @@ object CellTrackerAdbEngine {
         true
     }.getOrDefault(false)
 
-    /** Show the local MTK Logger entry only on vivo MTK devices that actually ship the logger package. */
+    /** Show the local MTK Logger entry only on MTK devices that actually ship the logger package. */
     fun shouldShowMtkLoggerLocal(context:Context):Boolean {
-        val vivo = android.os.Build.MANUFACTURER.equals("vivo", ignoreCase = true) ||
-            android.os.Build.BRAND.equals("vivo", ignoreCase = true)
         val hw = listOf(
             android.os.Build.HARDWARE,
             android.os.Build.BOARD,
@@ -416,7 +414,53 @@ object CellTrackerAdbEngine {
                 if (android.os.Build.VERSION.SDK_INT >= 31) android.os.Build.SOC_MANUFACTURER.contains("mediatek", ignoreCase = true) else false
             }.getOrDefault(false)
         val logger = packageInstalled(context, "com.debug.loggerui") || packageInstalled(context, "com.mediatek.mtklogger")
-        return vivo && mtk && logger
+        return mtk && logger
+    }
+
+
+    /** Show the local Qualcomm logger entry only on Qualcomm devices that actually ship QTI LogKit. */
+    fun shouldShowQtiLogkitLocal(context:Context):Boolean {
+        val hw = listOf(
+            android.os.Build.HARDWARE,
+            android.os.Build.BOARD,
+            android.os.Build.DEVICE,
+            android.os.Build.PRODUCT
+        ).joinToString(" ").lowercase(Locale.US)
+        val qcom = hw.contains("qcom") || hw.contains("qualcomm") || hw.contains("msm") || hw.contains("sdm") || hw.contains("sm") ||
+            runCatching {
+                if (android.os.Build.VERSION.SDK_INT >= 31) android.os.Build.SOC_MANUFACTURER.contains("qualcomm", ignoreCase = true) else false
+            }.getOrDefault(false)
+        val logger = packageInstalled(context, "com.qualcomm.qti.logkit") || packageInstalled(context, "com.qualcomm.qti.logkit.lite")
+        return qcom && logger
+    }
+
+    /** Open QTI LogKit on the SAME device that is running CellTracker. No ADB is required. */
+    fun openQtiLogkitLocal(context:Context):Result<String> = runCatching {
+        val candidates = listOf(
+            ComponentName("com.qualcomm.qti.logkit", "com.qualcomm.qti.logkit.cActivity") to "QTI LogKit",
+            ComponentName("com.qualcomm.qti.logkit.lite", "com.qualcomm.qti.logkit.lite.cActivity") to "QTI LogKit Lite"
+        )
+        var last:String? = null
+        for ((component, label) in candidates) {
+            if (!packageInstalled(context, component.packageName)) continue
+            try {
+                context.startActivity(Intent().setComponent(component).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                return@runCatching label
+            } catch (t:Throwable) {
+                last = t.message
+            }
+        }
+        for (pkg in listOf("com.qualcomm.qti.logkit", "com.qualcomm.qti.logkit.lite")) {
+            if (!packageInstalled(context, pkg)) continue
+            val launch = context.packageManager.getLaunchIntentForPackage(pkg) ?: continue
+            try {
+                context.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                return@runCatching if (pkg.endsWith(".lite")) "QTI LogKit Lite" else "QTI LogKit"
+            } catch (t:Throwable) {
+                last = t.message
+            }
+        }
+        throw IllegalStateException(last ?: "QTI LogKit is not installed or is blocked by this ROM")
     }
 
     /** Open the MTK logger UI on the SAME device that is running CellTracker.

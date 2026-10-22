@@ -38,6 +38,8 @@
         </intent>
         <package android:name="com.debug.loggerui" />
         <package android:name="com.mediatek.mtklogger" />
+        <package android:name="com.qualcomm.qti.logkit" />
+        <package android:name="com.qualcomm.qti.logkit.lite" />
     </queries>
 
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />

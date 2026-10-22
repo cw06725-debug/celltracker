@@ -1,3 +1,10 @@
+# CellTracker v1.2.68
+
+- Added Qualcomm QTI LogKit / QTI LogKit Lite auto-detection in Tests > Quick Start.
+- Show the QTI LogKit card only on Qualcomm devices where a compatible QTI logger package is actually installed.
+- Open QTI LogKit directly on-device without requiring ADB; try known QTI activities first, then the package launcher as fallback.
+- Keep MTK Logger behavior unchanged: show only on MTK devices with a compatible logger component.
+
 # v1.2.66
 
 - Remove START MTK LOG / STOP MTK LOG from the UI because CellTracker cannot reliably display the logger's real running state yet.
@@ -1387,3 +1394,8 @@ Build note: local assembleDebug could not run because this environment cannot re
 - Automatically falls back to the existing REF ADB control when no local MTK logger is available.
 - Added Android package visibility for DebugLoggerUI and legacy MTKLogger packages.
 - Clarified that direct mode controls the same phone; controlling a separate REF phone still requires a transport such as ADB.
+
+## v1.2.67
+- Removed the inline Test Log ADB controls from the Tests screen.
+- Added MTK Logger as a Quick Start card using the installed vendor logger app icon.
+- MTK Logger visibility is now based on MediaTek platform + an installed DebugLoggerUI/MTKLogger component, not vivo brand.

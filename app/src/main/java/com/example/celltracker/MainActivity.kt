@@ -5563,7 +5563,7 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
         Column(Modifier.fillMaxSize().padding(pad).padding(16.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)){
             if (CellTrackerAdbEngine.shouldShowMtkLoggerLocal(context)) {
                 GlassSection("MTK Logger") {
-                    Text("vivo MTK logger detected on this device. Open the official logger UI to view its real status and start/stop logging there.", style=MaterialTheme.typography.bodySmall)
+                    Text("MTK Logger detected on this device. Open the vendor logger UI to view its real status and start/stop logging there.", style=MaterialTheme.typography.bodySmall)
                     OutlinedButton(enabled=!busy,onClick={
                         val r = CellTrackerAdbEngine.openMtkLoggerLocal(context)
                         r.onFailure { Toast.makeText(context, it.message ?: "Unable to open MTK logger", Toast.LENGTH_LONG).show() }
@@ -6124,7 +6124,6 @@ private fun ScenarioTestsV1(
         }
     }
 
-    QuickTestLogManagerV1()
 
     if (quickFilter == "All Tests" || quickFilter == "Video") {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -6143,9 +6142,44 @@ private fun ScenarioTestsV1(
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             QuickTestCompactCardV12("ADB / Logs", "Device diagnostics", ">_", Color(0xFF64748B), modifier = Modifier.weight(1f), onClick = onDeviceLogs)
-            if (quickFilter == "All Tests") {
+            when {
+                CellTrackerAdbEngine.shouldShowMtkLoggerLocal(context) -> {
+                    QuickTestCompactCardV12(
+                        "MTK Logger",
+                        "Vendor logging",
+                        "LOG",
+                        Color(0xFF64748B),
+                        listOf("com.debug.loggerui", "com.mediatek.mtklogger"),
+                        Modifier.weight(1f)
+                    ) {
+                        CellTrackerAdbEngine.openMtkLoggerLocal(context).onFailure {
+                            Toast.makeText(context, it.message ?: "Unable to open MTK Logger", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                }
+                CellTrackerAdbEngine.shouldShowQtiLogkitLocal(context) -> {
+                    QuickTestCompactCardV12(
+                        "QTI LogKit",
+                        "Qualcomm logging",
+                        "LOG",
+                        Color(0xFF64748B),
+                        listOf("com.qualcomm.qti.logkit", "com.qualcomm.qti.logkit.lite"),
+                        Modifier.weight(1f)
+                    ) {
+                        CellTrackerAdbEngine.openQtiLogkitLocal(context).onFailure {
+                            Toast.makeText(context, it.message ?: "Unable to open QTI LogKit", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                }
+                quickFilter == "All Tests" -> {
+                    QuickTestCompactCardV12("Call Test", "Voice setup", "✆", Color(0xFF16A34A), modifier = Modifier.weight(1f), onClick = onCallSetup)
+                }
+                else -> Spacer(Modifier.weight(1f))
+            }
+        }
+        if (quickFilter == "All Tests" && (CellTrackerAdbEngine.shouldShowMtkLoggerLocal(context) || CellTrackerAdbEngine.shouldShowQtiLogkitLocal(context))) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 QuickTestCompactCardV12("Call Test", "Voice setup", "✆", Color(0xFF16A34A), modifier = Modifier.weight(1f), onClick = onCallSetup)
-            } else {
                 Spacer(Modifier.weight(1f))
             }
         }
