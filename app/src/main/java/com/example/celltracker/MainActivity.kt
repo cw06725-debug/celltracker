@@ -422,9 +422,9 @@ private fun WeChatBottomBar(
     modifier: Modifier = Modifier
 ) {
     val items = listOf(
-        Triple("HOME", "⌂", "Home"),
-        Triple("REPORTS", "▤", "Reports"),
-        Triple("SETTINGS", "⚙", "Settings")
+        Triple("HOME", android.R.drawable.ic_menu_view, "Home"),
+        Triple("REPORTS", android.R.drawable.ic_menu_agenda, "Reports"),
+        Triple("SETTINGS", android.R.drawable.ic_menu_manage, "Settings")
     )
     val selectedIndex = items.indexOfFirst { it.first == selected }.coerceAtLeast(0)
     var dragX by remember { mutableFloatStateOf(0f) }
@@ -484,11 +484,11 @@ private fun WeChatBottomBar(
                             shape = RoundedCornerShape(16.dp),
                             color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.11f) else Color.Transparent
                         ) {
-                            Text(
-                                icon,
-                                modifier = Modifier.padding(horizontal = 13.dp, vertical = 4.dp).scale(selectedScale),
-                                style = MaterialTheme.typography.titleMedium,
-                                color = if (isSelected) MaterialTheme.colorScheme.primary else Color(0xFF94A3B8)
+                            Icon(
+                                painter = painterResource(icon),
+                                contentDescription = label,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp).size(22.dp).scale(selectedScale),
+                                tint = if (isSelected) MaterialTheme.colorScheme.primary else Color(0xFF94A3B8)
                             )
                         }
                         Spacer(Modifier.height(2.dp))
@@ -1583,9 +1583,20 @@ private fun ReportCategoryCard(title: String, count: Int, onClick: () -> Unit) {
             Modifier.fillMaxWidth().padding(18.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            val (symbol, iconColor) = when {
+                title.contains("Ping", true) -> "PING" to Color(0xFF1473E6)
+                title.contains("Call", true) -> "CALL" to Color(0xFF16A34A)
+                title.contains("Recording", true) -> "REC" to Color(0xFF7456E8)
+                title.contains("YouTube", true) -> "▶" to Color(0xFFE91D43)
+                title.contains("WhatsApp", true) -> "CALL" to Color(0xFF1AAA67)
+                title.contains("TikTok", true) -> "♪" to Color(0xFF303B51)
+                else -> "⌖" to Color(0xFF0891B2)
+            }
+            AppIconTileV1(symbol, iconColor)
+            Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.titleMedium)
-                Text("$count saved test${if (count == 1) "" else "s"}", style = MaterialTheme.typography.bodySmall)
+                Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text("$count saved test${if (count == 1) "" else "s"}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Text("›", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -2315,7 +2326,7 @@ private fun PingTestScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             item {
-                if (showSetup && !state.isRunning) UnifiedTestSetupDialogV1270("Ping Test", onDismiss = { showSetup = false }) {
+                if (showSetup && !state.isRunning) UnifiedTestSetupDialogV1270("Ping Test", onDismiss = onBack) {
                     OutlinedTextField(
                         value = taskName,
                         onValueChange = { if (!state.isRunning && it.length <= 64) taskName = it },
@@ -3937,20 +3948,20 @@ private fun SettingsScreen(
                     verticalArrangement = Arrangement.spacedBy(18.dp)
                 ) {
                     SettingsGroup(title = "GENERAL") {
-                        SettingsMenuRow("◴", "Sampling", "UI refresh and recording intervals") { navigateTo("sampling") }
+                        SettingsMenuRow(android.R.drawable.ic_menu_recent_history, "Sampling", "UI refresh and recording intervals") { navigateTo("sampling") }
                         SettingsGroupDivider()
-                        SettingsMenuRow("●", "Marker Button", "Tap, long press and feedback") { navigateTo("marker") }
+                        SettingsMenuRow(android.R.drawable.ic_menu_edit, "Marker Button", "Tap, long press and feedback") { navigateTo("marker") }
                         SettingsGroupDivider()
-                        SettingsMenuRow("▣", "Floating Window", "Overlay info, opacity, compact mode and permission") { navigateTo("floating") }
+                        SettingsMenuRow(android.R.drawable.ic_menu_view, "Floating Window", "Overlay info, opacity, compact mode and permission") { navigateTo("floating") }
                     }
                     SettingsGroup(title = "TEST & REPORT") {
-                        SettingsMenuRow("⇩", "Test Report", "Auto export settings for each report type") { navigateTo("testreport") }
+                        SettingsMenuRow(android.R.drawable.ic_menu_save, "Test Report", "Auto export settings for each report type") { navigateTo("testreport") }
                         SettingsGroupDivider()
-                        SettingsMenuRow("⌖", "Map Point Details", "Choose information shown for a map point") { navigateTo("map") }
+                        SettingsMenuRow(android.R.drawable.ic_menu_mylocation, "Map Point Details", "Choose information shown for a map point") { navigateTo("map") }
                         SettingsGroupDivider()
-                        SettingsMenuRow("!", "Issue Types", "Manage built-in and custom issue choices") { navigateTo("issues") }
+                        SettingsMenuRow(android.R.drawable.ic_menu_info_details, "Issue Types", "Manage built-in and custom issue choices") { navigateTo("issues") }
                         SettingsGroupDivider()
-                        SettingsMenuRow("≡", "Test Metadata Options", "Customize Scenario, Operator, RAT and Task choices") { navigateTo("metadata") }
+                        SettingsMenuRow(android.R.drawable.ic_menu_sort_by_size, "Test Metadata Options", "Customize Scenario, Operator, RAT and Task choices") { navigateTo("metadata") }
                     }
                     Spacer(Modifier.height(6.dp))
                 }
@@ -4015,7 +4026,7 @@ private fun SettingsGroupDivider() {
 }
 
 @Composable
-private fun SettingsMenuRow(icon: String, title: String, subtitle: String, onClick: () -> Unit) {
+private fun SettingsMenuRow(icon: Int, title: String, subtitle: String, onClick: () -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -4024,16 +4035,16 @@ private fun SettingsMenuRow(icon: String, title: String, subtitle: String, onCli
         verticalAlignment = Alignment.CenterVertically
     ) {
         Surface(
-            modifier = Modifier.size(40.dp),
-            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.size(46.dp),
+            shape = RoundedCornerShape(13.dp),
             color = MaterialTheme.colorScheme.primary.copy(alpha = .11f)
         ) {
             Box(contentAlignment = Alignment.Center) {
-                Text(
-                    icon,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
+                Icon(
+                    painter = painterResource(icon),
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(24.dp)
                 )
             }
         }
@@ -4376,7 +4387,7 @@ private fun WhatsAppSendScreen(onBack: () -> Unit) {
     Scaffold(topBar = { TopAppBar(title = { Text("WhatsApp Image Send") }, navigationIcon = { TextButton(onClick = onBack) { Text("Back") } }) }) { pad ->
         Column(Modifier.padding(pad).padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Button(onClick = { showSetup = true }) { Text("Test Setup") }
-            if (showSetup) UnifiedTestSetupDialogV1270("WhatsApp Image Send", onDismiss={showSetup=false}) {
+            if (showSetup) UnifiedTestSetupDialogV1270("WhatsApp Image Send", onDismiss=onBack) {
                 Text("Open a WhatsApp chat and prepare an image. For each sample: START → ARMED → tap Send (T0) → tap SENT (T1).", style = MaterialTheme.typography.bodySmall)
                 Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(autoRecord, { autoRecord = it }); Text("Auto Network Recording") }
                 Button(onClick = { context.startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }, modifier = Modifier.fillMaxWidth()) { Text("1. ENABLE WHATSAPP SEND ACCESSIBILITY") }
@@ -5056,7 +5067,7 @@ private fun VideoLoadingScreen(onBack: () -> Unit, onVisualAiCollector: () -> Un
     ) { pad ->
         Column(Modifier.padding(pad).padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Button(onClick = { showSetup = true }) { Text("Test Setup") }
-            if (showSetup) UnifiedTestSetupDialogV1270("YouTube Video Loading", onDismiss={showSetup=false}) {
+            if (showSetup) UnifiedTestSetupDialogV1270("YouTube Video Loading", onDismiss=onBack) {
                 Text("On every DUT/REF: open YouTube → the same creator → Videos, with the same first video visible. Each phone measures its own loading delay; simultaneous start is not required.", style = MaterialTheme.typography.bodySmall)
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
@@ -5383,14 +5394,15 @@ private fun VideoLoadingScreen(onBack: () -> Unit, onVisualAiCollector: () -> Un
 private fun TestMetadataDialog(initial: TestMetadata, options: TestMetadataOptions, onDismiss:()->Unit, onConfirm:(TestMetadata)->Unit) {
     var scenario by remember { mutableStateOf(initial.scenario) }; var operator by remember { mutableStateOf(initial.operator) }
     var rat by remember { mutableStateOf(initial.rat) }; var task by remember { mutableStateOf(initial.task) }; var location by remember { mutableStateOf(initial.location) }
-    AlertDialog(onDismissRequest=onDismiss, title={Text("Test information")}, text={
-        Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement=Arrangement.spacedBy(8.dp)) {
-            MetadataChoice("Scenario",scenario,options.scenarios){scenario=it}; MetadataChoice("Operator",operator,options.operators){operator=it}
-            MetadataChoice("RAT",rat,options.rats){rat=it}; MetadataChoice("Task",task,options.tasks){task=it}
-            OutlinedTextField(location,{location=it},label={Text("Location (optional)")},singleLine=true)
-            Text("Report: ${TestMetadata(scenario,operator,rat,task,location).displayName()} + time",style=MaterialTheme.typography.bodySmall)
-        }
-    }, confirmButton={TextButton(onClick={onConfirm(TestMetadata(scenario,operator,rat,task,location))}){Text("Start")}}, dismissButton={TextButton(onClick=onDismiss){Text("Cancel")}})
+    UnifiedTestSetupDialogV1270("Test Information", onDismiss = onDismiss) {
+        MetadataChoice("Scenario", scenario, options.scenarios) { scenario = it }
+        MetadataChoice("Operator", operator, options.operators) { operator = it }
+        MetadataChoice("RAT", rat, options.rats) { rat = it }
+        MetadataChoice("Task", task, options.tasks) { task = it }
+        OutlinedTextField(location, { location = it }, label = { Text("Location (optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        Text("Report: ${TestMetadata(scenario,operator,rat,task,location).displayName()} + time", style=MaterialTheme.typography.bodySmall)
+        Button(onClick = { onConfirm(TestMetadata(scenario, operator, rat, task, location)) }, modifier = Modifier.fillMaxWidth()) { Text("START / CONTINUE") }
+    }
 }
 
 @Composable private fun MetadataChoice(label:String,value:String,choices:List<String>,onValue:(String)->Unit){
@@ -5560,6 +5572,22 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
     var compressDutLog by rememberSaveable { mutableStateOf(false) }
     var deleteAfterZip by rememberSaveable { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
+    var importedVendorLogs by remember { mutableStateOf(VendorLogFileImport.savedFiles(context)) }
+    var vendorImportMessage by remember { mutableStateOf("Select files to import and share. Previously imported files remain available.") }
+    val vendorLogPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) {
+            scope.launch {
+                busy = true
+                try {
+                    val result = withContext(Dispatchers.IO) { VendorLogFileImport.importSelected(context, uris) }
+                    importedVendorLogs = VendorLogFileImport.savedFiles(context)
+                    vendorImportMessage = result.message
+                } catch (e: Exception) {
+                    vendorImportMessage = "Import failed: ${e.message ?: "Unknown error"}"
+                } finally { busy = false }
+            }
+        }
+    }
     var remoteHost by rememberSaveable { mutableStateOf("") }
     var remotePairPort by rememberSaveable { mutableStateOf("") }
     var remoteConnectPort by rememberSaveable { mutableStateOf("") }
@@ -5595,6 +5623,23 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
     }
     Scaffold(topBar={TopAppBar(title={Text("Device Logs / ADB Tools")},navigationIcon={TextButton(onClick=onBack){Text("Back")}})},contentWindowInsets=WindowInsets(0,0,0,0)){pad->
         Column(Modifier.fillMaxSize().padding(pad).padding(16.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)){
+            GlassSection("Vendor logs · Import / Share without ADB") {
+                Text("Select files the OEM logger has saved in accessible storage or that you previously copied to this phone. This cannot directly open protected /data/debuglogger/. Original source files are never modified.", style = MaterialTheme.typography.bodySmall)
+                Button(enabled = !busy, onClick = { vendorLogPicker.launch(arrayOf("*/*")) }, modifier = Modifier.fillMaxWidth()) {
+                    Text("SELECT LOG FILES")
+                }
+                Text(vendorImportMessage, style = MaterialTheme.typography.bodySmall)
+                if (importedVendorLogs.isNotEmpty()) {
+                    Text("Imported ${importedVendorLogs.size} file(s)", style = MaterialTheme.typography.labelLarge)
+                    importedVendorLogs.takeLast(5).forEach { file ->
+                        Text(file.name, style = MaterialTheme.typography.bodySmall)
+                    }
+                    OutlinedButton(onClick = {
+                        runCatching { VendorLogFileImport.share(context, importedVendorLogs) }
+                            .onFailure { Toast.makeText(context, "Share failed: ${it.message}", Toast.LENGTH_LONG).show() }
+                    }, modifier = Modifier.fillMaxWidth()) { Text("SHARE IMPORTED LOGS") }
+                }
+            }
             GlassSection("1 · Local ADB / DUT") {
                 Text("Open Wireless debugging and choose Pair device with pairing code. CellTracker detects the temporary pairing service. Keep the system pairing dialog open, pull down notifications, expand CellTracker, and enter the 6-digit code there.",style=MaterialTheme.typography.bodySmall)
                 Field("Status",adb.localStatus); Field("Identity",adb.localIdentity)
@@ -6893,11 +6938,21 @@ private fun InstalledAppIconV1(packageNames: List<String>, fallbackSymbol: Strin
         }
     }
     if (drawable != null) {
-        AndroidView(
-            factory = { ctx -> android.widget.ImageView(ctx).apply { scaleType = android.widget.ImageView.ScaleType.FIT_CENTER } },
-            update = { it.setImageDrawable(drawable) },
-            modifier = Modifier.size(46.dp).graphicsLayer { clip = true; shape = RoundedCornerShape(13.dp) }
-        )
+        Surface(
+            modifier = Modifier.size(46.dp),
+            shape = RoundedCornerShape(13.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                AndroidView(
+                    factory = { ctx -> android.widget.ImageView(ctx).apply {
+                        scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+                    } },
+                    update = { it.setImageDrawable(drawable) },
+                    modifier = Modifier.size(38.dp).clip(RoundedCornerShape(10.dp))
+                )
+            }
+        }
     } else {
         AppIconTileV1(fallbackSymbol, fallbackColor)
     }

@@ -127,18 +127,12 @@ fun ThroughputScreen(onBack: () -> Unit) {
         }
     }
     if (showSetup) {
-        AlertDialog(onDismissRequest = { if (!isRunning) showSetup = false },
-            title = { Column { Text("Throughput Test"); Text("Test setup",style=MaterialTheme.typography.bodySmall) } },
-            text = {
-                Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        UnifiedTestSetupDialogV1270("Throughput Test", onDismiss = onBack) {
                     OutlinedTextField(task, {task=it.take(64)},label={Text("Task name")},singleLine=true)
                     OutlinedTextField(url, {url=it},label={Text("HTTPS download URL")})
                     OutlinedTextField(number,{number=it.filter(Char::isDigit).take(2)},label={Text("Sample count (1–10)")},singleLine=true)
                     Text("Each sample downloads up to 100 MiB (default 10 MB). Charges may apply. Wi-Fi and cellular routing are not controlled by this test.",
                         style=MaterialTheme.typography.bodySmall)
-                }
-            },
-            confirmButton = {
                 Button(enabled = !isRunning && url.startsWith("https://") && (number.toIntOrNull() ?: 0) in 1..10,
                     onClick = {
                         val endpoint = url.trim()
@@ -161,8 +155,7 @@ fun ThroughputScreen(onBack: () -> Unit) {
                                 }.getOrNull()
                             } finally { isRunning = false; runningJob = null }
                         }
-                    }) { Text("START TEST") }
-            },
-            dismissButton = { TextButton(onClick={showSetup=false}) { Text("Cancel") } })
+                    }, modifier = Modifier.fillMaxWidth()) { Text("START TEST") }
+        }
     }
 }

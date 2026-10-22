@@ -92,7 +92,7 @@ fun CallSetupScreen(
         if(activeSlots.isNotEmpty() && localSim !in activeSlots){ localSim=activeSlots.first(); onSelectLocalSim(localSim) }
         activeSlots.forEach{slot-> if(phoneBySlot[slot].isNullOrBlank()) detectPhoneNumber(context,slot)?.let{phoneBySlot[slot]=it} }
     }
-    var showCallSetup by remember { mutableStateOf(false) }
+    var showCallSetup by remember { mutableStateOf(!test.isRunning && link.role == DeviceLinkRole.CONTROLLER) }
     var task by remember(test.config.taskName){mutableStateOf(test.config.taskName)}
     var count by remember(test.config.callCount){mutableStateOf(test.config.callCount.toString())}
     var timeout by remember(test.config.setupTimeoutMs){mutableStateOf((test.config.setupTimeoutMs/1000).toString())}
@@ -107,6 +107,36 @@ fun CallSetupScreen(
     var bSim by remember(test.config.bCallSimSlot){mutableIntStateOf(test.config.bCallSimSlot)}
     LaunchedEffect(activeSlots){if(activeSlots.isNotEmpty()&&aSim !in activeSlots)aSim=activeSlots.first()}
     LaunchedEffect(link.peerProfile){val slots=listOf(0,1).filter{!link.peerProfile?.phoneForSlot(it).isNullOrBlank()};if(slots.isNotEmpty()&&bSim !in slots)bSim=slots.first()}
+    // Show setup at root composition level: dialogs inside offscreen LazyColumn items never render.
+    if (showCallSetup && !test.isRunning) UnifiedTestSetupDialogV1270("Call Setup", onDismiss=onBack) {
+                    OutlinedTextField(task,{task=it.take(64)},label={Text("Task Name")},singleLine=true,modifier=Modifier.fillMaxWidth(),enabled=!test.isRunning)
+                    Text("Direction",style=MaterialTheme.typography.labelLarge);CallDirection.entries.forEach{d->Row(Modifier.fillMaxWidth().clickable(enabled=!test.isRunning){direction=d},verticalAlignment=Alignment.CenterVertically){RadioButton(direction==d,{direction=d},enabled=!test.isRunning);Text(directionLabel(d))}}
+                    NumberPair("Call Count",count,{count=digits(it,3)},"Setup Timeout (s)",timeout,{timeout=digits(it,3)},!test.isRunning)
+                    NumberPair("Hold Time (s)",hold,{hold=digits(it,4)},"Inter-call (s)",interval,{interval=digits(it,4)},!test.isRunning)
+                    OutlinedTextField(threshold,{threshold=digits(it,3)},label={Text("High Setup Latency (s)")},singleLine=true,enabled=!test.isRunning,modifier=Modifier.fillMaxWidth())
+                    val aSlots=activeSlots.ifEmpty{listOf(localSim)}
+                    val bSlots=listOf(0,1).filter{!link.peerProfile?.phoneForSlot(it).isNullOrBlank()}.ifEmpty{listOf(link.peerProfile?.simSlot?:0)}
+                    Text("A Call SIM", style=MaterialTheme.typography.labelLarge)
+                    SimSelector(aSim,{aSim=it},!test.isRunning,aSlots)
+                    Text("B Call SIM", style=MaterialTheme.typography.labelLarge)
+                    SimSelector(bSim,{bSim=it},!test.isRunning,bSlots)
+                    Row(verticalAlignment=Alignment.CenterVertically){Checkbox(true,{},enabled=false);Text("Network recording on both DUTs (automatic)")}
+                    Row(verticalAlignment=Alignment.CenterVertically){Checkbox(voiceMonitor,{voiceMonitor=it},enabled=!test.isRunning);Text("Voice Monitor (no-audio / high-noise, both directions)")}
+                    if(voiceMonitor) Text("After every successful call setup, CellTracker uses speakerphone and short 1000/1400 Hz acoustic checks on both DUTs. Voice results are saved in the report. Long calls use the same check at connection; periodic monitoring will be expanded after field validation.",style=MaterialTheme.typography.bodySmall)
+                    Text("Call Setup automatically records the continuous radio/GPS trace for analysis and report export.",style=MaterialTheme.typography.bodySmall)
+                    Row(verticalAlignment=Alignment.CenterVertically){Checkbox(mode==AutomationMode.SEMI_AUTO,{mode=if(it)AutomationMode.SEMI_AUTO else AutomationMode.AUTO_WHEN_AVAILABLE},enabled=!test.isRunning);Text("Force Semi-Auto mode")}
+                    Text("Public Android call APIs are used. If auto answer/hang-up is unavailable, manually operate the Phone app; state detection and results continue automatically.",style=MaterialTheme.typography.bodySmall)
+                    val selectedANumber=phoneBySlot[aSim].orEmpty()
+                    val selectedBNumber=link.peerProfile?.phoneForSlot(bSim).orEmpty()
+                    val canStart=link.status==DeviceLinkStatus.CONNECTED&&selectedANumber.isNotBlank()&&selectedBNumber.isNotBlank()
+                    if(test.isRunning)Button(onClick=onStopTest){Text("STOP TEST")}else Button(onClick={showCallSetup=false;onStartTest(CallSetupConfig(task.ifBlank{"CallSetup"},direction,count.toIntOrNull()?:10,(timeout.toLongOrNull()?:30)*1000,(hold.toLongOrNull()?:10)*1000,(interval.toLongOrNull()?:10)*1000,(threshold.toLongOrNull()?:8)*1000,autoRecord,aSim,bSim,mode,voiceMonitor))},enabled=canStart){Text("Start Call Setup Test")}
+                    if(!test.isRunning&&!canStart) Text(when{link.status!=DeviceLinkStatus.CONNECTED->"Connect DUT B first.";selectedANumber.isBlank()->"Save DUT A SIM ${aSim+1} phone number first.";else->"Save DUT B SIM ${bSim+1} phone number on the Agent first."},style=MaterialTheme.typography.bodySmall)
+                    if(!test.isRunning&&!canStart) {
+                        OutlinedButton(onClick = { showCallSetup = false }, modifier = Modifier.fillMaxWidth()) {
+                            Text("CONFIGURE DEVICE LINK / SIM")
+                        }
+                    }
+                }
     Scaffold(
         topBar={TopAppBar(title={Text("Device Link + Call Setup")},navigationIcon={TextButton(onClick=onBack){Text("Back")}})},
         snackbarHost={SnackbarHost(snackbar)}
@@ -206,30 +236,7 @@ fun CallSetupScreen(
                     if (!test.isRunning) OutlinedButton(onClick={showCallSetup=true},modifier=Modifier.fillMaxWidth()) { Text("Test Setup") }
                     else Button(onClick=onStopTest, modifier=Modifier.fillMaxWidth(),
                         colors=ButtonDefaults.buttonColors(containerColor=MaterialTheme.colorScheme.error)) { Text("STOP CALL TEST") }
-                    if (showCallSetup && !test.isRunning) UnifiedTestSetupDialogV1270("Call Setup", onDismiss={showCallSetup=false}) {
-                    OutlinedTextField(task,{task=it.take(64)},label={Text("Task Name")},singleLine=true,modifier=Modifier.fillMaxWidth(),enabled=!test.isRunning)
-                    Text("Direction",style=MaterialTheme.typography.labelLarge);CallDirection.entries.forEach{d->Row(Modifier.fillMaxWidth().clickable(enabled=!test.isRunning){direction=d},verticalAlignment=Alignment.CenterVertically){RadioButton(direction==d,{direction=d},enabled=!test.isRunning);Text(directionLabel(d))}}
-                    NumberPair("Call Count",count,{count=digits(it,3)},"Setup Timeout (s)",timeout,{timeout=digits(it,3)},!test.isRunning)
-                    NumberPair("Hold Time (s)",hold,{hold=digits(it,4)},"Inter-call (s)",interval,{interval=digits(it,4)},!test.isRunning)
-                    OutlinedTextField(threshold,{threshold=digits(it,3)},label={Text("High Setup Latency (s)")},singleLine=true,enabled=!test.isRunning,modifier=Modifier.fillMaxWidth())
-                    val aSlots=activeSlots.ifEmpty{listOf(localSim)}
-                    val bSlots=listOf(0,1).filter{!link.peerProfile?.phoneForSlot(it).isNullOrBlank()}.ifEmpty{listOf(link.peerProfile?.simSlot?:0)}
-                    Text("A Call SIM", style=MaterialTheme.typography.labelLarge)
-                    SimSelector(aSim,{aSim=it},!test.isRunning,aSlots)
-                    Text("B Call SIM", style=MaterialTheme.typography.labelLarge)
-                    SimSelector(bSim,{bSim=it},!test.isRunning,bSlots)
-                    Row(verticalAlignment=Alignment.CenterVertically){Checkbox(true,{},enabled=false);Text("Network recording on both DUTs (automatic)")}
-                    Row(verticalAlignment=Alignment.CenterVertically){Checkbox(voiceMonitor,{voiceMonitor=it},enabled=!test.isRunning);Text("Voice Monitor (no-audio / high-noise, both directions)")}
-                    if(voiceMonitor) Text("After every successful call setup, CellTracker uses speakerphone and short 1000/1400 Hz acoustic checks on both DUTs. Voice results are saved in the report. Long calls use the same check at connection; periodic monitoring will be expanded after field validation.",style=MaterialTheme.typography.bodySmall)
-                    Text("Call Setup automatically records the continuous radio/GPS trace for analysis and report export.",style=MaterialTheme.typography.bodySmall)
-                    Row(verticalAlignment=Alignment.CenterVertically){Checkbox(mode==AutomationMode.SEMI_AUTO,{mode=if(it)AutomationMode.SEMI_AUTO else AutomationMode.AUTO_WHEN_AVAILABLE},enabled=!test.isRunning);Text("Force Semi-Auto mode")}
-                    Text("Public Android call APIs are used. If auto answer/hang-up is unavailable, manually operate the Phone app; state detection and results continue automatically.",style=MaterialTheme.typography.bodySmall)
-                    val selectedANumber=phoneBySlot[aSim].orEmpty()
-                    val selectedBNumber=link.peerProfile?.phoneForSlot(bSim).orEmpty()
-                    val canStart=link.status==DeviceLinkStatus.CONNECTED&&selectedANumber.isNotBlank()&&selectedBNumber.isNotBlank()
-                    if(test.isRunning)Button(onClick=onStopTest){Text("STOP TEST")}else Button(onClick={showCallSetup=false;onStartTest(CallSetupConfig(task.ifBlank{"CallSetup"},direction,count.toIntOrNull()?:10,(timeout.toLongOrNull()?:30)*1000,(hold.toLongOrNull()?:10)*1000,(interval.toLongOrNull()?:10)*1000,(threshold.toLongOrNull()?:8)*1000,autoRecord,aSim,bSim,mode,voiceMonitor))},enabled=canStart){Text("Start Call Setup Test")}
-                    if(!test.isRunning&&!canStart) Text(when{link.status!=DeviceLinkStatus.CONNECTED->"Connect DUT B first.";selectedANumber.isBlank()->"Save DUT A SIM ${aSim+1} phone number first.";else->"Save DUT B SIM ${bSim+1} phone number on the Agent first."},style=MaterialTheme.typography.bodySmall)
-                }}
+                    }
                 item{LiveTestPanel(link,test)}
             }
             item{Text("Call Setup History",style=MaterialTheme.typography.titleMedium)}

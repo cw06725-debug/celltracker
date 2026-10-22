@@ -1,3 +1,13 @@
+## v1.2.70 Preview 2 — Test Setup navigation / icons / vendor log import (source only)
+
+- Cancel initial YouTube, WhatsApp Send, Ping and Throughput setup to Home; retain original test workflows.
+- Call Setup dialog moved to root composition; an explicit Device Link/SIM setup button keeps prerequisite configuration accessible.
+- Throughput and shared TestMetadata surface harmonized with the Test Setup modal.
+- Unified Home icon footprints; refreshed Settings and bottom navigation icons; Reports category icons.
+- Added user-authorized vendor log file import and share (SAF picker), with persistence of copied files, size cap and source-file preservation. Private `/data/debuglogger` still requires authorized access; existing ADB export retained.
+- `versionCode` 248, `versionName` 1.2.70. No complete Android compilation or field testing in this preview.
+- Multi-device Controller+Agents automatic synchronization, analysis and Excel dashboard remain outstanding.
+
 # v1.2.69
 - Fix five Home/Tests Quick Start callback arguments by explicitly naming `onClick`; resolves Kotlin compile errors at MainActivity.kt:6074-6075 and 6615-6617.
 - Moved MTK Logger / QTI LogKit launch shortcuts to Home > Quick Start (not Tests > Quick Start).

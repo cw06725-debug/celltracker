@@ -19,7 +19,7 @@ fun UnifiedTestSetupDialogV1270(
 ) {
     Dialog(onDismissRequest = onDismiss) {
         Surface(
-            modifier = Modifier.fillMaxWidth().fillMaxHeight(.88f),
+            modifier = Modifier.fillMaxWidth().fillMaxHeight(.90f),
             shape = androidx.compose.foundation.shape.RoundedCornerShape(28.dp),
             color = MaterialTheme.colorScheme.primaryContainer
         ) {
@@ -30,7 +30,7 @@ fun UnifiedTestSetupDialogV1270(
                 Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()),
                     verticalArrangement=Arrangement.spacedBy(12.dp), content=content)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement=Arrangement.End) {
-                    TextButton(onClick=onDismiss) { Text("Cancel / Close") }
+                    OutlinedButton(onClick=onDismiss) { Text("Cancel") }
                 }
             }
         }
