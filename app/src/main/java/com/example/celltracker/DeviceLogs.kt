@@ -385,36 +385,68 @@ object CellTrackerAdbEngine {
     suspend fun commandRef(context:Context,cmd:String,timeoutMs:Long=8_000):Result<String> =
         commandAny(context,cmd,timeoutMs)
 
-    suspend fun openMtkLoggerRef(context:Context):Result<String> = withContext(Dispatchers.IO) { runCatching {
-        val candidates = listOf(
-            "com.debug.loggerui/com.debug.loggerui.MainActivity" to "DebugLoggerUI",
-            "com.mediatek.mtklogger/com.mediatek.mtklogger.MainActivity" to "MTKLogger",
-            "com.mediatek.engineermode/.EngineerMode" to "MTK EngineerMode"
+    private fun adbBroadcastFailed(out:String):Boolean {
+        val low = out.lowercase(Locale.US)
+        return low.contains("error type") ||
+            low.contains("does not exist") ||
+            low.contains("unable to resolve") ||
+            low.contains("securityexception") ||
+            low.contains("permission denial") ||
+            low.contains("exception occurred") ||
+            low.contains("unknown id")
+    }
+
+    /** Start MTK communication logs directly on the connected REF over ADB.
+     *  Target 7 = Mobile/AP + Modem + Network logs, which is the useful set for CellTracker communication tests.
+     *  Android Q+ uses DebugLoggerUI; older MTK builds use MTKLogger.
+     */
+    suspend fun startMtkLoggerRef(context:Context):Result<String> = withContext(Dispatchers.IO) { runCatching {
+        val commands = listOf(
+            "am broadcast -a com.debug.loggerui.ADB_CMD -e cmd_name start --ei cmd_target 7 -n com.debug.loggerui/.framework.LogReceiver" to "DebugLoggerUI",
+            "am broadcast -a com.mediatek.mtklogger.ADB_CMD -e cmd_name start --ei cmd_target 7" to "MTKLogger"
         )
         var lastOutput = ""
-        var opened: String? = null
-        for ((component, label) in candidates) {
-            val result = commandAny(context, "am start -W -n $component", 8_000)
+        var started: String? = null
+        for ((cmd, label) in commands) {
+            val result = commandRef(context, cmd, 10_000)
             if (result.isFailure) {
                 lastOutput = result.exceptionOrNull()?.message ?: "ADB command failed"
                 continue
             }
             val out = result.getOrThrow()
             lastOutput = out
-            val low = out.lowercase(Locale.US)
-            val failed = low.contains("error type") ||
-                low.contains("does not exist") ||
-                low.contains("unable to resolve") ||
-                low.contains("securityexception") ||
-                low.contains("permission denial") ||
-                low.contains("exception occurred")
-            if (!failed) {
-                opened = label
+            if (!adbBroadcastFailed(out)) {
+                started = label
                 break
             }
         }
-        val label = opened ?: throw IllegalStateException("No MTK logger Activity could be opened. $lastOutput")
-        AdbToolStore.state.value = AdbToolStore.state.value.copy(message = "$label opened on REF")
+        val label = started ?: throw IllegalStateException("Unable to start MTK logger on REF. $lastOutput")
+        AdbToolStore.state.value = AdbToolStore.state.value.copy(message = "$label logging started on REF")
+        label
+    } }
+
+    suspend fun stopMtkLoggerRef(context:Context):Result<String> = withContext(Dispatchers.IO) { runCatching {
+        val commands = listOf(
+            "am broadcast -a com.debug.loggerui.ADB_CMD -e cmd_name stop --ei cmd_target 7 -n com.debug.loggerui/.framework.LogReceiver" to "DebugLoggerUI",
+            "am broadcast -a com.mediatek.mtklogger.ADB_CMD -e cmd_name stop --ei cmd_target 7" to "MTKLogger"
+        )
+        var lastOutput = ""
+        var stopped: String? = null
+        for ((cmd, label) in commands) {
+            val result = commandRef(context, cmd, 10_000)
+            if (result.isFailure) {
+                lastOutput = result.exceptionOrNull()?.message ?: "ADB command failed"
+                continue
+            }
+            val out = result.getOrThrow()
+            lastOutput = out
+            if (!adbBroadcastFailed(out)) {
+                stopped = label
+                break
+            }
+        }
+        val label = stopped ?: throw IllegalStateException("Unable to stop MTK logger on REF. $lastOutput")
+        AdbToolStore.state.value = AdbToolStore.state.value.copy(message = "$label logging stopped on REF")
         label
     } }
 

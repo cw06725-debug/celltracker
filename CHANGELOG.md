@@ -1,3 +1,10 @@
+## v1.2.64
+- Remove the obsolete VIVO LOG / dialer secret-code shortcut.
+- Replace MTK LOGGER Activity-only behavior with direct ADB logger control on the connected REF.
+- Add START MTK LOG / STOP MTK LOG in Device Logs and Tests > Test Log.
+- Use DebugLoggerUI ADB_CMD first, with legacy MTKLogger ADB_CMD fallback.
+- Start/stop Mobile/AP + Modem + Network logs (cmd_target=7) for communication testing.
+
 # v1.2.63
 
 - MTK LOGGER no longer opens the dialer secret-code path.
