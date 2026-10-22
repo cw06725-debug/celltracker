@@ -97,7 +97,7 @@ class WhatsAppSendAccessibilityService : AccessibilityService() {
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(20, 14, 20, 14)
-            background = OverlayStyleV130.card(this)
+            background = OverlayStyleV130.card(this@WhatsAppSendAccessibilityService)
         }
         val header = TextView(this).apply { setTextColor(0xffffffff.toInt()); text = "WhatsApp Image Send  ·  drag here"; setPadding(8,8,8,12) }
         val status = TextView(this).apply { setTextColor(0xffffffff.toInt()); text = "Ready · open WhatsApp image preview"; setPadding(8,0,8,8) }

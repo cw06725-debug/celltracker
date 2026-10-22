@@ -1,41 +1,23 @@
-# CellTracker v0.9.3.0.4
+# CellTracker — v1.3.0 Preview 1 (Compile Fix)
 
-Hotfix for YouTube semi-auto touch timing after scrolling and slow video navigation.
+Android field-testing application for communication experience, device information, testing, reports and vendor logging.
 
-- Extend recovered touch T0 window to 20 seconds.
-- Preserve the real ACTION_DOWN timestamp for scroll-like gestures in media content.
-- Recover T0 if YouTube actually navigates to playback, even when the gesture was initially classified as scroll.
-- Delay re-arming the transparent capture layer after scroll-like gestures to avoid losing the pending T0 candidate.
+## Current status
 
-# CellTracker v0.9.0.9
+- Version: `1.3.0` (`versionCode` 252).
+- This ZIP fixes six Kotlin type mismatches introduced by the v1.3.0 floating-overlay styling changes.
+- It retains the v1.3.0 Preview 1 source features and test data compatibility.
+- Full Android Gradle compilation and real-device regression testing must be completed through your GitHub Actions pipeline.
+- Multi-Agent reporting / automated comparative analysis remains planned work, not a delivered feature.
 
-Based on the field-tested v0.9.0.8 project.
+## Build
 
-## Changes
-- Settings root starts at the top on each fresh entry; Back to the home screen still restores the previous home position.
-- Floating overlay adds an `×` close button with confirmation. Closing disables/hides only the overlay; an active RecordingService continues in the background.
-- Call Setup hold phase now continuously monitors local/peer call state and Device Link instead of using a blind delay.
-- Unexpected release before the configured Hold Time is classified as `CALL_DROP`, recorded as an AUTO issue/event, and includes the actual hold duration in the detail.
-- Long-call progress is shown during hold.
-- Call Setup HTML/XLSX reports include Dropped Calls and Drop Rate; HTML attempts include Hold duration.
-- Existing issue lists are augmented with long-call manual audio markers: No Audio, One-way Audio, Noise, Audio Interruption, Poor Voice Quality.
-- Automatic voice-quality analysis is intentionally not claimed: public Android APIs do not reliably expose cellular call PCM audio to an ordinary app. Manual audio issue marking remains the supported v0.9.0.9 path.
+Use the existing GitHub Actions workflow or open this project with Android Studio and build the debug APK. The GitHub Actions artifact normally contains the resulting APK.
 
-Version: 0.9.0.9 (versionCode 52)
+## Signing and updating
 
+The existing `keystore/celltracker-dev.jks` is for internal test builds only. Keep the *same* signing certificate when installing updates over an existing CellTracker installation; a differently signed APK cannot replace the installed app. Do not uninstall a version containing important test data without first backing it up. For production distribution, supply your private release keystore via `celltracker-signing.properties` (see `celltracker-signing.properties.example`); never distribute a real production keystore.
 
-## v0.9.2.6.4
-- Fix YouTube semi-auto STOP button feedback and shutdown flow.
-- STOP now saves current results, stops auto recording, disarms the session, shows immediate STOPPING feedback, then dismisses the YouTube overlay.
+## Release history
 
-## v0.9.3.0.1
-- Fix duplicate TestMetadata declarations / Settings metadata compile errors.
-- Semi-auto touch capture now distinguishes tap vs swipe/long-press.
-- Swipe/scroll gestures are replayed to YouTube without creating T0 attempts.
-- Navigation/out-of-content taps do not create attempts.
-
-## v0.9.3.0.5
-- Semi-auto YouTube: re-arm touch capture quickly after scrolling so the next tap is not missed.
-- Preserve the last ambiguous media-area gesture as a T0 candidate; pressing LOADED can confirm it when YouTube playback-page detection is unreliable.
-- Added T0 source OVERLAY_CONFIRMED_BY_LOADED and include it in accurate statistics.
-- YouTube result preview redesigned to match Call Setup style with Summary / Attempts / Map tabs and a fixed bottom action bar, preventing MapView from covering buttons.
+See `CHANGELOG.md`. Older per-preview validation Markdown files are intentionally omitted to keep the project ZIP clean.

@@ -201,7 +201,7 @@ class ScreenCaptureService : Service() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(6, 2, 6, 2)
-            background = OverlayStyleV130.card(this, .90f)
+            background = OverlayStyleV130.card(this@ScreenCaptureService, .90f)
         }
         val status = TextView(this).apply {
             text = "AI F:0 A:0"

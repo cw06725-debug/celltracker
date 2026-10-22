@@ -852,7 +852,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(20, 14, 20, 14)
-            background = OverlayStyleV130.card(this)
+            background = OverlayStyleV130.card(this@YouTubeLoadingAccessibilityService)
         }
         val header = TextView(this).apply {
             setTextColor(0xffffffff.toInt())
@@ -1538,7 +1538,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(20, 14, 20, 14)
-            background = OverlayStyleV130.card(this)
+            background = OverlayStyleV130.card(this@YouTubeLoadingAccessibilityService)
         }
         val header = TextView(this).apply { setTextColor(0xffffffff.toInt()); text = "WhatsApp Image Send  ·  drag here"; setPadding(8,8,8,12) }
         val status = TextView(this).apply { setTextColor(0xffffffff.toInt()); text = "Ready · open WhatsApp image preview"; setPadding(8,0,8,8) }
@@ -2419,7 +2419,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(if(autoDetectLag) 10 else 18, if(autoDetectLag) 8 else 12, if(autoDetectLag) 10 else 18, if(autoDetectLag) 8 else 12)
-            background = OverlayStyleV130.card(this, if (autoDetectLag) .79f else .90f)
+            background = OverlayStyleV130.card(this@YouTubeLoadingAccessibilityService, if (autoDetectLag) .79f else .90f)
         }
         val header = TextView(this).apply {
             setTextColor(0xffffffff.toInt())

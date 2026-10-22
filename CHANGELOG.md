@@ -1,9 +1,15 @@
+## v1.3.0 Preview 1 — Kotlin compile fix / package cleanup (2026-10-22)
+
+- Correct six `OverlayStyleV130.card` calls by passing the enclosing Android Service as `Context` instead of the `LinearLayout` receiver; addresses the `:app:compileDebugKotlin` type-mismatch errors at `BasementTestService.kt`, `ScreenCaptureService.kt`, `WhatsAppSendAccessibilityService.kt`, and `YouTubeLoadingAccessibilityService.kt`.
+- Remove accumulated preview-validation Markdown files from the distributable project; retain only `README.md` and `CHANGELOG.md`, with signing instructions consolidated into README.
+- Keep `versionName=1.3.0` and `versionCode=252`, since this is a compile-only correction to an unbuilt preview. No Android Gradle build or handset tests are claimed.
+
 ## v1.3.0 preview — visual unification & LTE SINR acquisition (2026-10-22)
 - Standardized blue-card style in all currently identified interactive floating test overlays.
 - Improved YouTube / WhatsApp Accessibility + Prepare Test layout.
 - Restored icon-free Cell Info section headers.
 - LTE RSSNR subscription- and serving-cell-aware second public-API source with validity checks.
-- This is a source preview, not a validated stable release. See V130_PREVIEW_VALIDATION.md.
+- This is a source preview, not a validated stable release.
 
 ## v1.2.70 Preview 5 — Home icon/card alignment fix
 
