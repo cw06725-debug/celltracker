@@ -1,9 +1,19 @@
-# CellTracker v1.2.68
+# v1.2.69
+- Moved MTK Logger / QTI LogKit launch shortcuts to Home > Quick Start (not Tests > Quick Start).
+- Show MTK Logger only on MediaTek SoCs when the vendor logger has an exported, accessible entry point; applies to vivo, TECNO, Infinix, and other MTK devices.
+- Show Qualcomm QTI LogKit only on Qualcomm SoCs when an accessible installed LogKit Activity/launcher is found; never assume it is present on every Qualcomm phone.
+- Use the installed OEM application's actual icon and launch its own UI without ADB, Play Store redirection, or inferred start/stop status.
+- Removed the old unused inline Test Log ADB panel and relocated the dedicated Device Logs MTK quick-link to Home; ADB export/connection stays in Device Logs / ADB Tools.
+- Set versionName 1.2.69 and incremented versionCode from 245 to 246. No APK build performed.
 
-- Added Qualcomm QTI LogKit / QTI LogKit Lite auto-detection in Tests > Quick Start.
-- Show the QTI LogKit card only on Qualcomm devices where a compatible QTI logger package is actually installed.
-- Open QTI LogKit directly on-device without requiring ADB; try known QTI activities first, then the package launcher as fallback.
-- Keep MTK Logger behavior unchanged: show only on MTK devices with a compatible logger component.
+# v1.2.68
+
+- Added Qualcomm/QTI LogKit auto-detection for Qualcomm devices. Known QTI LogKit packages and OEM-renamed launcher apps are detected; the Quick Start card is shown only when a real local logger is available.
+- MTK Logger remains auto-detected by platform + installed logger component.
+- TikTok, YouTube and WhatsApp test cards now show the installed app version.
+- If a required test app is not installed, tapping its card opens the corresponding Play Store page instead of entering test setup.
+- Removed Scenario Tests from the active Tests/Home UI. Weak Coverage is now a normal Quick Start network test card.
+- Removed ADB / Logs from Tests Quick Start; ADB diagnostics remain in Device Logs / ADB Tools.
 
 # v1.2.66
 

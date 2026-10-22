@@ -40,6 +40,11 @@
         <package android:name="com.mediatek.mtklogger" />
         <package android:name="com.qualcomm.qti.logkit" />
         <package android:name="com.qualcomm.qti.logkit.lite" />
+        <package android:name="com.google.android.youtube" />
+        <package android:name="com.zhiliaoapp.musically" />
+        <package android:name="com.ss.android.ugc.trill" />
+        <package android:name="com.whatsapp" />
+        <package android:name="com.whatsapp.w4b" />
     </queries>
 
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />

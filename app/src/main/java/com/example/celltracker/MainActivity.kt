@@ -1852,7 +1852,7 @@ private fun MainScreen(
                             Spacer(Modifier.width(8.dp))
                             Column {
                                 Text("All Tests", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-                                Text("All test tools and scenarios", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("All test tools", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                         ScenarioTestsV1(
@@ -1916,7 +1916,7 @@ private fun MainScreen(
                 ) {
                     Spacer(Modifier.height(14.dp))
                     Text("Tests", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-                    Text("All testing tools and real-world scenarios", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("All testing tools", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     ScenarioTestsV1(
                         isRecording = state.isRecording,
                         onStartScenarioRecording = onStartRecording,
@@ -5561,15 +5561,6 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
     LaunchedEffect(Unit) { CellTrackerAdbEngine.startDiscovery(context) }
     Scaffold(topBar={TopAppBar(title={Text("Device Logs / ADB Tools")},navigationIcon={TextButton(onClick=onBack){Text("Back")}})},contentWindowInsets=WindowInsets(0,0,0,0)){pad->
         Column(Modifier.fillMaxSize().padding(pad).padding(16.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)){
-            if (CellTrackerAdbEngine.shouldShowMtkLoggerLocal(context)) {
-                GlassSection("MTK Logger") {
-                    Text("MTK Logger detected on this device. Open the vendor logger UI to view its real status and start/stop logging there.", style=MaterialTheme.typography.bodySmall)
-                    OutlinedButton(enabled=!busy,onClick={
-                        val r = CellTrackerAdbEngine.openMtkLoggerLocal(context)
-                        r.onFailure { Toast.makeText(context, it.message ?: "Unable to open MTK logger", Toast.LENGTH_LONG).show() }
-                    }, modifier=Modifier.fillMaxWidth()) { Text("OPEN MTK LOGGER") }
-                }
-            }
             GlassSection("1 · Local ADB / DUT") {
                 Text("Open Wireless debugging and choose Pair device with pairing code. CellTracker detects the temporary pairing service. Keep the system pairing dialog open, pull down notifications, expand CellTracker, and enter the 6-digit code there.",style=MaterialTheme.typography.bodySmall)
                 Field("Status",adb.localStatus); Field("Identity",adb.localIdentity)
@@ -5899,57 +5890,6 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
 }
 
 
-@Composable
-private fun QuickTestLogManagerV1() {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val adb by AdbToolStore.state.collectAsStateWithLifecycle()
-    var expanded by rememberSaveable { mutableStateOf(false) }
-    var busy by remember { mutableStateOf(false) }
-    var testName by rememberSaveable { mutableStateOf("") }
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp), verticalArrangement=Arrangement.spacedBy(8.dp)) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment=Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("Test Log", fontWeight=FontWeight.SemiBold)
-                    Text(if(adb.logcatRunning) "REF AP Log · RECORDING" else "Start / stop / export without opening ADB Tools", style=MaterialTheme.typography.bodySmall)
-                }
-                TextButton(onClick={expanded=!expanded}) { Text(if(expanded) "HIDE" else "MORE") }
-            }
-            if (CellTrackerAdbEngine.shouldShowMtkLoggerLocal(context)) {
-                OutlinedButton(enabled=!busy,onClick={
-                    val r = CellTrackerAdbEngine.openMtkLoggerLocal(context)
-                    r.onFailure { Toast.makeText(context, it.message ?: "Unable to open MTK logger", Toast.LENGTH_LONG).show() }
-                },modifier=Modifier.fillMaxWidth()){Text("OPEN MTK LOGGER")}
-            }
-            if(expanded) {
-                OutlinedTextField(testName,{testName=it},label={Text("Test name / remark")},singleLine=true,modifier=Modifier.fillMaxWidth())
-                Row(Modifier.fillMaxWidth(), horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-                    Button(enabled=!adb.logcatRunning && !busy,onClick={scope.launch{
-                        busy=true
-                        val label="vivo_REF"
-                        val r=if(adb.usbStatus=="Connected") CellTrackerAdbEngine.startUsbLogcat(context,"logcat -v threadtime",label)
-                        else runCatching { CellTrackerAdbEngine.startLogcat(context,"logcat -v threadtime",label); "Started" }
-                        if(r.isFailure) Toast.makeText(context,r.exceptionOrNull()?.message?:"REF log start failed",Toast.LENGTH_LONG).show()
-                        busy=false
-                    }},modifier=Modifier.weight(1f)){Text("START REF LOG")}
-                    OutlinedButton(enabled=adb.logcatRunning,onClick={CellTrackerAdbEngine.stopLogcat()},modifier=Modifier.weight(1f)){Text("STOP REF")}
-                }
-                Button(enabled=!busy && !adb.exportRunning && adb.localStatus=="Connected",onClick={scope.launch{
-                    busy=true
-                    val remark=testName.trim().ifBlank{"Test"}
-                    val r=CellTrackerAdbEngine.exportDebuglogger(context,"/data/debuglogger",remark,false,false)
-                    if(r.isFailure) Toast.makeText(context,r.exceptionOrNull()?.message?:"DUT log export failed",Toast.LENGTH_LONG).show()
-                    busy=false
-                }},modifier=Modifier.fillMaxWidth()) { Text(if(adb.exportRunning) "EXPORTING DUT LOG…" else "EXPORT DUT LOG") }
-                if(adb.logcatPath.isNotBlank()) Field("REF log",adb.logcatPath)
-                if(adb.exportPath.isNotBlank()) Field("DUT export",adb.exportPath)
-                Text("Recommended flow: open/start vendor log before the test → run the test → stop vendor log → export DUT/REF logs here. Existing date-based Logs folders are preserved.",style=MaterialTheme.typography.bodySmall)
-            }
-        }
-    }
-}
-
 private enum class ScenarioV1Type(val title: String, val subtitle: String) {
     LONG_STAY("Long Stay", "School · Residential building · Market · Custom location"),
     POWER_OUTAGE("Power Outage", "Signal · Ping · Call · VoWiFi · Wi-Fi/Cellular recovery"),
@@ -6141,45 +6081,10 @@ private fun ScenarioTestsV1(
             QuickTestCompactCardV12("Recording", "Cell + route data", "●", MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f), onClick = onNetworkRecording)
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            QuickTestCompactCardV12("ADB / Logs", "Device diagnostics", ">_", Color(0xFF64748B), modifier = Modifier.weight(1f), onClick = onDeviceLogs)
-            when {
-                CellTrackerAdbEngine.shouldShowMtkLoggerLocal(context) -> {
-                    QuickTestCompactCardV12(
-                        "MTK Logger",
-                        "Vendor logging",
-                        "LOG",
-                        Color(0xFF64748B),
-                        listOf("com.debug.loggerui", "com.mediatek.mtklogger"),
-                        Modifier.weight(1f)
-                    ) {
-                        CellTrackerAdbEngine.openMtkLoggerLocal(context).onFailure {
-                            Toast.makeText(context, it.message ?: "Unable to open MTK Logger", Toast.LENGTH_LONG).show()
-                        }
-                    }
-                }
-                CellTrackerAdbEngine.shouldShowQtiLogkitLocal(context) -> {
-                    QuickTestCompactCardV12(
-                        "QTI LogKit",
-                        "Qualcomm logging",
-                        "LOG",
-                        Color(0xFF64748B),
-                        listOf("com.qualcomm.qti.logkit", "com.qualcomm.qti.logkit.lite"),
-                        Modifier.weight(1f)
-                    ) {
-                        CellTrackerAdbEngine.openQtiLogkitLocal(context).onFailure {
-                            Toast.makeText(context, it.message ?: "Unable to open QTI LogKit", Toast.LENGTH_LONG).show()
-                        }
-                    }
-                }
-                quickFilter == "All Tests" -> {
-                    QuickTestCompactCardV12("Call Test", "Voice setup", "✆", Color(0xFF16A34A), modifier = Modifier.weight(1f), onClick = onCallSetup)
-                }
-                else -> Spacer(Modifier.weight(1f))
-            }
-        }
-        if (quickFilter == "All Tests" && (CellTrackerAdbEngine.shouldShowMtkLoggerLocal(context) || CellTrackerAdbEngine.shouldShowQtiLogkitLocal(context))) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            QuickTestCompactCardV12("Weak Coverage", "Basement / low signal", "▥", MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f), onClick = onWeakCoverage)
+            if (quickFilter == "All Tests") {
                 QuickTestCompactCardV12("Call Test", "Voice setup", "✆", Color(0xFF16A34A), modifier = Modifier.weight(1f), onClick = onCallSetup)
+            } else {
                 Spacer(Modifier.weight(1f))
             }
         }
@@ -6191,29 +6096,6 @@ private fun ScenarioTestsV1(
         }
     }
 
-    Spacer(Modifier.height(6.dp))
-    Text("Scenario Tests", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-    Text("Choose a real-world scenario, then configure the test plan.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    ScenarioV1Type.entries.forEach { item ->
-        Card(
-            onClick = { if (item == ScenarioV1Type.BASEMENT) onWeakCoverage() else selectedScenario = item },
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(22.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.22f)),
-            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-        ) {
-            Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                AppIconTileV1(if (item == ScenarioV1Type.POWER_OUTAGE) "⚡" else if (item == ScenarioV1Type.HOTSPOT) "⌁" else if (item == ScenarioV1Type.LONG_STAY) "⌂" else if (item == ScenarioV1Type.BASEMENT) "▥" else "+", MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.width(14.dp))
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text(item.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                    Text(item.subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Text("›", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
-    }
 
 
     tikTokTool?.let { tool ->
@@ -6682,6 +6564,9 @@ private fun HomeScreenV121(
     onNetworkRecording: () -> Unit,
     onBasementTest: () -> Unit
 ) {
+    val context = LocalContext.current
+    val mtkLoggerPackage = CellTrackerAdbEngine.mtkLoggerPackageLocal(context)
+    val qtiLoggerPackage = CellTrackerAdbEngine.qualcommLoggerPackageLocal(context)
     val c = selected?.servingCell
     val operator = c?.operator?.takeIf { it.isNotBlank() && it != "--" } ?: "Waiting for network"
     val rat = c?.displayRat?.takeIf { it.isNotBlank() && it != "--" } ?: "Network unavailable"
@@ -6736,6 +6621,28 @@ private fun HomeScreenV121(
             HomeQuickCardV121("Call", "Test", "✆", Color(0xFF16A34A), modifier = Modifier.weight(1f), onClick = onCallSetup)
             HomeQuickCardV121("Network", if (state.isRecording) "Stop" else "Recording", "●", Color(0xFF6D4AFF), modifier = Modifier.weight(1f), onClick = onNetworkRecording)
         }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            HomeQuickCardV121("Weak Coverage", "Low signal", "▥", MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f), onClick = onBasementTest)
+            if (mtkLoggerPackage != null) {
+                HomeQuickCardV121("MTK Logger", "Vendor Log", "LOG", Color(0xFF64748B),
+                    listOf(mtkLoggerPackage), Modifier.weight(1f), installIfMissing = false) {
+                    CellTrackerAdbEngine.openMtkLoggerLocal(context).onFailure {
+                        Toast.makeText(context, it.message ?: "Unable to open MTK Logger", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+            if (qtiLoggerPackage != null) {
+                HomeQuickCardV121("QTI LogKit", "Qualcomm Log", "LOG", Color(0xFF64748B),
+                    listOf(qtiLoggerPackage), Modifier.weight(1f), installIfMissing = false) {
+                    CellTrackerAdbEngine.openQualcommLoggerLocal(context).onFailure {
+                        Toast.makeText(context, it.message ?: "Unable to open QTI LogKit", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+            repeat((2 - listOf(mtkLoggerPackage, qtiLoggerPackage).count { it != null }).coerceAtLeast(0)) {
+                Spacer(Modifier.weight(1f))
+            }
+        }
 
         HomeSectionHeaderV121("Recent Tests", "Latest saved network recordings", "See All", onReports)
         if (state.recordings.isEmpty()) {
@@ -6758,29 +6665,6 @@ private fun HomeScreenV121(
             }
         }
 
-        HomeSectionHeaderV121("Scenario Tests", "Real-world network experience", "See All", onSeeAllTests)
-        Card(onClick = onBasementTest, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f))) {
-            Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                AppIconTileV1("▥", MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text("Basement Weak Coverage", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                    Text("Test network performance in low signal areas", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Text("›", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.headlineSmall)
-            }
-        }
-        Card(onClick = onSeeAllTests, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f))) {
-            Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                AppIconTileV1("⌂", MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text("Long Stay", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                    Text("School · Residential · Market · Custom", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Text("›", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.headlineSmall)
-            }
-        }
         Spacer(Modifier.height(14.dp))
     }
 }
@@ -6798,14 +6682,49 @@ private fun HomeSectionHeaderV121(title: String, subtitle: String, action: Strin
     }
 }
 
+private fun installedAppVersionV1(context: Context, packageNames: List<String>): String? {
+    for (pkg in packageNames) {
+        val info = runCatching { context.packageManager.getPackageInfo(pkg, 0) }.getOrNull() ?: continue
+        info.versionName?.takeIf { it.isNotBlank() }?.let { return it }
+        return if (Build.VERSION.SDK_INT >= 28) info.longVersionCode.toString() else {
+            @Suppress("DEPRECATION")
+            info.versionCode.toString()
+        }
+    }
+    return null
+}
+
+private fun openPlayStoreV1(context: Context, packageName: String) {
+    val market = Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=$packageName")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    val web = Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=$packageName")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    runCatching { context.startActivity(market) }.onFailure { runCatching { context.startActivity(web) } }
+}
+
+private fun runAppTestOrInstallV1(context: Context, packageNames: List<String>, onInstalled: () -> Unit) {
+    if (packageNames.isEmpty() || installedAppVersionV1(context, packageNames) != null) onInstalled()
+    else openPlayStoreV1(context, packageNames.first())
+}
+
 @Composable
-private fun HomeQuickCardV121(title: String, subtitle: String, symbol: String, iconColor: Color, appPackages: List<String> = emptyList(), modifier: Modifier = Modifier, onClick: () -> Unit) {
-    Card(onClick = onClick, modifier = modifier.height(112.dp), shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)), elevation = CardDefaults.cardElevation(defaultElevation = 1.dp, pressedElevation = 0.dp)) {
-        Column(modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 11.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.SpaceBetween) {
+private fun HomeQuickCardV121(title: String, subtitle: String, symbol: String, iconColor: Color, appPackages: List<String> = emptyList(), modifier: Modifier = Modifier, installIfMissing: Boolean = true, onClick: () -> Unit) {
+    val context = LocalContext.current
+    val version = if (appPackages.isNotEmpty()) installedAppVersionV1(context, appPackages) else null
+    Card(
+        onClick = { if (installIfMissing) runAppTestOrInstallV1(context, appPackages, onClick) else onClick() },
+        modifier = modifier.height(if (appPackages.isNotEmpty()) 124.dp else 112.dp),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp, pressedElevation = 0.dp)
+    ) {
+        Column(modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 10.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.SpaceBetween) {
             if (appPackages.isNotEmpty()) InstalledAppIconV1(appPackages, symbol, iconColor) else AppIconTileV1(symbol, iconColor)
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(title, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, maxLines = 1)
                 Text(subtitle, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                if (appPackages.isNotEmpty()) {
+                    Text(if (!installIfMissing) "On device" else if (version != null) "v$version" else "Not installed · Play Store", style = MaterialTheme.typography.labelSmall, color = if (version != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error, maxLines = 1)
+                }
             }
         }
     }
@@ -6833,11 +6752,14 @@ private fun QuickTestCompactCardV12(
     iconColor: Color,
     appPackages: List<String> = emptyList(),
     modifier: Modifier = Modifier,
+    installIfMissing: Boolean = true,
     onClick: () -> Unit
 ) {
+    val context = LocalContext.current
+    val version = if (appPackages.isNotEmpty()) installedAppVersionV1(context, appPackages) else null
     Card(
-        onClick = onClick,
-        modifier = modifier.height(132.dp),
+        onClick = { if (installIfMissing) runAppTestOrInstallV1(context, appPackages, onClick) else onClick() },
+        modifier = modifier.height(if (appPackages.isNotEmpty()) 148.dp else 132.dp),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.22f)),
@@ -6848,6 +6770,9 @@ private fun QuickTestCompactCardV12(
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, maxLines = 1)
                 Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                if (appPackages.isNotEmpty()) {
+                    Text(if (version != null) "Version $version" else "Not installed · Open Play Store", style = MaterialTheme.typography.labelSmall, color = if (version != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error, maxLines = 1)
+                }
             }
         }
     }

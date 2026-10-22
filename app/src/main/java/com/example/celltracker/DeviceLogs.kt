@@ -401,126 +401,123 @@ object CellTrackerAdbEngine {
         true
     }.getOrDefault(false)
 
-    /** Show the local MTK Logger entry only on MTK devices that actually ship the logger package. */
-    fun shouldShowMtkLoggerLocal(context:Context):Boolean {
-        val hw = listOf(
-            android.os.Build.HARDWARE,
-            android.os.Build.BOARD,
-            android.os.Build.DEVICE,
-            android.os.Build.PRODUCT
-        ).joinToString(" ").lowercase(Locale.US)
-        val mtk = hw.contains("mediatek") || Regex("(^|[^a-z0-9])mt[0-9a-z]+", RegexOption.IGNORE_CASE).containsMatchIn(hw) ||
-            runCatching {
-                if (android.os.Build.VERSION.SDK_INT >= 31) android.os.Build.SOC_MANUFACTURER.contains("mediatek", ignoreCase = true) else false
-            }.getOrDefault(false)
-        val logger = packageInstalled(context, "com.debug.loggerui") || packageInstalled(context, "com.mediatek.mtklogger")
-        return mtk && logger
+    /** Vendor Logger shortcuts must be local, public launchable Activities.
+     *  Detect by SoC rather than brand: MediaTek devices include TECNO, Infinix, vivo, etc.
+     *  Package presence alone is insufficient (system-only/non-exported Activities cannot open).
+     */
+    private fun isMtkPlatform(): Boolean {
+        val hw = listOf(android.os.Build.HARDWARE, android.os.Build.BOARD,
+            android.os.Build.DEVICE, android.os.Build.PRODUCT,
+            if (android.os.Build.VERSION.SDK_INT >= 31) android.os.Build.SOC_MODEL else "")
+            .joinToString(" ").lowercase(Locale.US)
+        val manufacturer = if (android.os.Build.VERSION.SDK_INT >= 31)
+            android.os.Build.SOC_MANUFACTURER.lowercase(Locale.US) else ""
+        return hw.contains("mediatek") || hw.contains("mtk") || manufacturer.contains("mediatek") ||
+            Regex("(^|[^a-z0-9])mt[0-9]{3,}[a-z0-9]*").containsMatchIn(hw)
     }
 
-
-    /** Show the local Qualcomm logger entry only on Qualcomm devices that actually ship QTI LogKit. */
-    fun shouldShowQtiLogkitLocal(context:Context):Boolean {
-        val hw = listOf(
-            android.os.Build.HARDWARE,
-            android.os.Build.BOARD,
-            android.os.Build.DEVICE,
-            android.os.Build.PRODUCT
-        ).joinToString(" ").lowercase(Locale.US)
-        val qcom = hw.contains("qcom") || hw.contains("qualcomm") || hw.contains("msm") || hw.contains("sdm") || hw.contains("sm") ||
-            runCatching {
-                if (android.os.Build.VERSION.SDK_INT >= 31) android.os.Build.SOC_MANUFACTURER.contains("qualcomm", ignoreCase = true) else false
-            }.getOrDefault(false)
-        val logger = packageInstalled(context, "com.qualcomm.qti.logkit") || packageInstalled(context, "com.qualcomm.qti.logkit.lite")
-        return qcom && logger
+    private fun isQualcommPlatform(): Boolean {
+        val hw = listOf(android.os.Build.HARDWARE, android.os.Build.BOARD,
+            android.os.Build.DEVICE, android.os.Build.PRODUCT,
+            if (android.os.Build.VERSION.SDK_INT >= 31) android.os.Build.SOC_MODEL else "")
+            .joinToString(" ").lowercase(Locale.US)
+        val manufacturer = if (android.os.Build.VERSION.SDK_INT >= 31)
+            android.os.Build.SOC_MANUFACTURER.lowercase(Locale.US) else ""
+        return hw.contains("qcom") || hw.contains("qualcomm") ||
+            manufacturer.contains("qualcomm") || manufacturer == "qti" ||
+            Regex("(^|[^a-z0-9])(msm|sdm|sm)[0-9]{3,}[a-z0-9]*").containsMatchIn(hw)
     }
 
-    /** Open QTI LogKit on the SAME device that is running CellTracker. No ADB is required. */
-    fun openQtiLogkitLocal(context:Context):Result<String> = runCatching {
-        val candidates = listOf(
-            ComponentName("com.qualcomm.qti.logkit", "com.qualcomm.qti.logkit.cActivity") to "QTI LogKit",
-            ComponentName("com.qualcomm.qti.logkit.lite", "com.qualcomm.qti.logkit.lite.cActivity") to "QTI LogKit Lite"
-        )
-        var last:String? = null
-        for ((component, label) in candidates) {
-            if (!packageInstalled(context, component.packageName)) continue
-            try {
-                context.startActivity(Intent().setComponent(component).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                return@runCatching label
-            } catch (t:Throwable) {
-                last = t.message
+    private fun launchableComponent(context: Context, component: ComponentName): Boolean = runCatching {
+        val info = context.packageManager.getActivityInfo(component, 0)
+        info.exported && (info.permission.isNullOrBlank() ||
+            context.packageManager.checkPermission(info.permission, context.packageName) ==
+                android.content.pm.PackageManager.PERMISSION_GRANTED)
+    }.getOrDefault(false)
+
+    /** Prefer the known OEM logging Activity; fall back to its official launcher Activity.
+     *  This does not issue ADB commands or attempt to start/stop logger recording silently.
+     */
+    private fun vendorLoggerIntent(context: Context, pkg: String, activities: List<String>): Intent? {
+        if (!packageInstalled(context, pkg)) return null
+        for (activity in activities) {
+            val component = ComponentName(pkg, activity)
+            if (launchableComponent(context, component)) {
+                return Intent(Intent.ACTION_MAIN).setComponent(component)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
         }
-        for (pkg in listOf("com.qualcomm.qti.logkit", "com.qualcomm.qti.logkit.lite")) {
-            if (!packageInstalled(context, pkg)) continue
-            val launch = context.packageManager.getLaunchIntentForPackage(pkg) ?: continue
-            try {
-                context.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                return@runCatching if (pkg.endsWith(".lite")) "QTI LogKit Lite" else "QTI LogKit"
-            } catch (t:Throwable) {
-                last = t.message
+        val launcher = runCatching { context.packageManager.getLaunchIntentForPackage(pkg) }.getOrNull()
+        return launcher?.takeIf { it.component?.let { c -> launchableComponent(context, c) } == true }
+            ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+
+    private val mtkLoggerCandidates = listOf(
+        "com.debug.loggerui" to listOf("com.debug.loggerui.MainActivity"),
+        "com.mediatek.mtklogger" to listOf("com.mediatek.mtklogger.MainActivity")
+    )
+
+    /** A card is shown only if this is MTK hardware AND a real vendor logger can be opened. */
+    fun mtkLoggerPackageLocal(context: Context): String? =
+        if (isMtkPlatform()) mtkLoggerCandidates.firstOrNull { (pkg, activities) ->
+            vendorLoggerIntent(context, pkg, activities) != null
+        }?.first else null
+
+    fun shouldShowMtkLoggerLocal(context: Context): Boolean = mtkLoggerPackageLocal(context) != null
+
+    private val qualcommLoggerCandidates = listOf(
+        "com.qualcomm.qti.logkit" to listOf("com.qualcomm.qti.logkit.cActivity"),
+        "com.qualcomm.qti.logkit.lite" to listOf("com.qualcomm.qti.logkit.lite.cActivity")
+    )
+
+    private fun findQualcommLoggerPackage(context: Context): String? {
+        qualcommLoggerCandidates.firstOrNull { (pkg, activities) ->
+            vendorLoggerIntent(context, pkg, activities) != null
+        }?.let { return it.first }
+        // Some Qualcomm OEM builds use a differently named QTI LogKit launcher package.
+        // Its identity is verified from an actually exported launcher, not a guessed package.
+        val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val matches = runCatching { context.packageManager.queryIntentActivities(launcher, 0) }
+            .getOrDefault(emptyList())
+        return matches.firstNotNullOfOrNull { ri ->
+            val component = ri.activityInfo?.let { ComponentName(it.packageName, it.name) }
+                ?: return@firstNotNullOfOrNull null
+            val label = runCatching { ri.loadLabel(context.packageManager).toString() }.getOrDefault("")
+            val combined = "${component.packageName} $label".lowercase(Locale.US)
+            component.packageName.takeIf {
+                (combined.contains("qti logkit") || combined.contains("qtilogkit") ||
+                    combined.contains("qualcomm logkit") || combined.contains("logkit")) &&
+                    launchableComponent(context, component)
             }
         }
-        throw IllegalStateException(last ?: "QTI LogKit is not installed or is blocked by this ROM")
     }
 
-    /** Open the MTK logger UI on the SAME device that is running CellTracker.
-     *  This path does not require ADB. It only works when the OEM exports the logger Activity.
-     */
-    fun openMtkLoggerLocal(context:Context):Result<String> = runCatching {
-        val candidates = listOf(
-            ComponentName("com.debug.loggerui", "com.debug.loggerui.MainActivity") to "DebugLoggerUI",
-            ComponentName("com.mediatek.mtklogger", "com.mediatek.mtklogger.MainActivity") to "MTKLogger"
-        )
-        var last:String? = null
-        for ((component, label) in candidates) {
-            if (!packageInstalled(context, component.packageName)) continue
-            try {
-                context.startActivity(Intent().setComponent(component).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                return@runCatching label
-            } catch (t:Throwable) {
-                last = t.message
-            }
-        }
-        throw IllegalStateException(last ?: "MTK logger UI is not installed or is blocked by this ROM")
+    fun qualcommLoggerPackageLocal(context: Context): String? =
+        if (isQualcommPlatform()) findQualcommLoggerPackage(context) else null
+
+    fun shouldShowQualcommLoggerLocal(context: Context): Boolean = qualcommLoggerPackageLocal(context) != null
+
+    /** Opens the vendor application on this phone; all log switches are controlled in its UI. */
+    fun openMtkLoggerLocal(context: Context): Result<String> = runCatching {
+        check(isMtkPlatform()) { "This device is not identified as MediaTek" }
+        val pkg = mtkLoggerPackageLocal(context)
+            ?: error("No accessible MTK Logger Activity on this ROM")
+        val activities = mtkLoggerCandidates.first { it.first == pkg }.second
+        val intent = vendorLoggerIntent(context, pkg, activities)
+            ?: error("MTK Logger cannot be opened on this ROM")
+        context.startActivity(intent)
+        if (pkg == "com.debug.loggerui") "DebugLoggerUI" else "MTKLogger"
     }
 
-    /** Try to control the MTK logger locally, without ADB. This controls only the SAME device
-     *  running CellTracker. Newer MTK builds use DebugLoggerUI; older builds use MTKLogger.
-     */
-    private fun controlMtkLoggerLocal(context:Context, start:Boolean):Result<String> = runCatching {
-        val cmd = if(start) "start" else "stop"
-        if (packageInstalled(context, "com.debug.loggerui")) {
-            val i = Intent("com.debug.loggerui.ADB_CMD")
-                .setComponent(ComponentName("com.debug.loggerui", "com.debug.loggerui.framework.LogReceiver"))
-                .putExtra("cmd_name", cmd)
-                .putExtra("cmd_target", 7)
-            context.sendBroadcast(i)
-            return@runCatching "DebugLoggerUI · Direct"
-        }
-        if (packageInstalled(context, "com.mediatek.mtklogger")) {
-            val i = Intent("com.mediatek.mtklogger.ADB_CMD")
-                .setPackage("com.mediatek.mtklogger")
-                .putExtra("cmd_name", cmd)
-                .putExtra("cmd_target", 7)
-            context.sendBroadcast(i)
-            return@runCatching "MTKLogger · Direct"
-        }
-        throw IllegalStateException("No local MTK logger package found")
-    }
-
-    /** Direct-local first, then ADB REF fallback. Local direct mode is ADB-free but only controls
-     *  the phone on which CellTracker itself is installed. Cross-device REF control still needs ADB.
-     */
-    suspend fun startMtkLoggerSmart(context:Context):Result<String> {
-        val direct = controlMtkLoggerLocal(context, true)
-        if (direct.isSuccess) return direct
-        return startMtkLoggerRef(context).map { "$it · ADB REF" }
-    }
-
-    suspend fun stopMtkLoggerSmart(context:Context):Result<String> {
-        val direct = controlMtkLoggerLocal(context, false)
-        if (direct.isSuccess) return direct
-        return stopMtkLoggerRef(context).map { "$it · ADB REF" }
+    fun openQualcommLoggerLocal(context: Context): Result<String> = runCatching {
+        check(isQualcommPlatform()) { "This device is not identified as Qualcomm" }
+        val pkg = qualcommLoggerPackageLocal(context)
+            ?: error("No accessible QTI LogKit Activity on this ROM")
+        val activities = qualcommLoggerCandidates.firstOrNull { it.first == pkg }?.second.orEmpty()
+        val intent = vendorLoggerIntent(context, pkg, activities)
+            ?: error("QTI LogKit cannot be opened on this ROM")
+        context.startActivity(intent)
+        "QTI LogKit"
     }
 
     /** Start MTK communication logs directly on the connected REF over ADB.
