@@ -1,3 +1,12 @@
+## v1.2.70 Preview 5 — Home icon/card alignment fix
+
+- Vendor logger cards (TranLog, MTK Logger, QTI LogKit) use a single slot of the same three-column Home grid, even when only one logger is installed. Previously a lone card filled half the row.
+- TranLog app artwork uses the standard 40 dp glyph inside a shared 48 dp icon tile, matching other application icons.
+- The `Device Logs / ADB Tools` Home tile now shows an **ADB** badge rather than **LOG**, clearly distinct from the vendor logger tile.
+- Preserves confirmed TranLog launch logic and all existing Logger / ADB tool actions; this change only alters Home presentation.
+- Keeps versionName `1.2.70` and increments versionCode to `251`.
+- Source edits are statically checked; full Android/Gradle compilation and real-device verification are pending.
+
 ## v1.2.70 Preview 4 — Call Setup sheet responsiveness + TranLog card (versionCode 250)
 
 - Keep Call Setup initial test configuration lightweight: do not immediately request permissions, refresh Device Link, or access telephony subscription data before the user opens device configuration.

@@ -6810,7 +6810,7 @@ private fun HomeScreenV121(
                 Color(0xFF6D4AFF), modifier = Modifier.weight(1f), onClick = onNetworkRecording)
             HomeQuickCardV121("Throughput", "HTTP DL", "⇅", Color(0xFF0891B2),
                 modifier = Modifier.weight(1f), onClick = onThroughputTest)
-            HomeQuickCardV121("Device Logs", "ADB Tools", "LOG", Color(0xFF64748B),
+            HomeQuickCardV121("Device Logs", "ADB Tools", "ADB", Color(0xFF64748B),
                 modifier = Modifier.weight(1f), onClick = onDeviceLogs)
         }
         if (mtkLoggerPackage != null || qtiLoggerPackage != null) {
@@ -6826,13 +6826,17 @@ private fun HomeScreenV121(
                 if (qtiLoggerPackage != null) {
                     HomeQuickCardV121(if (qtiLoggerPackage == "com.transsion.TranLogManager") "TranLog" else "QTI LogKit",
                         "Vendor Log", "LOG", Color(0xFF64748B), listOf(qtiLoggerPackage),
-                        Modifier.weight(1f), installIfMissing = false, iconArtworkSize = 30.dp, onClick = {
+                        Modifier.weight(1f), installIfMissing = false, iconArtworkSize = 40.dp, onClick = {
                             CellTrackerAdbEngine.openQualcommLoggerLocal(context).onFailure {
                                 Toast.makeText(context, it.message ?: "Unable to open vendor Logger", Toast.LENGTH_LONG).show()
                             }
                         })
                 }
-                if (listOf(mtkLoggerPackage, qtiLoggerPackage).count { it != null } == 1) Spacer(Modifier.weight(1f))
+                // Each Home row has exactly three equally weighted slots. A lone
+                // vendor logger must occupy ONE slot, not a half-width (double) card.
+                repeat(3 - listOf(mtkLoggerPackage, qtiLoggerPackage).count { it != null }) {
+                    Spacer(Modifier.weight(1f))
+                }
             }
         }
 
@@ -7001,6 +7005,9 @@ private fun AppIconTileV1(symbol: String, color: Color) {
                         }
                     }
                 }
+            } else if (symbol == "ADB") {
+                Text("ADB", color = color, style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold, maxLines = 1)
             } else Text(symbol, color = color, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
         }
     }
