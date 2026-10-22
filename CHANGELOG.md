@@ -1,3 +1,10 @@
+# v1.2.66
+
+- Remove START MTK LOG / STOP MTK LOG from the UI because CellTracker cannot reliably display the logger's real running state yet.
+- Keep only OPEN MTK LOGGER so the user controls logging from the official MTK Logger UI where the current state is visible.
+- Auto-show OPEN MTK LOGGER only when the local device is identified as vivo + MediaTek and DebugLoggerUI/MTKLogger is installed.
+- Hide the MTK Logger entry on unsupported/non-vivo/non-MTK devices.
+
 ## v1.2.64
 - Remove the obsolete VIVO LOG / dialer secret-code shortcut.
 - Replace MTK LOGGER Activity-only behavior with direct ADB logger control on the connected REF.

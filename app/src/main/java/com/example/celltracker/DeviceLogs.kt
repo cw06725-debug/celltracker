@@ -401,6 +401,24 @@ object CellTrackerAdbEngine {
         true
     }.getOrDefault(false)
 
+    /** Show the local MTK Logger entry only on vivo MTK devices that actually ship the logger package. */
+    fun shouldShowMtkLoggerLocal(context:Context):Boolean {
+        val vivo = android.os.Build.MANUFACTURER.equals("vivo", ignoreCase = true) ||
+            android.os.Build.BRAND.equals("vivo", ignoreCase = true)
+        val hw = listOf(
+            android.os.Build.HARDWARE,
+            android.os.Build.BOARD,
+            android.os.Build.DEVICE,
+            android.os.Build.PRODUCT
+        ).joinToString(" ").lowercase(Locale.US)
+        val mtk = hw.contains("mediatek") || Regex("(^|[^a-z0-9])mt[0-9a-z]+", RegexOption.IGNORE_CASE).containsMatchIn(hw) ||
+            runCatching {
+                if (android.os.Build.VERSION.SDK_INT >= 31) android.os.Build.SOC_MANUFACTURER.contains("mediatek", ignoreCase = true) else false
+            }.getOrDefault(false)
+        val logger = packageInstalled(context, "com.debug.loggerui") || packageInstalled(context, "com.mediatek.mtklogger")
+        return vivo && mtk && logger
+    }
+
     /** Open the MTK logger UI on the SAME device that is running CellTracker.
      *  This path does not require ADB. It only works when the OEM exports the logger Activity.
      */

@@ -5561,33 +5561,14 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
     LaunchedEffect(Unit) { CellTrackerAdbEngine.startDiscovery(context) }
     Scaffold(topBar={TopAppBar(title={Text("Device Logs / ADB Tools")},navigationIcon={TextButton(onClick=onBack){Text("Back")}})},contentWindowInsets=WindowInsets(0,0,0,0)){pad->
         Column(Modifier.fillMaxSize().padding(pad).padding(16.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)){
-            GlassSection("MTK Logger") {
-                Text("Direct mode controls the MTK logger on this phone without ADB. If no local logger is available, Start/Stop automatically falls back to the connected REF over ADB.", style=MaterialTheme.typography.bodySmall)
-                OutlinedButton(enabled=!busy,onClick={
-                    val r = CellTrackerAdbEngine.openMtkLoggerLocal(context)
-                    r.onFailure { Toast.makeText(context, it.message ?: "Unable to open local MTK logger", Toast.LENGTH_LONG).show() }
-                }, modifier=Modifier.fillMaxWidth()) { Text("OPEN LOCAL MTK LOGGER") }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-                    Button(enabled=!busy,onClick={
-                        scope.launch {
-                            busy=true
-                            val r = CellTrackerAdbEngine.startMtkLoggerSmart(context)
-                            r.onSuccess { Toast.makeText(context, "$it start requested", Toast.LENGTH_SHORT).show() }
-                                .onFailure { Toast.makeText(context, it.message ?: "Unable to start MTK logger", Toast.LENGTH_LONG).show() }
-                            busy=false
-                        }
-                    }, modifier=Modifier.weight(1f)) { Text("START MTK LOG") }
+            if (CellTrackerAdbEngine.shouldShowMtkLoggerLocal(context)) {
+                GlassSection("MTK Logger") {
+                    Text("vivo MTK logger detected on this device. Open the official logger UI to view its real status and start/stop logging there.", style=MaterialTheme.typography.bodySmall)
                     OutlinedButton(enabled=!busy,onClick={
-                        scope.launch {
-                            busy=true
-                            val r = CellTrackerAdbEngine.stopMtkLoggerSmart(context)
-                            r.onSuccess { Toast.makeText(context, "$it stop requested", Toast.LENGTH_SHORT).show() }
-                                .onFailure { Toast.makeText(context, it.message ?: "Unable to stop MTK logger", Toast.LENGTH_LONG).show() }
-                            busy=false
-                        }
-                    }, modifier=Modifier.weight(1f)) { Text("STOP MTK LOG") }
+                        val r = CellTrackerAdbEngine.openMtkLoggerLocal(context)
+                        r.onFailure { Toast.makeText(context, it.message ?: "Unable to open MTK logger", Toast.LENGTH_LONG).show() }
+                    }, modifier=Modifier.fillMaxWidth()) { Text("OPEN MTK LOGGER") }
                 }
-                Text("Direct = this phone, no ADB. ADB REF = another connected phone. Log target: Mobile/AP + Modem + Network (7).", style=MaterialTheme.typography.bodySmall)
             }
             GlassSection("1 · Local ADB / DUT") {
                 Text("Open Wireless debugging and choose Pair device with pairing code. CellTracker detects the temporary pairing service. Keep the system pairing dialog open, pull down notifications, expand CellTracker, and enter the 6-digit code there.",style=MaterialTheme.typography.bodySmall)
@@ -5935,29 +5916,11 @@ private fun QuickTestLogManagerV1() {
                 }
                 TextButton(onClick={expanded=!expanded}) { Text(if(expanded) "HIDE" else "MORE") }
             }
-            OutlinedButton(enabled=!busy,onClick={
-                val r = CellTrackerAdbEngine.openMtkLoggerLocal(context)
-                r.onFailure { Toast.makeText(context, it.message ?: "Unable to open local MTK logger", Toast.LENGTH_LONG).show() }
-            },modifier=Modifier.fillMaxWidth()){Text("OPEN LOCAL MTK LOGGER")}
-            Row(Modifier.fillMaxWidth(), horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-                Button(enabled=!busy,onClick={
-                    scope.launch {
-                        busy=true
-                        val r = CellTrackerAdbEngine.startMtkLoggerSmart(context)
-                        r.onSuccess { Toast.makeText(context, "$it start requested", Toast.LENGTH_SHORT).show() }
-                            .onFailure { Toast.makeText(context, it.message ?: "Unable to start MTK logger", Toast.LENGTH_LONG).show() }
-                        busy=false
-                    }
-                },modifier=Modifier.weight(1f)){Text("START MTK LOG")}
+            if (CellTrackerAdbEngine.shouldShowMtkLoggerLocal(context)) {
                 OutlinedButton(enabled=!busy,onClick={
-                    scope.launch {
-                        busy=true
-                        val r = CellTrackerAdbEngine.stopMtkLoggerSmart(context)
-                        r.onSuccess { Toast.makeText(context, "$it stop requested", Toast.LENGTH_SHORT).show() }
-                            .onFailure { Toast.makeText(context, it.message ?: "Unable to stop MTK logger", Toast.LENGTH_LONG).show() }
-                        busy=false
-                    }
-                },modifier=Modifier.weight(1f)){Text("STOP MTK LOG")}
+                    val r = CellTrackerAdbEngine.openMtkLoggerLocal(context)
+                    r.onFailure { Toast.makeText(context, it.message ?: "Unable to open MTK logger", Toast.LENGTH_LONG).show() }
+                },modifier=Modifier.fillMaxWidth()){Text("OPEN MTK LOGGER")}
             }
             if(expanded) {
                 OutlinedTextField(testName,{testName=it},label={Text("Test name / remark")},singleLine=true,modifier=Modifier.fillMaxWidth())
