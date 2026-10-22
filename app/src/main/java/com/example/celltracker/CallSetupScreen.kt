@@ -92,6 +92,7 @@ fun CallSetupScreen(
         if(activeSlots.isNotEmpty() && localSim !in activeSlots){ localSim=activeSlots.first(); onSelectLocalSim(localSim) }
         activeSlots.forEach{slot-> if(phoneBySlot[slot].isNullOrBlank()) detectPhoneNumber(context,slot)?.let{phoneBySlot[slot]=it} }
     }
+    var showCallSetup by remember { mutableStateOf(false) }
     var task by remember(test.config.taskName){mutableStateOf(test.config.taskName)}
     var count by remember(test.config.callCount){mutableStateOf(test.config.callCount.toString())}
     var timeout by remember(test.config.setupTimeoutMs){mutableStateOf((test.config.setupTimeoutMs/1000).toString())}
@@ -201,7 +202,11 @@ fun CallSetupScreen(
             }
             if(link.role==DeviceLinkRole.AGENT){item{AgentPanel(link,test,onStopTest)}}
             if(link.role==DeviceLinkRole.CONTROLLER){
-                item{CCard("Call Setup configuration"){
+                item {
+                    if (!test.isRunning) OutlinedButton(onClick={showCallSetup=true},modifier=Modifier.fillMaxWidth()) { Text("Test Setup") }
+                    else Button(onClick=onStopTest, modifier=Modifier.fillMaxWidth(),
+                        colors=ButtonDefaults.buttonColors(containerColor=MaterialTheme.colorScheme.error)) { Text("STOP CALL TEST") }
+                    if (showCallSetup && !test.isRunning) UnifiedTestSetupDialogV1270("Call Setup", onDismiss={showCallSetup=false}) {
                     OutlinedTextField(task,{task=it.take(64)},label={Text("Task Name")},singleLine=true,modifier=Modifier.fillMaxWidth(),enabled=!test.isRunning)
                     Text("Direction",style=MaterialTheme.typography.labelLarge);CallDirection.entries.forEach{d->Row(Modifier.fillMaxWidth().clickable(enabled=!test.isRunning){direction=d},verticalAlignment=Alignment.CenterVertically){RadioButton(direction==d,{direction=d},enabled=!test.isRunning);Text(directionLabel(d))}}
                     NumberPair("Call Count",count,{count=digits(it,3)},"Setup Timeout (s)",timeout,{timeout=digits(it,3)},!test.isRunning)
@@ -222,7 +227,7 @@ fun CallSetupScreen(
                     val selectedANumber=phoneBySlot[aSim].orEmpty()
                     val selectedBNumber=link.peerProfile?.phoneForSlot(bSim).orEmpty()
                     val canStart=link.status==DeviceLinkStatus.CONNECTED&&selectedANumber.isNotBlank()&&selectedBNumber.isNotBlank()
-                    if(test.isRunning)Button(onClick=onStopTest){Text("STOP TEST")}else Button(onClick={onStartTest(CallSetupConfig(task.ifBlank{"CallSetup"},direction,count.toIntOrNull()?:10,(timeout.toLongOrNull()?:30)*1000,(hold.toLongOrNull()?:10)*1000,(interval.toLongOrNull()?:10)*1000,(threshold.toLongOrNull()?:8)*1000,autoRecord,aSim,bSim,mode,voiceMonitor))},enabled=canStart){Text("Start Call Setup Test")}
+                    if(test.isRunning)Button(onClick=onStopTest){Text("STOP TEST")}else Button(onClick={showCallSetup=false;onStartTest(CallSetupConfig(task.ifBlank{"CallSetup"},direction,count.toIntOrNull()?:10,(timeout.toLongOrNull()?:30)*1000,(hold.toLongOrNull()?:10)*1000,(interval.toLongOrNull()?:10)*1000,(threshold.toLongOrNull()?:8)*1000,autoRecord,aSim,bSim,mode,voiceMonitor))},enabled=canStart){Text("Start Call Setup Test")}
                     if(!test.isRunning&&!canStart) Text(when{link.status!=DeviceLinkStatus.CONNECTED->"Connect DUT B first.";selectedANumber.isBlank()->"Save DUT A SIM ${aSim+1} phone number first.";else->"Save DUT B SIM ${bSim+1} phone number on the Agent first."},style=MaterialTheme.typography.bodySmall)
                 }}
                 item{LiveTestPanel(link,test)}

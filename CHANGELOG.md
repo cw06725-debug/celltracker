@@ -1410,3 +1410,11 @@ Build note: local assembleDebug could not run because this environment cannot re
 - Removed the inline Test Log ADB controls from the Tests screen.
 - Added MTK Logger as a Quick Start card using the installed vendor logger app icon.
 - MTK Logger visibility is now based on MediaTek platform + an installed DebugLoggerUI/MTKLogger component, not vivo brand.
+
+## v1.2.70 (field-test preview; partial implementation)
+- Home: expanded test tiles, removed Quick Start, See All, Recent Tests and Weak Coverage tile; removed Tests bottom-tab entry; retained underlying legacy tests for backward compatibility.
+- Home: distinct Ping, Call, Recording artwork and real HTTP download-throughput test with CSV sharing (HTTP DL only; uplink is not claimed).
+- Qualcomm OEM Logger: detect `com.transsion.TranLogManager/.TranLogManageActivity`; check launchable component before showing; existing MTK and QTI candidates retained.
+- ADB Tools: check, set D, verify and restore `persist.log.tag` through authorized local ADB, preserving prior session value; do not equate logcat level with modem logging.
+- Existing `/data/debuglogger/` ADB Sync export retained; Android app sandbox remains enforced.
+- Multi-Agent report synchronization / 6-sheet report generation remains outstanding pending the multi-peer Device Link architecture; NOT represented as implemented in this preview.

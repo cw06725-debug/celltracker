@@ -192,6 +192,7 @@ class MainActivity : ComponentActivity() {
                 var showBasementTest by remember { mutableStateOf(false) }
                 var showWhatsAppSend by remember { mutableStateOf(false) }
                 var showDeviceLogs by remember { mutableStateOf(false) }
+                var showThroughputTest by remember { mutableStateOf(false) }
                 val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { vm.start() }
                 var overlayPermissionRequestedForRecording by remember { mutableStateOf(false) }
                 val overlayPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
@@ -262,7 +263,7 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                BackHandler(enabled = showSettings || detailPath != null || showPingTest || showCallSetup || showVideoLoading || showVisualAiCollector || showBasementTest || showWhatsAppSend || showDeviceLogs) {
+                BackHandler(enabled = showSettings || detailPath != null || showPingTest || showCallSetup || showVideoLoading || showVisualAiCollector || showBasementTest || showWhatsAppSend || showDeviceLogs || showThroughputTest) {
                     when {
                         detailPath != null -> detailPath = null
                         showCallSetup -> showCallSetup = false
@@ -271,6 +272,7 @@ class MainActivity : ComponentActivity() {
                         showBasementTest -> showBasementTest = false
                         showWhatsAppSend -> showWhatsAppSend = false
                         showDeviceLogs -> showDeviceLogs = false
+                        showThroughputTest -> showThroughputTest = false
                         showPingTest -> showPingTest = false
                         showSettings -> showSettings = false
                     }
@@ -289,6 +291,7 @@ class MainActivity : ComponentActivity() {
                     showWhatsAppSend -> RootDestination.WhatsAppSend
                     showPingTest -> RootDestination.PingTest
                     showDeviceLogs -> RootDestination.DeviceLogs
+                    showThroughputTest -> RootDestination.Throughput
                     showSettings -> RootDestination.Settings
                     else -> RootDestination.Main
                 }
@@ -327,6 +330,7 @@ class MainActivity : ComponentActivity() {
                     )
                     RootDestination.WhatsAppSend -> WhatsAppSendScreen(onBack = { showWhatsAppSend = false })
                     RootDestination.DeviceLogs -> DeviceLogsScreen(onBack = { showDeviceLogs = false })
+                    RootDestination.Throughput -> ThroughputScreen(onBack = { showThroughputTest = false })
                     RootDestination.PingTest -> PingTestScreen(
                         state = state.pingTest,
                         history = state.pingHistory,
@@ -395,6 +399,7 @@ class MainActivity : ComponentActivity() {
                         onWhatsAppSend = { showWhatsAppSend = true },
                         onCallSetup = { showCallSetup = true },
                         onDeviceLogs = { showDeviceLogs = true },
+                        onThroughputTest = { showThroughputTest = true },
                         onDismissMessage = vm::clearMessage
                     )
                 }
@@ -418,7 +423,6 @@ private fun WeChatBottomBar(
 ) {
     val items = listOf(
         Triple("HOME", "⌂", "Home"),
-        Triple("TEST", "△", "Tests"),
         Triple("REPORTS", "▤", "Reports"),
         Triple("SETTINGS", "⚙", "Settings")
     )
@@ -1703,6 +1707,7 @@ private sealed interface RootDestination {
     data object PingTest : RootDestination
     data object CallSetup : RootDestination
     data object DeviceLogs : RootDestination
+    data object Throughput : RootDestination
     data class Detail(val path: String) : RootDestination
 }
 
@@ -1733,6 +1738,7 @@ private fun MainScreen(
     onWhatsAppSend: () -> Unit,
     onCallSetup: () -> Unit,
     onDeviceLogs: () -> Unit,
+    onThroughputTest: () -> Unit,
     onDismissMessage: () -> Unit
 ) {
     var neighborsExpanded by remember { mutableStateOf(false) }
@@ -1892,7 +1898,10 @@ private fun MainScreen(
                     onWhatsAppSend = onWhatsAppSend,
                     onCallSetup = onCallSetup,
                     onNetworkRecording = { if (state.isRecording) onStopRecording() else showTaskNameDialog = true },
-                    onBasementTest = onBasementTest
+                    onBasementTest = onBasementTest,
+                    onTikTokUpload = { homeTikTokTool = "UPLOAD" },
+                    onDeviceLogs = onDeviceLogs,
+                    onThroughputTest = onThroughputTest
                 )
                 return@mainContent
             }
@@ -2283,6 +2292,7 @@ private fun PingTestScreen(
     var timeout by remember(state.isRunning, state.config) { mutableStateOf(state.config.timeoutMs.toString()) }
     var threshold by remember(state.isRunning, state.config) { mutableStateOf(state.config.highLatencyThresholdMs.toInt().toString()) }
     var autoRecord by remember(state.isRunning, state.config) { mutableStateOf(state.config.autoRecord) }
+    var showSetup by remember { mutableStateOf(!state.isRunning) }
 
     fun latencyText(v: Double?): String = v?.let { String.format(Locale.US, "%.1f ms", it) } ?: "--"
     Scaffold(
@@ -2305,7 +2315,7 @@ private fun PingTestScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             item {
-                InfoCard("Test target") {
+                if (showSetup && !state.isRunning) UnifiedTestSetupDialogV1270("Ping Test", onDismiss = { showSetup = false }) {
                     OutlinedTextField(
                         value = taskName,
                         onValueChange = { if (!state.isRunning && it.length <= 64) taskName = it },
@@ -2373,6 +2383,17 @@ private fun PingTestScreen(
                             Text("Creates a recording named Ping_<host> and stops it when the test ends.", style = MaterialTheme.typography.bodySmall)
                         }
                     }
+                    Button(onClick = {
+                        showSetup = false
+                        onStart(PingTestConfig(
+                            taskName = taskName.trim(), host = host.trim().ifBlank { "8.8.8.8" },
+                            count = count.toIntOrNull() ?: 20,
+                            intervalMs = interval.toLongOrNull() ?: 1000L,
+                            timeoutMs = timeout.toLongOrNull() ?: 2000L,
+                            highLatencyThresholdMs = threshold.toDoubleOrNull() ?: 300.0,
+                            autoRecord = autoRecord
+                        ))
+                    }, modifier = Modifier.fillMaxWidth()) { Text("START TEST") }
                 }
             }
             item {
@@ -2410,6 +2431,7 @@ private fun PingTestScreen(
                     if (state.isRunning) {
                         Button(onClick = onStop) { Text("Stop Ping Test") }
                     } else {
+                        OutlinedButton(onClick = { showSetup = true }) { Text("Test Setup") }
                         Button(
                             onClick = {
                                 onStart(
@@ -4349,14 +4371,16 @@ private fun WhatsAppSendScreen(onBack: () -> Unit) {
     var exportResult by remember { mutableStateOf<ExportResult?>(null) }
     val metaRepo = remember { TestMetadataRepository(context) }
     var showMetadata by remember { mutableStateOf(false) }
+    var showSetup by remember { mutableStateOf(true) }
 
     Scaffold(topBar = { TopAppBar(title = { Text("WhatsApp Image Send") }, navigationIcon = { TextButton(onClick = onBack) { Text("Back") } }) }) { pad ->
         Column(Modifier.padding(pad).padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            GlassSection("Test Setup") {
+            Button(onClick = { showSetup = true }) { Text("Test Setup") }
+            if (showSetup) UnifiedTestSetupDialogV1270("WhatsApp Image Send", onDismiss={showSetup=false}) {
                 Text("Open a WhatsApp chat and prepare an image. For each sample: START → ARMED → tap Send (T0) → tap SENT (T1).", style = MaterialTheme.typography.bodySmall)
                 Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(autoRecord, { autoRecord = it }); Text("Auto Network Recording") }
                 Button(onClick = { context.startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }, modifier = Modifier.fillMaxWidth()) { Text("1. ENABLE WHATSAPP SEND ACCESSIBILITY") }
-                Button(onClick = { showMetadata = true }, modifier = Modifier.fillMaxWidth()) { Text("2. PREPARE TEST / OPEN WHATSAPP") }
+                Button(onClick = { showSetup = false; showMetadata = true }, modifier = Modifier.fillMaxWidth()) { Text("2. PREPARE TEST / OPEN WHATSAPP") }
             }
             TextButton(onClick = { history = repo.history() }) { Text("Refresh History") }
             Text("History", style = MaterialTheme.typography.titleMedium)
@@ -5006,6 +5030,7 @@ private fun VideoLoadingScreen(onBack: () -> Unit, onVisualAiCollector: () -> Un
     var reviewRevision by remember { mutableIntStateOf(0) }
     val metaRepo = remember { TestMetadataRepository(context) }
     var showMetadata by remember { mutableStateOf(false) }
+    var showSetup by remember { mutableStateOf(true) }
     var pendingConfig by remember { mutableStateOf<VideoLoadingConfig?>(null) }
     var autoScreenRecord by rememberSaveable { mutableStateOf(true) }
     var pendingYouTubeMeta by remember { mutableStateOf<TestMetadata?>(null) }
@@ -5030,7 +5055,8 @@ private fun VideoLoadingScreen(onBack: () -> Unit, onVisualAiCollector: () -> Un
         topBar = { TopAppBar(title = { Text("YouTube Video Loading") }, navigationIcon = { TextButton(onClick = onBack) { Text("Back") } }) }
     ) { pad ->
         Column(Modifier.padding(pad).padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            GlassSection("Test Setup") {
+            Button(onClick = { showSetup = true }) { Text("Test Setup") }
+            if (showSetup) UnifiedTestSetupDialogV1270("YouTube Video Loading", onDismiss={showSetup=false}) {
                 Text("On every DUT/REF: open YouTube → the same creator → Videos, with the same first video visible. Each phone measures its own loading delay; simultaneous start is not required.", style = MaterialTheme.typography.bodySmall)
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
@@ -5059,6 +5085,7 @@ private fun VideoLoadingScreen(onBack: () -> Unit, onVisualAiCollector: () -> Un
                         returnWaitMs = (((returnWait.toDoubleOrNull() ?: 2.0) * 1000).toLong()).coerceAtLeast(500),
                         autoRecord = autoRecord, semiAuto = semiAuto
                     )
+                    showSetup = false
                     showMetadata = true
                 }, modifier = Modifier.fillMaxWidth()) { Text("2. PREPARE TEST / OPEN YOUTUBE") }
                 Text(if (semiAuto) "Semi-auto: for every sample, START → tap one video (T0) → AUTO T1 when playback starts (LOADED is fallback) → return → freely scroll → START again. Android Back before T1 cancels the unfinished sample." else "AUTO Visual AI (Beta): CellTracker selects a new video, then requires BOTH PLAY and recommendation-list readiness before T1 → Back → next video → auto-scroll. First-pass thresholds are tuned from the labelled Visual AI collector set; Semi-auto remains unchanged.", style = MaterialTheme.typography.bodySmall)
@@ -5558,7 +5585,14 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
             showModemFallbackDialog = true
         }
     }
-    LaunchedEffect(Unit) { CellTrackerAdbEngine.startDiscovery(context) }
+    LaunchedEffect(Unit) {
+        CellTrackerAdbEngine.startDiscovery(context)
+        val prefs = context.getSharedPreferences("celltracker_logd", Context.MODE_PRIVATE)
+        if (prefs.getBoolean("has_previous", false)) {
+            AdbToolStore.state.value = AdbToolStore.state.value.copy(
+                logDPrevious = prefs.getString("previous", "") ?: "")
+        }
+    }
     Scaffold(topBar={TopAppBar(title={Text("Device Logs / ADB Tools")},navigationIcon={TextButton(onClick=onBack){Text("Back")}})},contentWindowInsets=WindowInsets(0,0,0,0)){pad->
         Column(Modifier.fillMaxSize().padding(pad).padding(16.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)){
             GlassSection("1 · Local ADB / DUT") {
@@ -5638,6 +5672,26 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
                     if(adb.exportError.isNotBlank()) LongField("Reason", adb.exportError)
                     if(adb.exportPath.isNotBlank()) Field("Saved to",adb.exportPath)
                 }
+            }
+            GlassSection("Log D · Android logcat") {
+                Text("Uses persist.log.tag. Requires a connected, authorized local ADB shell. This is NOT the Qualcomm/MTK modem-log switch.",
+                    style = MaterialTheme.typography.bodySmall)
+                Field("Current value", adb.logDStatus)
+                if (adb.logDPrevious != null) Field("Saved previous value", adb.logDPrevious!!.ifEmpty { "(unset)" })
+                if (adb.logDLastResult.isNotBlank()) Text(adb.logDLastResult, style = MaterialTheme.typography.bodySmall)
+                OutlinedButton(enabled = !busy && adb.localStatus == "Connected", onClick = {
+                    scope.launch { busy = true; CellTrackerAdbEngine.readLogD(context); busy = false }
+                }, modifier = Modifier.fillMaxWidth()) { Text("CHECK LOG D (getprop)") }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(enabled = !busy && adb.localStatus == "Connected", onClick = {
+                        scope.launch { busy = true; CellTrackerAdbEngine.enableLogD(context); busy = false }
+                    }, modifier = Modifier.weight(1f)) { Text("ENABLE D") }
+                    OutlinedButton(enabled = !busy && adb.localStatus == "Connected" && adb.logDPrevious != null,
+                        onClick = { scope.launch { busy = true; CellTrackerAdbEngine.restoreLogD(context); busy = false } },
+                        modifier = Modifier.weight(1f)) { Text("RESTORE") }
+                }
+                Text("This persistent property can survive reboot. The previous value is saved privately until a verified restore. Opening the vendor Logger and starting modem capture are separate manual steps.",
+                    style = MaterialTheme.typography.bodySmall)
             }
             GlassSection(
                 "2 · MFT Report Browser",
@@ -6562,7 +6616,10 @@ private fun HomeScreenV121(
     onWhatsAppSend: () -> Unit,
     onCallSetup: () -> Unit,
     onNetworkRecording: () -> Unit,
-    onBasementTest: () -> Unit
+    onBasementTest: () -> Unit,
+    onTikTokUpload: () -> Unit,
+    onDeviceLogs: () -> Unit,
+    onThroughputTest: () -> Unit
 ) {
     val context = LocalContext.current
     val mtkLoggerPackage = CellTrackerAdbEngine.mtkLoggerPackageLocal(context)
@@ -6610,58 +6667,53 @@ private fun HomeScreenV121(
             }
         }
 
-        HomeSectionHeaderV121("Quick Start", "Start a test instantly", "See All", onSeeAllTests)
+        Text("Tests", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        Text("Select a test to configure", style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            HomeQuickCardV121("TikTok", "Video Lag", "♪", Color(0xFF111111), listOf("com.zhiliaoapp.musically", "com.ss.android.ugc.trill"), Modifier.weight(1f), onClick = onTikTokLag)
-            HomeQuickCardV121("YouTube", "Loading", "▶", Color(0xFFFF0033), listOf("com.google.android.youtube"), Modifier.weight(1f), onClick = onVideoLoading)
-            HomeQuickCardV121("WhatsApp", "Image Send", "☎", Color(0xFF25D366), listOf("com.whatsapp", "com.whatsapp.w4b"), Modifier.weight(1f), onClick = onWhatsAppSend)
+            HomeQuickCardV121("TikTok", "Upload", "♪", Color(0xFF111111),
+                listOf("com.zhiliaoapp.musically", "com.ss.android.ugc.trill"), Modifier.weight(1f), onClick = onTikTokUpload)
+            HomeQuickCardV121("TikTok", "Video Lag", "♪", Color(0xFF111111),
+                listOf("com.zhiliaoapp.musically", "com.ss.android.ugc.trill"), Modifier.weight(1f), onClick = onTikTokLag)
+            HomeQuickCardV121("YouTube", "Loading", "▶", Color(0xFFFF0033),
+                listOf("com.google.android.youtube"), Modifier.weight(1f), onClick = onVideoLoading)
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            HomeQuickCardV121("Ping", "Test", "◉", MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f), onClick = onPingTest)
-            HomeQuickCardV121("Call", "Test", "✆", Color(0xFF16A34A), modifier = Modifier.weight(1f), onClick = onCallSetup)
-            HomeQuickCardV121("Network", if (state.isRecording) "Stop" else "Recording", "●", Color(0xFF6D4AFF), modifier = Modifier.weight(1f), onClick = onNetworkRecording)
+            HomeQuickCardV121("WhatsApp", "Image Send", "☎", Color(0xFF25D366),
+                listOf("com.whatsapp", "com.whatsapp.w4b"), Modifier.weight(1f), onClick = onWhatsAppSend)
+            HomeQuickCardV121("Ping", "Latency Test", "PING", MaterialTheme.colorScheme.primary,
+                modifier = Modifier.weight(1f), onClick = onPingTest)
+            HomeQuickCardV121("Call", "Call Setup", "CALL", Color(0xFF16A34A),
+                modifier = Modifier.weight(1f), onClick = onCallSetup)
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            HomeQuickCardV121("Weak Coverage", "Low signal", "▥", MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f), onClick = onBasementTest)
-            if (mtkLoggerPackage != null) {
-                HomeQuickCardV121("MTK Logger", "Vendor Log", "LOG", Color(0xFF64748B),
-                    listOf(mtkLoggerPackage), Modifier.weight(1f), installIfMissing = false) {
-                    CellTrackerAdbEngine.openMtkLoggerLocal(context).onFailure {
-                        Toast.makeText(context, it.message ?: "Unable to open MTK Logger", Toast.LENGTH_LONG).show()
-                    }
-                }
-            }
-            if (qtiLoggerPackage != null) {
-                HomeQuickCardV121("QTI LogKit", "Qualcomm Log", "LOG", Color(0xFF64748B),
-                    listOf(qtiLoggerPackage), Modifier.weight(1f), installIfMissing = false) {
-                    CellTrackerAdbEngine.openQualcommLoggerLocal(context).onFailure {
-                        Toast.makeText(context, it.message ?: "Unable to open QTI LogKit", Toast.LENGTH_LONG).show()
-                    }
-                }
-            }
-            repeat((2 - listOf(mtkLoggerPackage, qtiLoggerPackage).count { it != null }).coerceAtLeast(0)) {
-                Spacer(Modifier.weight(1f))
-            }
+            HomeQuickCardV121("Network", if(state.isRecording) "Stop Recording" else "Recording", "REC",
+                Color(0xFF6D4AFF), modifier = Modifier.weight(1f), onClick = onNetworkRecording)
+            HomeQuickCardV121("Throughput", "HTTP DL", "⇅", Color(0xFF0891B2),
+                modifier = Modifier.weight(1f), onClick = onThroughputTest)
+            HomeQuickCardV121("Device Logs", "ADB Tools", "LOG", Color(0xFF64748B),
+                modifier = Modifier.weight(1f), onClick = onDeviceLogs)
         }
-
-        HomeSectionHeaderV121("Recent Tests", "Latest saved network recordings", "See All", onReports)
-        if (state.recordings.isEmpty()) {
-            Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f))) {
-                Text("No saved recordings yet", modifier = Modifier.padding(16.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        } else {
-            state.recordings.take(2).forEach { item ->
-                Card(onClick = onReports, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)), elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)) {
-                    Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                        AppIconTileV1("▤", MaterialTheme.colorScheme.primary)
-                        Spacer(Modifier.width(12.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(item.name.ifBlank { "Network Recording" }, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                            Text(item.simSummary.ifBlank { "Saved recording" }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-                        }
-                        Text("›", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.headlineSmall)
-                    }
+        if (mtkLoggerPackage != null || qtiLoggerPackage != null) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (mtkLoggerPackage != null) {
+                    HomeQuickCardV121("MTK Logger", "Vendor Log", "LOG", Color(0xFF64748B),
+                        listOf(mtkLoggerPackage), Modifier.weight(1f), installIfMissing = false, onClick = {
+                            CellTrackerAdbEngine.openMtkLoggerLocal(context).onFailure {
+                                Toast.makeText(context, it.message ?: "Unable to open MTK Logger", Toast.LENGTH_LONG).show()
+                            }
+                        })
                 }
+                if (qtiLoggerPackage != null) {
+                    HomeQuickCardV121(if (qtiLoggerPackage == "com.transsion.TranLogManager") "TranLogManager" else "QTI LogKit",
+                        "Vendor Log", "LOG", Color(0xFF64748B), listOf(qtiLoggerPackage),
+                        Modifier.weight(1f), installIfMissing = false, onClick = {
+                            CellTrackerAdbEngine.openQualcommLoggerLocal(context).onFailure {
+                                Toast.makeText(context, it.message ?: "Unable to open vendor Logger", Toast.LENGTH_LONG).show()
+                            }
+                        })
+                }
+                if (listOf(mtkLoggerPackage, qtiLoggerPackage).count { it != null } == 1) Spacer(Modifier.weight(1f))
             }
         }
 
@@ -6786,7 +6838,48 @@ private fun AppIconTileV1(symbol: String, color: Color) {
         color = color.copy(alpha = 0.12f)
     ) {
         Box(contentAlignment = Alignment.Center) {
-            Text(symbol, color = color, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            if (symbol == "PING" || symbol == "REC" || symbol == "CALL") {
+                Canvas(Modifier.size(34.dp)) {
+                    val scale = size.minDimension / 100f
+                    fun point(x: Float, y: Float) = Offset(x * scale, y * scale)
+                    when (symbol) {
+                        "PING" -> {
+                            drawArc(color, 200f, 140f, false, topLeft = point(12f, 15f),
+                                size = Size(76f*scale, 76f*scale), style = Stroke(8f*scale, cap = StrokeCap.Round))
+                            drawLine(color, point(50f, 68f), point(79f, 30f), 8f*scale, StrokeCap.Round)
+                            drawCircle(color, 8f*scale, point(50f, 68f))
+                            for (i in 0..4) {
+                                val a = (205 + i * 32) * Math.PI / 180
+                                val x = (50 + 32 * kotlin.math.cos(a)).toFloat()
+                                val y = (55 + 32 * kotlin.math.sin(a)).toFloat()
+                                drawCircle(color, 3f*scale, point(x,y))
+                            }
+                        }
+                        "REC" -> {
+                            drawRoundRect(color, topLeft = point(13f, 18f),
+                                size = Size(74f*scale, 64f*scale), cornerRadius = androidx.compose.ui.geometry.CornerRadius(10f*scale),
+                                style = Stroke(6f*scale))
+                            drawArc(color, 205f, 125f, false, topLeft = point(25f, 30f),
+                                size = Size(50f*scale, 42f*scale), style = Stroke(6f*scale, cap = StrokeCap.Round))
+                            drawCircle(color, 7f*scale, point(50f, 55f))
+                            drawCircle(Color(0xFFE5484D), 6f*scale, point(76f, 28f))
+                        }
+                        else -> {
+                            val phonePath = Path().apply {
+                                moveTo(19f*scale, 20f*scale)
+                                cubicTo(8f*scale, 28f*scale, 13f*scale, 54f*scale, 40f*scale, 77f*scale)
+                                cubicTo(62f*scale, 96f*scale, 82f*scale, 87f*scale, 86f*scale, 72f*scale)
+                                lineTo(69f*scale, 62f*scale)
+                                lineTo(57f*scale, 73f*scale)
+                                cubicTo(43f*scale, 67f*scale, 32f*scale, 54f*scale, 28f*scale, 41f*scale)
+                                lineTo(38f*scale, 29f*scale)
+                                close()
+                            }
+                            drawPath(phonePath, color)
+                        }
+                    }
+                }
+            } else Text(symbol, color = color, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
         }
     }
 }

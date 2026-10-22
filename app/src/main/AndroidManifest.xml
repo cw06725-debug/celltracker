@@ -37,6 +37,7 @@
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
         <package android:name="com.debug.loggerui" />
+        <package android:name="com.transsion.TranLogManager" />
         <package android:name="com.mediatek.mtklogger" />
         <package android:name="com.qualcomm.qti.logkit" />
         <package android:name="com.qualcomm.qti.logkit.lite" />

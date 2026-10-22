@@ -29,7 +29,9 @@ data class AdbUiState(
     val refLabel:String="vivo_REF",
     val mftRunning:Boolean=false, val mftPhase:String="", val mftSource:String="", val mftSavedPath:String="", val mftCleanup:String="",
     val mftFiles:List<String> = emptyList(), val mftSelected:String="", val mftTransport:String="",
-    val message:String=""
+    val message:String="",
+    val logDStatus:String="Not checked", val logDPrevious:String?=null,
+    val logDLastResult:String=""
 )
 object AdbToolStore { val state=MutableStateFlow(AdbUiState()) }
 
@@ -466,6 +468,7 @@ object CellTrackerAdbEngine {
     fun shouldShowMtkLoggerLocal(context: Context): Boolean = mtkLoggerPackageLocal(context) != null
 
     private val qualcommLoggerCandidates = listOf(
+        "com.transsion.TranLogManager" to listOf("com.transsion.TranLogManager.TranLogManageActivity"),
         "com.qualcomm.qti.logkit" to listOf("com.qualcomm.qti.logkit.cActivity"),
         "com.qualcomm.qti.logkit.lite" to listOf("com.qualcomm.qti.logkit.lite.cActivity")
     )
@@ -512,12 +515,76 @@ object CellTrackerAdbEngine {
     fun openQualcommLoggerLocal(context: Context): Result<String> = runCatching {
         check(isQualcommPlatform()) { "This device is not identified as Qualcomm" }
         val pkg = qualcommLoggerPackageLocal(context)
-            ?: error("No accessible QTI LogKit Activity on this ROM")
+            ?: error("No accessible Qualcomm vendor Logger Activity on this ROM")
         val activities = qualcommLoggerCandidates.firstOrNull { it.first == pkg }?.second.orEmpty()
         val intent = vendorLoggerIntent(context, pkg, activities)
-            ?: error("QTI LogKit cannot be opened on this ROM")
+            ?: error("Vendor Logger is not exported or this application lacks launch permission")
         context.startActivity(intent)
-        "QTI LogKit"
+        if (pkg == "com.transsion.TranLogManager") "TranLogManager" else "QTI LogKit"
+    }
+
+    /** Android logcat verbosity only. This never starts the vendor modem logger. */
+    suspend fun readLogD(context: Context): Result<String> = withContext(Dispatchers.IO) {
+        val result = command(context, "getprop persist.log.tag", 7_000)
+        result.onSuccess { raw ->
+            val current = raw.trim().ifEmpty { "(unset)" }
+            AdbToolStore.state.value = AdbToolStore.state.value.copy(
+                logDStatus = current, logDLastResult = "Read from ADB shell"
+            )
+        }.onFailure { e ->
+            AdbToolStore.state.value = AdbToolStore.state.value.copy(
+                logDStatus = "Unknown", logDLastResult = "Read failed: ${e.message}"
+            )
+        }
+        result.map { it.trim().ifEmpty { "(unset)" } }
+    }
+
+    suspend fun enableLogD(context: Context): Result<String> = withContext(Dispatchers.IO) {
+        runCatching {
+            val before = command(context, "getprop persist.log.tag").getOrThrow().trim()
+            val output = command(context, "setprop persist.log.tag D", 10_000).getOrThrow()
+            val after = command(context, "getprop persist.log.tag").getOrThrow().trim()
+            check(after == "D") { "Property did not become D (actual: $after). $output" }
+            // Only save the previous value after a successful change; preserve the first baseline.
+            val old = AdbToolStore.state.value
+            val prefs = context.getSharedPreferences("celltracker_logd", Context.MODE_PRIVATE)
+            val savedBaseline = if (prefs.getBoolean("has_previous", false))
+                prefs.getString("previous", "") else null
+            val baseline = savedBaseline ?: old.logDPrevious ?: before
+            prefs.edit().putBoolean("has_previous", true).putString("previous", baseline).apply()
+            AdbToolStore.state.value = old.copy(
+                logDPrevious = baseline,
+                logDStatus = after, logDLastResult = "Confirmed by getprop: D"
+            )
+            "Log D enabled (verified). Vendor modem log must be started separately."
+        }.onFailure { e ->
+            AdbToolStore.state.value = AdbToolStore.state.value.copy(logDLastResult = "Enable failed: ${e.message}")
+        }
+    }
+
+    suspend fun restoreLogD(context: Context): Result<String> = withContext(Dispatchers.IO) {
+        runCatching {
+            val prefs = context.getSharedPreferences("celltracker_logd", Context.MODE_PRIVATE)
+            val baseline = (if (prefs.getBoolean("has_previous", false))
+                prefs.getString("previous", "") else null)
+                ?: error("No previous value recorded by CellTracker")
+            // An empty pre-existing property should be removed rather than set to a bogus level.
+            val cmd = if (baseline.isEmpty()) "setprop persist.log.tag ''" else {
+                check(baseline.matches(Regex("[A-Za-z0-9_.-]+"))) { "Invalid saved property value" }
+                "setprop persist.log.tag $baseline"
+            }
+            command(context, cmd, 10_000).getOrThrow()
+            val after = command(context, "getprop persist.log.tag").getOrThrow().trim()
+            check(after == baseline) { "Restore not verified: actual '$after'" }
+            prefs.edit().clear().apply()
+            AdbToolStore.state.value = AdbToolStore.state.value.copy(
+                logDPrevious = null, logDStatus = after.ifEmpty { "(unset)" },
+                logDLastResult = "Previous value restored and verified"
+            )
+            "Restored: ${after.ifEmpty { "(unset)" }}"
+        }.onFailure { e ->
+            AdbToolStore.state.value = AdbToolStore.state.value.copy(logDLastResult = "Restore failed: ${e.message}")
+        }
     }
 
     /** Start MTK communication logs directly on the connected REF over ADB.
