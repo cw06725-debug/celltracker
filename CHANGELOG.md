@@ -1373,3 +1373,10 @@ Build note: local assembleDebug could not run because this environment cannot re
 - Added reusable Test Log quick manager on Tests page.
 - Start/stop REF AP log and export DUT debuglogger without reopening ADB Tools.
 - Preserved date-based Logs export structure and stable signing setup.
+
+## v1.2.65
+- Added ADB-free local MTK Logger entry: `OPEN LOCAL MTK LOGGER`.
+- START/STOP MTK Log now use direct local Intent/Broadcast first when CellTracker is installed on the MTK/vivo device.
+- Automatically falls back to the existing REF ADB control when no local MTK logger is available.
+- Added Android package visibility for DebugLoggerUI and legacy MTKLogger packages.
+- Clarified that direct mode controls the same phone; controlling a separate REF phone still requires a transport such as ADB.

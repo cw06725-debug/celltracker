@@ -396,6 +396,71 @@ object CellTrackerAdbEngine {
             low.contains("unknown id")
     }
 
+    private fun packageInstalled(context:Context, packageName:String):Boolean = runCatching {
+        context.packageManager.getPackageInfo(packageName, 0)
+        true
+    }.getOrDefault(false)
+
+    /** Open the MTK logger UI on the SAME device that is running CellTracker.
+     *  This path does not require ADB. It only works when the OEM exports the logger Activity.
+     */
+    fun openMtkLoggerLocal(context:Context):Result<String> = runCatching {
+        val candidates = listOf(
+            ComponentName("com.debug.loggerui", "com.debug.loggerui.MainActivity") to "DebugLoggerUI",
+            ComponentName("com.mediatek.mtklogger", "com.mediatek.mtklogger.MainActivity") to "MTKLogger"
+        )
+        var last:String? = null
+        for ((component, label) in candidates) {
+            if (!packageInstalled(context, component.packageName)) continue
+            try {
+                context.startActivity(Intent().setComponent(component).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                return@runCatching label
+            } catch (t:Throwable) {
+                last = t.message
+            }
+        }
+        throw IllegalStateException(last ?: "MTK logger UI is not installed or is blocked by this ROM")
+    }
+
+    /** Try to control the MTK logger locally, without ADB. This controls only the SAME device
+     *  running CellTracker. Newer MTK builds use DebugLoggerUI; older builds use MTKLogger.
+     */
+    private fun controlMtkLoggerLocal(context:Context, start:Boolean):Result<String> = runCatching {
+        val cmd = if(start) "start" else "stop"
+        if (packageInstalled(context, "com.debug.loggerui")) {
+            val i = Intent("com.debug.loggerui.ADB_CMD")
+                .setComponent(ComponentName("com.debug.loggerui", "com.debug.loggerui.framework.LogReceiver"))
+                .putExtra("cmd_name", cmd)
+                .putExtra("cmd_target", 7)
+            context.sendBroadcast(i)
+            return@runCatching "DebugLoggerUI · Direct"
+        }
+        if (packageInstalled(context, "com.mediatek.mtklogger")) {
+            val i = Intent("com.mediatek.mtklogger.ADB_CMD")
+                .setPackage("com.mediatek.mtklogger")
+                .putExtra("cmd_name", cmd)
+                .putExtra("cmd_target", 7)
+            context.sendBroadcast(i)
+            return@runCatching "MTKLogger · Direct"
+        }
+        throw IllegalStateException("No local MTK logger package found")
+    }
+
+    /** Direct-local first, then ADB REF fallback. Local direct mode is ADB-free but only controls
+     *  the phone on which CellTracker itself is installed. Cross-device REF control still needs ADB.
+     */
+    suspend fun startMtkLoggerSmart(context:Context):Result<String> {
+        val direct = controlMtkLoggerLocal(context, true)
+        if (direct.isSuccess) return direct
+        return startMtkLoggerRef(context).map { "$it · ADB REF" }
+    }
+
+    suspend fun stopMtkLoggerSmart(context:Context):Result<String> {
+        val direct = controlMtkLoggerLocal(context, false)
+        if (direct.isSuccess) return direct
+        return stopMtkLoggerRef(context).map { "$it · ADB REF" }
+    }
+
     /** Start MTK communication logs directly on the connected REF over ADB.
      *  Target 7 = Mobile/AP + Modem + Network logs, which is the useful set for CellTracker communication tests.
      *  Android Q+ uses DebugLoggerUI; older MTK builds use MTKLogger.
