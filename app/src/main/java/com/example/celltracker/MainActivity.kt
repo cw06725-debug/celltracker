@@ -5569,11 +5569,14 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
                             .onFailure { Toast.makeText(context,"Unable to open vivo log entry",Toast.LENGTH_SHORT).show() }
                     }, modifier=Modifier.weight(1f)) { Text("VIVO LOG") }
                     OutlinedButton(onClick={
-                        runCatching { context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + Uri.encode("*#*#3646633#*#*")))) }
-                            .onFailure { Toast.makeText(context,"Unable to open MTK EngineerMode",Toast.LENGTH_SHORT).show() }
+                        scope.launch {
+                            val r = CellTrackerAdbEngine.openMtkLoggerRef(context)
+                            r.onSuccess { Toast.makeText(context, "$it opened on REF", Toast.LENGTH_SHORT).show() }
+                                .onFailure { Toast.makeText(context, it.message ?: "Unable to open MTK logger on REF", Toast.LENGTH_LONG).show() }
+                        }
                     }, modifier=Modifier.weight(1f)) { Text("MTK LOGGER") }
                 }
-                Text("vivo: *#*#112#*#* · MTK EngineerMode: *#*#3646633#*#*", style=MaterialTheme.typography.bodySmall)
+                Text("MTK LOGGER opens the connected REF via ADB Activity (DebugLoggerUI / MTKLogger / EngineerMode fallback).", style=MaterialTheme.typography.bodySmall)
             }
             GlassSection("1 · Local ADB / DUT") {
                 Text("Open Wireless debugging and choose Pair device with pairing code. CellTracker detects the temporary pairing service. Keep the system pairing dialog open, pull down notifications, expand CellTracker, and enter the 6-digit code there.",style=MaterialTheme.typography.bodySmall)
@@ -5927,8 +5930,11 @@ private fun QuickTestLogManagerV1() {
                         .onFailure { Toast.makeText(context,"Unable to open vivo log entry",Toast.LENGTH_SHORT).show() }
                 },modifier=Modifier.weight(1f)){Text("VIVO LOG")}
                 OutlinedButton(onClick={
-                    runCatching { context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + Uri.encode("*#*#3646633#*#*")))) }
-                        .onFailure { Toast.makeText(context,"Unable to open MTK EngineerMode",Toast.LENGTH_SHORT).show() }
+                    scope.launch {
+                        val r = CellTrackerAdbEngine.openMtkLoggerRef(context)
+                        r.onSuccess { Toast.makeText(context, "$it opened on REF", Toast.LENGTH_SHORT).show() }
+                            .onFailure { Toast.makeText(context, it.message ?: "Unable to open MTK logger on REF", Toast.LENGTH_LONG).show() }
+                    }
                 },modifier=Modifier.weight(1f)){Text("MTK LOGGER")}
             }
             if(expanded) {

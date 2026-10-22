@@ -1,3 +1,10 @@
+# v1.2.63
+
+- MTK LOGGER no longer opens the dialer secret-code path.
+- Launch the connected REF logger over the existing ADB transport.
+- Auto-detect DebugLoggerUI first, then legacy MTKLogger, then MTK EngineerMode.
+- Keep the same shortcut available from Device Logs and Tests > Test Log.
+
 ## v1.2.62
 - Move vivo/MTK official log shortcuts to the top of Device Logs / ADB Tools so they are immediately visible.
 - Keep VIVO LOG and MTK LOGGER visible directly in the Tests > Test Log card even when advanced log controls are collapsed.

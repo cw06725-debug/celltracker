@@ -385,6 +385,39 @@ object CellTrackerAdbEngine {
     suspend fun commandRef(context:Context,cmd:String,timeoutMs:Long=8_000):Result<String> =
         commandAny(context,cmd,timeoutMs)
 
+    suspend fun openMtkLoggerRef(context:Context):Result<String> = withContext(Dispatchers.IO) { runCatching {
+        val candidates = listOf(
+            "com.debug.loggerui/com.debug.loggerui.MainActivity" to "DebugLoggerUI",
+            "com.mediatek.mtklogger/com.mediatek.mtklogger.MainActivity" to "MTKLogger",
+            "com.mediatek.engineermode/.EngineerMode" to "MTK EngineerMode"
+        )
+        var lastOutput = ""
+        var opened: String? = null
+        for ((component, label) in candidates) {
+            val result = commandAny(context, "am start -W -n $component", 8_000)
+            if (result.isFailure) {
+                lastOutput = result.exceptionOrNull()?.message ?: "ADB command failed"
+                continue
+            }
+            val out = result.getOrThrow()
+            lastOutput = out
+            val low = out.lowercase(Locale.US)
+            val failed = low.contains("error type") ||
+                low.contains("does not exist") ||
+                low.contains("unable to resolve") ||
+                low.contains("securityexception") ||
+                low.contains("permission denial") ||
+                low.contains("exception occurred")
+            if (!failed) {
+                opened = label
+                break
+            }
+        }
+        val label = opened ?: throw IllegalStateException("No MTK logger Activity could be opened. $lastOutput")
+        AdbToolStore.state.value = AdbToolStore.state.value.copy(message = "$label opened on REF")
+        label
+    } }
+
     private suspend fun commandForMft(context:Context,cmd:String,timeoutMs:Long,useUsbRef:Boolean):Result<String> =
         if(useUsbRef) {
             if(!UsbAdbHost.get(context).connected) Result.failure(IllegalStateException("USB REF is not connected"))
