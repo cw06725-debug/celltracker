@@ -5561,6 +5561,20 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
     LaunchedEffect(Unit) { CellTrackerAdbEngine.startDiscovery(context) }
     Scaffold(topBar={TopAppBar(title={Text("Device Logs / ADB Tools")},navigationIcon={TextButton(onClick=onBack){Text("Back")}})},contentWindowInsets=WindowInsets(0,0,0,0)){pad->
         Column(Modifier.fillMaxSize().padding(pad).padding(16.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)){
+            GlassSection("vivo Official Log · MTK") {
+                Text("Quick entry for vivo MediaTek official logging. Use this before/after a test without scrolling through ADB settings.", style=MaterialTheme.typography.bodySmall)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                    Button(onClick={
+                        runCatching { context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + Uri.encode("*#*#112#*#*")))) }
+                            .onFailure { Toast.makeText(context,"Unable to open vivo log entry",Toast.LENGTH_SHORT).show() }
+                    }, modifier=Modifier.weight(1f)) { Text("VIVO LOG") }
+                    OutlinedButton(onClick={
+                        runCatching { context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + Uri.encode("*#*#3646633#*#*")))) }
+                            .onFailure { Toast.makeText(context,"Unable to open MTK EngineerMode",Toast.LENGTH_SHORT).show() }
+                    }, modifier=Modifier.weight(1f)) { Text("MTK LOGGER") }
+                }
+                Text("vivo: *#*#112#*#* · MTK EngineerMode: *#*#3646633#*#*", style=MaterialTheme.typography.bodySmall)
+            }
             GlassSection("1 · Local ADB / DUT") {
                 Text("Open Wireless debugging and choose Pair device with pairing code. CellTracker detects the temporary pairing service. Keep the system pairing dialog open, pull down notifications, expand CellTracker, and enter the 6-digit code there.",style=MaterialTheme.typography.bodySmall)
                 Field("Status",adb.localStatus); Field("Identity",adb.localIdentity)
@@ -5815,21 +5829,7 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
                 Field("REF ADB",adb.remoteStatus); Field("REF identity",adb.remoteIdentity)
                 }
             }
-            GlassSection("4 · vivo / MTK Official Log") {
-                Text("Quick entry for vivo MediaTek platform logging. The dialer is opened with the known service code; availability depends on the REF firmware.", style=MaterialTheme.typography.bodySmall)
-                Row(Modifier.fillMaxWidth(), horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick={
-                        runCatching { context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + Uri.encode("*#*#112#*#*")))) }
-                            .onFailure { Toast.makeText(context,"Unable to open vivo log entry",Toast.LENGTH_SHORT).show() }
-                    }, modifier=Modifier.weight(1f)) { Text("VIVO LOG") }
-                    OutlinedButton(onClick={
-                        runCatching { context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + Uri.encode("*#*#3646633#*#*")))) }
-                            .onFailure { Toast.makeText(context,"Unable to open MTK EngineerMode",Toast.LENGTH_SHORT).show() }
-                    }, modifier=Modifier.weight(1f)) { Text("MTK LOGGER") }
-                }
-                Text("vivo log code: *#*#112#*#* · MTK EngineerMode: *#*#3646633#*#*. If the ROM blocks service-code launch, enter the code manually in the phone dialer.", style=MaterialTheme.typography.bodySmall)
-            }
-            GlassSection("5 · $refType REF AP Log") {
+            GlassSection("4 · $refType REF AP Log") {
                 Field("REF device",if(refType=="Custom") customRefName.ifBlank{"Custom"} else refType)
                 Field("Log folder","Download/CellTracker/${SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())}/Logs/$refLabel")
                 OutlinedTextField(logcatCommand,{logcatCommand=it},label={Text("Logcat command")},modifier=Modifier.fillMaxWidth())
@@ -5840,7 +5840,7 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
                 }
                 Text("Presets: AP = logcat -v threadtime · Radio = logcat -b radio -v threadtime",style=MaterialTheme.typography.bodySmall)
             }
-            GlassSection("6 · ADB Shell / Custom Command") {
+            GlassSection("5 · ADB Shell / Custom Command") {
                 OutlinedTextField(shellCommand,{shellCommand=it},label={Text("Command (without 'adb shell')")},modifier=Modifier.fillMaxWidth())
                 Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
                     AssistChip(onClick={shellCommand="logcat -b radio -d -v threadtime"},label={Text("Radio")}); AssistChip(onClick={shellCommand="getprop"},label={Text("Getprop")}); AssistChip(onClick={shellCommand="dumpsys telephony.registry"},label={Text("Telephony")})
@@ -5848,7 +5848,7 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
                 Button(onClick={scope.launch{busy=true;val r=CellTrackerAdbEngine.commandRef(context,shellCommand);shellOutput=r.fold({it},{"ERROR: ${it.message}"});busy=false}},modifier=Modifier.fillMaxWidth()){Text("RUN COMMAND")}
                 if(shellOutput.isNotBlank()) SelectionContainer{Text(shellOutput.take(12000),style=MaterialTheme.typography.bodySmall)}
             }
-            GlassSection("7 · Connection Strategy") {
+            GlassSection("6 · Connection Strategy") {
                 Text("Recommended: USB ADB for REF devices. It does not need a hotspot, pairing port or connect port. Auto mode prefers USB whenever the REF is connected by OTG/data cable.",style=MaterialTheme.typography.bodySmall)
                 Text("Wireless ADB remains available as fallback. Legacy TCP 5555 can be used only on ROMs where adbd has already been switched to TCP mode; CellTracker does not enable insecure TCP automatically.",style=MaterialTheme.typography.bodySmall)
             }
@@ -5919,7 +5919,17 @@ private fun QuickTestLogManagerV1() {
                     Text("Test Log", fontWeight=FontWeight.SemiBold)
                     Text(if(adb.logcatRunning) "REF AP Log · RECORDING" else "Start / stop / export without opening ADB Tools", style=MaterialTheme.typography.bodySmall)
                 }
-                TextButton(onClick={expanded=!expanded}) { Text(if(expanded) "HIDE" else "LOG") }
+                TextButton(onClick={expanded=!expanded}) { Text(if(expanded) "HIDE" else "MORE") }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick={
+                    runCatching { context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + Uri.encode("*#*#112#*#*")))) }
+                        .onFailure { Toast.makeText(context,"Unable to open vivo log entry",Toast.LENGTH_SHORT).show() }
+                },modifier=Modifier.weight(1f)){Text("VIVO LOG")}
+                OutlinedButton(onClick={
+                    runCatching { context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + Uri.encode("*#*#3646633#*#*")))) }
+                        .onFailure { Toast.makeText(context,"Unable to open MTK EngineerMode",Toast.LENGTH_SHORT).show() }
+                },modifier=Modifier.weight(1f)){Text("MTK LOGGER")}
             }
             if(expanded) {
                 OutlinedTextField(testName,{testName=it},label={Text("Test name / remark")},singleLine=true,modifier=Modifier.fillMaxWidth())
@@ -5941,14 +5951,6 @@ private fun QuickTestLogManagerV1() {
                     if(r.isFailure) Toast.makeText(context,r.exceptionOrNull()?.message?:"DUT log export failed",Toast.LENGTH_LONG).show()
                     busy=false
                 }},modifier=Modifier.fillMaxWidth()) { Text(if(adb.exportRunning) "EXPORTING DUT LOG…" else "EXPORT DUT LOG") }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick={
-                        runCatching { context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + Uri.encode("*#*#112#*#*")))) }
-                    },modifier=Modifier.weight(1f)){Text("VIVO LOG")}
-                    OutlinedButton(onClick={
-                        runCatching { context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + Uri.encode("*#*#3646633#*#*")))) }
-                    },modifier=Modifier.weight(1f)){Text("MTK LOGGER")}
-                }
                 if(adb.logcatPath.isNotBlank()) Field("REF log",adb.logcatPath)
                 if(adb.exportPath.isNotBlank()) Field("DUT export",adb.exportPath)
                 Text("Recommended flow: open/start vendor log before the test → run the test → stop vendor log → export DUT/REF logs here. Existing date-based Logs folders are preserved.",style=MaterialTheme.typography.bodySmall)

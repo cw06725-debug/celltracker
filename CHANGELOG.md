@@ -1,3 +1,8 @@
+## v1.2.62
+- Move vivo/MTK official log shortcuts to the top of Device Logs / ADB Tools so they are immediately visible.
+- Keep VIVO LOG and MTK LOGGER visible directly in the Tests > Test Log card even when advanced log controls are collapsed.
+- Remove the buried duplicate vendor-log section and keep existing DUT/REF export paths unchanged.
+
 # v1.2.61 (versionCode 238)
 
 - YouTube Semi-auto: prevent premature AUTO LOADED when recommendation text/cards are present but thumbnails are still blank/gray placeholders.
