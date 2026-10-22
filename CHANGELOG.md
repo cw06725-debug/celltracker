@@ -1,3 +1,11 @@
+## v1.2.70 Preview 4 — Call Setup sheet responsiveness + TranLog card (versionCode 250)
+
+- Keep Call Setup initial test configuration lightweight: do not immediately request permissions, refresh Device Link, or access telephony subscription data before the user opens device configuration.
+- Defer SIM enumeration and phone-number probing to the Device Link/SIM page, using an IO dispatcher. Keep saved identity values for initial start eligibility.
+- Restructure Call Setup as a compact, scrollable dialog with a fixed action footer and collapsible advanced settings; retain all original test configuration fields and the underlying test runner.
+- Rename the Home vendor card to TranLog and render its installed artwork at 30 dp within the 48 dp tile; preserve Qualcomm/TranLogManager detection and launching.
+- Cache installed Home application version lookups across recompositions.
+
 ## v1.2.70 Preview 3 — Home setup overlays and application icons (versionCode 249)
 
 - FIX: Initial YouTube Loading, WhatsApp Image Send, Ping, Call Setup and HTTP Throughput configuration dialogs now draw on the Home composition instead of exposing their old history/test screens beneath the modal. Page content is only rendered once the user proceeds with setup. Cancelling dismisses the test route to Home.

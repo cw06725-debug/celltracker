@@ -79,6 +79,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
@@ -6823,9 +6824,9 @@ private fun HomeScreenV121(
                         })
                 }
                 if (qtiLoggerPackage != null) {
-                    HomeQuickCardV121(if (qtiLoggerPackage == "com.transsion.TranLogManager") "TranLogManager" else "QTI LogKit",
+                    HomeQuickCardV121(if (qtiLoggerPackage == "com.transsion.TranLogManager") "TranLog" else "QTI LogKit",
                         "Vendor Log", "LOG", Color(0xFF64748B), listOf(qtiLoggerPackage),
-                        Modifier.weight(1f), installIfMissing = false, onClick = {
+                        Modifier.weight(1f), installIfMissing = false, iconArtworkSize = 30.dp, onClick = {
                             CellTrackerAdbEngine.openQualcommLoggerLocal(context).onFailure {
                                 Toast.makeText(context, it.message ?: "Unable to open vendor Logger", Toast.LENGTH_LONG).show()
                             }
@@ -6876,9 +6877,12 @@ private fun runAppTestOrInstallV1(context: Context, packageNames: List<String>, 
 }
 
 @Composable
-private fun HomeQuickCardV121(title: String, subtitle: String, symbol: String, iconColor: Color, appPackages: List<String> = emptyList(), modifier: Modifier = Modifier, installIfMissing: Boolean = true, onClick: () -> Unit) {
+private fun HomeQuickCardV121(title: String, subtitle: String, symbol: String, iconColor: Color, appPackages: List<String> = emptyList(), modifier: Modifier = Modifier, installIfMissing: Boolean = true, iconArtworkSize: Dp = 40.dp, onClick: () -> Unit) {
     val context = LocalContext.current
-    val version = if (appPackages.isNotEmpty()) installedAppVersionV1(context, appPackages) else null
+    // Avoid repeated PackageManager calls when the Home dialog is opened/recomposed.
+    val version = remember(context, appPackages) {
+        if (appPackages.isNotEmpty()) installedAppVersionV1(context, appPackages) else null
+    }
     Card(
         onClick = { if (installIfMissing) runAppTestOrInstallV1(context, appPackages, onClick) else onClick() },
         modifier = modifier.height(124.dp),
@@ -6888,7 +6892,7 @@ private fun HomeQuickCardV121(title: String, subtitle: String, symbol: String, i
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp, pressedElevation = 0.dp)
     ) {
         Column(modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 10.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.SpaceBetween) {
-            if (appPackages.isNotEmpty()) InstalledAppIconV1(appPackages, symbol, iconColor) else AppIconTileV1(symbol, iconColor)
+            if (appPackages.isNotEmpty()) InstalledAppIconV1(appPackages, symbol, iconColor, artworkSize = iconArtworkSize) else AppIconTileV1(symbol, iconColor)
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(title, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, maxLines = 1)
                 Text(subtitle, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
@@ -7003,7 +7007,7 @@ private fun AppIconTileV1(symbol: String, color: Color) {
 }
 
 @Composable
-private fun InstalledAppIconV1(packageNames: List<String>, fallbackSymbol: String, fallbackColor: Color) {
+private fun InstalledAppIconV1(packageNames: List<String>, fallbackSymbol: String, fallbackColor: Color, artworkSize: Dp = 40.dp) {
     val context = LocalContext.current
     val drawable = remember(packageNames) {
         packageNames.firstNotNullOfOrNull { pkg ->
@@ -7022,7 +7026,7 @@ private fun InstalledAppIconV1(packageNames: List<String>, fallbackSymbol: Strin
                         scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
                     } },
                     update = { it.setImageDrawable(drawable) },
-                    modifier = Modifier.size(40.dp).clip(RoundedCornerShape(11.dp))
+                    modifier = Modifier.size(artworkSize).clip(RoundedCornerShape(11.dp))
                 )
             }
         }
