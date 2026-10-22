@@ -193,6 +193,13 @@ class MainActivity : ComponentActivity() {
                 var showWhatsAppSend by remember { mutableStateOf(false) }
                 var showDeviceLogs by remember { mutableStateOf(false) }
                 var showThroughputTest by remember { mutableStateOf(false) }
+                // The test preparation overlay is drawn above the actual Home composition.
+                // The legacy test page is not composed until setup has completed.
+                var youtubePreparing by remember { mutableStateOf(true) }
+                var whatsappPreparing by remember { mutableStateOf(true) }
+                var pingPreparing by remember { mutableStateOf(true) }
+                var callPreparing by remember { mutableStateOf(true) }
+                var throughputPreparing by remember { mutableStateOf(true) }
                 val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { vm.start() }
                 var overlayPermissionRequestedForRecording by remember { mutableStateOf(false) }
                 val overlayPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
@@ -284,89 +291,19 @@ class MainActivity : ComponentActivity() {
                 // back crash. Capturing the path here keeps the outgoing screen valid.
                 val rootDestination: RootDestination = when {
                     detailPath != null -> RootDestination.Detail(detailPath!!)
-                    showCallSetup -> RootDestination.CallSetup
-                    showVideoLoading -> RootDestination.VideoLoading
+                    showCallSetup && !callPreparing -> RootDestination.CallSetup
+                    showVideoLoading && !youtubePreparing -> RootDestination.VideoLoading
                     showVisualAiCollector -> RootDestination.VisualAiCollector
                     showBasementTest -> RootDestination.BasementTest
-                    showWhatsAppSend -> RootDestination.WhatsAppSend
-                    showPingTest -> RootDestination.PingTest
+                    showWhatsAppSend && !whatsappPreparing -> RootDestination.WhatsAppSend
+                    showPingTest && !pingPreparing -> RootDestination.PingTest
                     showDeviceLogs -> RootDestination.DeviceLogs
-                    showThroughputTest -> RootDestination.Throughput
+                    showThroughputTest && !throughputPreparing -> RootDestination.Throughput
                     showSettings -> RootDestination.Settings
                     else -> RootDestination.Main
                 }
-                AnimatedContent(
-                    targetState = rootDestination,
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.TopStart,
-                    transitionSpec = {
-                        when {
-                            targetState == RootDestination.CallSetup || initialState == RootDestination.CallSetup ->
-                                EnterTransition.None.togetherWith(ExitTransition.None)
-                            targetState == RootDestination.Settings ->
-                                (slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(220)) + fadeIn(tween(180)))
-                                    .togetherWith(slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(220)) + fadeOut(tween(160)))
-                            initialState == RootDestination.Settings ->
-                                (slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Right, tween(220)) + fadeIn(tween(180)))
-                                    .togetherWith(slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Right, tween(220)) + fadeOut(tween(160)))
-                            else -> fadeIn(tween(120)).togetherWith(fadeOut(tween(100)))
-                        }
-                    },
-                    label = "rootNavigation"
-                ) { destination ->
-                when (destination) {
-                    is RootDestination.Detail -> RecordingDetailScreen(
-                        path = destination.path,
-                        fallbackItem = state.recordings.firstOrNull { it.path == destination.path },
-                        onBack = { detailPath = null },
-                        onExport = vm::exportRecording,
-                        onDelete = { path -> vm.deleteRecording(path); detailPath = null }
-                    )
-                    RootDestination.VideoLoading -> VideoLoadingScreen(onBack = { showVideoLoading = false }, onVisualAiCollector = { showVisualAiCollector = true; showVideoLoading = false })
-                    RootDestination.VisualAiCollector -> VisualAiCollectorScreen(onBack = { showVisualAiCollector = false; showVideoLoading = true })
-                    RootDestination.BasementTest -> BasementTestScreen(
-                        selectedSim = state.sims.firstOrNull { it.subscriptionId == state.selectedSubscriptionId } ?: state.sims.firstOrNull(),
-                        onBack = { showBasementTest = false }
-                    )
-                    RootDestination.WhatsAppSend -> WhatsAppSendScreen(onBack = { showWhatsAppSend = false })
-                    RootDestination.DeviceLogs -> DeviceLogsScreen(onBack = { showDeviceLogs = false })
-                    RootDestination.Throughput -> ThroughputScreen(onBack = { showThroughputTest = false })
-                    RootDestination.PingTest -> PingTestScreen(
-                        state = state.pingTest,
-                        history = state.pingHistory,
-                        detail = state.pingDetail,
-                        selectedSim = state.sims.firstOrNull { it.subscriptionId == state.selectedSubscriptionId } ?: state.sims.firstOrNull(),
-                        dataNetwork = state.dataNetwork,
-                        onBack = { showPingTest = false },
-                        onStart = vm::startPingTest,
-                        onStop = vm::stopPingTest,
-                        onClear = vm::clearPingResults,
-                        onOpenHistory = vm::openPingDetail,
-                        onCloseDetail = vm::closePingDetail,
-                        onExport = vm::exportPing
-                    )
-                    RootDestination.CallSetup -> CallSetupScreen(
-                        link = state.deviceLink,
-                        test = state.callSetup,
-                        history = state.callHistory,
-                        detail = state.callDetail,
-                        onBack = { showCallSetup = false },
-                        onLinkAction = vm::deviceLinkAction,
-                        onSelectLocalSim = vm::selectDeviceLocalSim,
-                        onSaveIdentity = vm::saveDeviceIdentity,
-                        onStartTest = vm::startCallSetup,
-                        onStopTest = vm::stopCallSetup,
-                        onOpenDetail = vm::openCallDetail,
-                        onCloseDetail = vm::closeCallDetail,
-                        onExport = vm::exportCallSetup
-                    )
-                    RootDestination.Settings -> SettingsScreen(
-                        settings = state.settings,
-                        visitId = settingsVisitId,
-                        onUpdate = vm::updateSettings,
-                        onBack = { showSettings = false }
-                    )
-                    RootDestination.Main -> MainScreen(
+                val renderHome: @Composable () -> Unit = {
+MainScreen(
                         state = state,
                         onSelectSim = vm::selectSubscription,
                         onStartRecording = vm::startRecording,
@@ -393,17 +330,130 @@ class MainActivity : ComponentActivity() {
                         },
                         settingsVisitId = settingsVisitId,
                         onSettingsUpdate = vm::updateSettings,
-                        onPingTest = { showPingTest = true },
-                        onVideoLoading = { showVideoLoading = true },
+                        onPingTest = { pingPreparing = !state.pingTest.isRunning; showPingTest = true },
+                        onVideoLoading = { youtubePreparing = true; showVideoLoading = true },
                         onBasementTest = { showBasementTest = true },
-                        onWhatsAppSend = { showWhatsAppSend = true },
-                        onCallSetup = { showCallSetup = true },
+                        onWhatsAppSend = { whatsappPreparing = true; showWhatsAppSend = true },
+                        onCallSetup = { callPreparing = !state.callSetup.isRunning && state.deviceLink.role == DeviceLinkRole.CONTROLLER; showCallSetup = true },
                         onDeviceLogs = { showDeviceLogs = true },
-                        onThroughputTest = { showThroughputTest = true },
+                        onThroughputTest = { throughputPreparing = true; showThroughputTest = true },
                         onDismissMessage = vm::clearMessage
                     )
                 }
+
+                // While a test is being configured, RootDestination stays Main.
+                // Test setup dialogs are siblings of Home rather than a new page.
+                Box(Modifier.fillMaxSize()) {
+                AnimatedContent(
+                    targetState = rootDestination,
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.TopStart,
+                    transitionSpec = {
+                        when {
+                            targetState in listOf(RootDestination.CallSetup, RootDestination.PingTest,
+                                RootDestination.VideoLoading, RootDestination.WhatsAppSend, RootDestination.Throughput) ||
+                                initialState in listOf(RootDestination.CallSetup, RootDestination.PingTest,
+                                    RootDestination.VideoLoading, RootDestination.WhatsAppSend, RootDestination.Throughput) ->
+                                EnterTransition.None.togetherWith(ExitTransition.None)
+                            targetState == RootDestination.Settings ->
+                                (slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(220)) + fadeIn(tween(180)))
+                                    .togetherWith(slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(220)) + fadeOut(tween(160)))
+                            initialState == RootDestination.Settings ->
+                                (slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Right, tween(220)) + fadeIn(tween(180)))
+                                    .togetherWith(slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Right, tween(220)) + fadeOut(tween(160)))
+                            else -> fadeIn(tween(120)).togetherWith(fadeOut(tween(100)))
+                        }
+                    },
+                    label = "rootNavigation"
+                ) { destination ->
+                when (destination) {
+                    is RootDestination.Detail -> RecordingDetailScreen(
+                        path = destination.path,
+                        fallbackItem = state.recordings.firstOrNull { it.path == destination.path },
+                        onBack = { detailPath = null },
+                        onExport = vm::exportRecording,
+                        onDelete = { path -> vm.deleteRecording(path); detailPath = null }
+                    )
+                    RootDestination.VideoLoading -> Spacer(Modifier.fillMaxSize())
+                    RootDestination.VisualAiCollector -> VisualAiCollectorScreen(onBack = { showVisualAiCollector = false; showVideoLoading = true })
+                    RootDestination.BasementTest -> BasementTestScreen(
+                        selectedSim = state.sims.firstOrNull { it.subscriptionId == state.selectedSubscriptionId } ?: state.sims.firstOrNull(),
+                        onBack = { showBasementTest = false }
+                    )
+                    RootDestination.WhatsAppSend -> Spacer(Modifier.fillMaxSize())
+                    RootDestination.DeviceLogs -> DeviceLogsScreen(onBack = { showDeviceLogs = false })
+                    RootDestination.Throughput -> Spacer(Modifier.fillMaxSize())
+                    RootDestination.PingTest -> Spacer(Modifier.fillMaxSize())
+                    RootDestination.CallSetup -> Spacer(Modifier.fillMaxSize())
+                    RootDestination.Settings -> SettingsScreen(
+                        settings = state.settings,
+                        visitId = settingsVisitId,
+                        onUpdate = vm::updateSettings,
+                        onBack = { showSettings = false }
+                    )
+                    RootDestination.Main -> renderHome()
                 }
+                } // end AnimatedContent; test components below keep their state across setup/launch
+                if (showVideoLoading) {
+                    VideoLoadingScreen(
+                        onBack = { showVideoLoading = false },
+                        onVisualAiCollector = { showVisualAiCollector = true; showVideoLoading = false },
+                        setupOnly = youtubePreparing,
+                        onSetupFinished = { youtubePreparing = false }
+                    )
+                }
+                if (showWhatsAppSend) {
+                    WhatsAppSendScreen(
+                        onBack = { showWhatsAppSend = false },
+                        setupOnly = whatsappPreparing,
+                        onSetupFinished = { whatsappPreparing = false }
+                    )
+                }
+                if (showThroughputTest) {
+                    ThroughputScreen(
+                        onBack = { showThroughputTest = false },
+                        setupOnly = throughputPreparing,
+                        onSetupFinished = { throughputPreparing = false }
+                    )
+                }
+                if (showPingTest) {
+                    PingTestScreen(
+                        state = state.pingTest,
+                        history = state.pingHistory,
+                        detail = state.pingDetail,
+                        selectedSim = state.sims.firstOrNull { it.subscriptionId == state.selectedSubscriptionId } ?: state.sims.firstOrNull(),
+                        dataNetwork = state.dataNetwork,
+                        onBack = { showPingTest = false },
+                        onStart = vm::startPingTest,
+                        onStop = vm::stopPingTest,
+                        onClear = vm::clearPingResults,
+                        onOpenHistory = vm::openPingDetail,
+                        onCloseDetail = vm::closePingDetail,
+                        onExport = vm::exportPing,
+                        setupOnly = pingPreparing,
+                        onSetupFinished = { pingPreparing = false }
+                    )
+                }
+                if (showCallSetup) {
+                    CallSetupScreen(
+                        link = state.deviceLink,
+                        test = state.callSetup,
+                        history = state.callHistory,
+                        detail = state.callDetail,
+                        onBack = { showCallSetup = false },
+                        onLinkAction = vm::deviceLinkAction,
+                        onSelectLocalSim = vm::selectDeviceLocalSim,
+                        onSaveIdentity = vm::saveDeviceIdentity,
+                        onStartTest = vm::startCallSetup,
+                        onStopTest = vm::stopCallSetup,
+                        onOpenDetail = vm::openCallDetail,
+                        onCloseDetail = vm::closeCallDetail,
+                        onExport = vm::exportCallSetup,
+                        setupOnly = callPreparing,
+                        onSetupFinished = { callPreparing = false }
+                    )
+                }
+                } // Shared root: setup overlays are hosted directly above Home.
                 state.exportResult?.let { result ->
                     ExportSuccessDialog(
                         result = result,
@@ -1592,7 +1642,14 @@ private fun ReportCategoryCard(title: String, count: Int, onClick: () -> Unit) {
                 title.contains("TikTok", true) -> "♪" to Color(0xFF303B51)
                 else -> "⌖" to Color(0xFF0891B2)
             }
-            AppIconTileV1(symbol, iconColor)
+            val installedPackages = when {
+                title.contains("TikTok", ignoreCase = true) -> listOf("com.zhiliaoapp.musically", "com.ss.android.ugc.trill")
+                title.contains("YouTube", ignoreCase = true) -> listOf("com.google.android.youtube")
+                title.contains("WhatsApp", ignoreCase = true) -> listOf("com.whatsapp", "com.whatsapp.w4b")
+                else -> emptyList()
+            }
+            if (installedPackages.isNotEmpty()) InstalledAppIconV1(installedPackages, symbol, iconColor)
+            else AppIconTileV1(symbol, iconColor)
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
                 Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
@@ -2287,7 +2344,9 @@ private fun PingTestScreen(
     onClear: () -> Unit,
     onOpenHistory: (String) -> Unit,
     onCloseDetail: () -> Unit,
-    onExport: (String) -> Unit
+    onExport: (String) -> Unit,
+    setupOnly: Boolean = false,
+    onSetupFinished: () -> Unit = {}
 ) {
     val pingListState = rememberRetainedLazyListState("ping.root")
     if (detail != null) {
@@ -2306,26 +2365,7 @@ private fun PingTestScreen(
     var showSetup by remember { mutableStateOf(!state.isRunning) }
 
     fun latencyText(v: Double?): String = v?.let { String.format(Locale.US, "%.1f ms", it) } ?: "--"
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Ping Test") },
-                navigationIcon = { TextButton(onClick = onBack) { Text("Back") } },
-                actions = {
-                    if (!state.isRunning && state.samples.isNotEmpty()) {
-                        TextButton(onClick = onClear) { Text("Clear") }
-                    }
-                }
-            )
-        }
-    ) { padding ->
-        LazyColumn(
-            Modifier.padding(padding).fillMaxSize(),
-            state = pingListState,
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            item {
+    // Test setup stays above Home; page is only shown after START TEST.
                 if (showSetup && !state.isRunning) UnifiedTestSetupDialogV1270("Ping Test", onDismiss = onBack) {
                     OutlinedTextField(
                         value = taskName,
@@ -2396,6 +2436,7 @@ private fun PingTestScreen(
                     }
                     Button(onClick = {
                         showSetup = false
+                        onSetupFinished()
                         onStart(PingTestConfig(
                             taskName = taskName.trim(), host = host.trim().ifBlank { "8.8.8.8" },
                             count = count.toIntOrNull() ?: 20,
@@ -2406,7 +2447,27 @@ private fun PingTestScreen(
                         ))
                     }, modifier = Modifier.fillMaxWidth()) { Text("START TEST") }
                 }
-            }
+
+    if (!setupOnly) {
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Ping Test") },
+                navigationIcon = { TextButton(onClick = onBack) { Text("Back") } },
+                actions = {
+                    if (!state.isRunning && state.samples.isNotEmpty()) {
+                        TextButton(onClick = onClear) { Text("Clear") }
+                    }
+                }
+            )
+        }
+    ) { padding ->
+        LazyColumn(
+            Modifier.padding(padding).fillMaxSize(),
+            state = pingListState,
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
             item {
                 InfoCard("Current network") {
                     val c = selectedSim?.servingCell
@@ -2504,6 +2565,7 @@ private fun PingTestScreen(
             }
         }
     }
+    } // end legacy Ping page while setup is on Home
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -4372,7 +4434,7 @@ private fun formatElapsed(ms: Long): String {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun WhatsAppSendScreen(onBack: () -> Unit) {
+private fun WhatsAppSendScreen(onBack: () -> Unit, setupOnly: Boolean = false, onSetupFinished: () -> Unit = {}) {
     val context = LocalContext.current
     val repo = remember { WhatsAppSendRepository(context) }
     var autoRecord by rememberSaveable { mutableStateOf(repo.loadConfig().autoRecord) }
@@ -4384,15 +4446,18 @@ private fun WhatsAppSendScreen(onBack: () -> Unit) {
     var showMetadata by remember { mutableStateOf(false) }
     var showSetup by remember { mutableStateOf(true) }
 
-    Scaffold(topBar = { TopAppBar(title = { Text("WhatsApp Image Send") }, navigationIcon = { TextButton(onClick = onBack) { Text("Back") } }) }) { pad ->
-        Column(Modifier.padding(pad).padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Button(onClick = { showSetup = true }) { Text("Test Setup") }
+    // Initial Test Setup overlays Home rather than a legacy test page.
             if (showSetup) UnifiedTestSetupDialogV1270("WhatsApp Image Send", onDismiss=onBack) {
                 Text("Open a WhatsApp chat and prepare an image. For each sample: START → ARMED → tap Send (T0) → tap SENT (T1).", style = MaterialTheme.typography.bodySmall)
                 Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(autoRecord, { autoRecord = it }); Text("Auto Network Recording") }
                 Button(onClick = { context.startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }, modifier = Modifier.fillMaxWidth()) { Text("1. ENABLE WHATSAPP SEND ACCESSIBILITY") }
-                Button(onClick = { showSetup = false; showMetadata = true }, modifier = Modifier.fillMaxWidth()) { Text("2. PREPARE TEST / OPEN WHATSAPP") }
+                Button(onClick = { showSetup = false; onSetupFinished(); showMetadata = true }, modifier = Modifier.fillMaxWidth()) { Text("2. PREPARE TEST / OPEN WHATSAPP") }
             }
+
+    if (!setupOnly) {
+    Scaffold(topBar = { TopAppBar(title = { Text("WhatsApp Image Send") }, navigationIcon = { TextButton(onClick = onBack) { Text("Back") } }) }) { pad ->
+        Column(Modifier.padding(pad).padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Button(onClick = { showSetup = true }) { Text("Test Setup") }
             TextButton(onClick = { history = repo.history() }) { Text("Refresh History") }
             Text("History", style = MaterialTheme.typography.titleMedium)
             if (history.isEmpty()) Text("No WhatsApp send sessions yet", style = MaterialTheme.typography.bodySmall)
@@ -4416,6 +4481,8 @@ private fun WhatsAppSendScreen(onBack: () -> Unit) {
             }
         }
     }
+
+    } // end test page when initial Test Setup is shown on Home
 
     if (showMetadata) {
         TestMetadataDialog(
@@ -5024,7 +5091,7 @@ private fun VisualAiCollectorScreen(onBack: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun VideoLoadingScreen(onBack: () -> Unit, onVisualAiCollector: () -> Unit) {
+private fun VideoLoadingScreen(onBack: () -> Unit, onVisualAiCollector: () -> Unit, setupOnly: Boolean = false, onSetupFinished: () -> Unit = {}) {
     val context = LocalContext.current
     val repo = remember { VideoLoadingRepository(context) }
     var count by rememberSaveable { mutableStateOf(repo.loadConfig().count.toString()) }
@@ -5061,12 +5128,7 @@ private fun VideoLoadingScreen(onBack: () -> Unit, onVisualAiCollector: () -> Un
         pendingYouTubeMeta=null
     }
 
-    Scaffold(
-        contentWindowInsets = WindowInsets(0, 0, 0, 0),
-        topBar = { TopAppBar(title = { Text("YouTube Video Loading") }, navigationIcon = { TextButton(onClick = onBack) { Text("Back") } }) }
-    ) { pad ->
-        Column(Modifier.padding(pad).padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Button(onClick = { showSetup = true }) { Text("Test Setup") }
+    // Initial Test Setup overlays Home rather than a legacy test page.
             if (showSetup) UnifiedTestSetupDialogV1270("YouTube Video Loading", onDismiss=onBack) {
                 Text("On every DUT/REF: open YouTube → the same creator → Videos, with the same first video visible. Each phone measures its own loading delay; simultaneous start is not required.", style = MaterialTheme.typography.bodySmall)
                 Surface(
@@ -5097,10 +5159,19 @@ private fun VideoLoadingScreen(onBack: () -> Unit, onVisualAiCollector: () -> Un
                         autoRecord = autoRecord, semiAuto = semiAuto
                     )
                     showSetup = false
+                    onSetupFinished()
                     showMetadata = true
                 }, modifier = Modifier.fillMaxWidth()) { Text("2. PREPARE TEST / OPEN YOUTUBE") }
                 Text(if (semiAuto) "Semi-auto: for every sample, START → tap one video (T0) → AUTO T1 when playback starts (LOADED is fallback) → return → freely scroll → START again. Android Back before T1 cancels the unfinished sample." else "AUTO Visual AI (Beta): CellTracker selects a new video, then requires BOTH PLAY and recommendation-list readiness before T1 → Back → next video → auto-scroll. First-pass thresholds are tuned from the labelled Visual AI collector set; Semi-auto remains unchanged.", style = MaterialTheme.typography.bodySmall)
             }
+
+    if (!setupOnly) {
+    Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        topBar = { TopAppBar(title = { Text("YouTube Video Loading") }, navigationIcon = { TextButton(onClick = onBack) { Text("Back") } }) }
+    ) { pad ->
+        Column(Modifier.padding(pad).padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Button(onClick = { showSetup = true }) { Text("Test Setup") }
             TextButton(onClick = { history = repo.history() }) { Text("Refresh History") }
             Text("History", style = MaterialTheme.typography.titleMedium)
             if (history.isEmpty()) Text("No video loading sessions yet", style = MaterialTheme.typography.bodySmall)
@@ -5124,6 +5195,8 @@ private fun VideoLoadingScreen(onBack: () -> Unit, onVisualAiCollector: () -> Un
             }
         }
     }
+
+    } // end test page when initial Test Setup is shown on Home
 
     if (showMetadata) {
         TestMetadataDialog(
@@ -6808,7 +6881,7 @@ private fun HomeQuickCardV121(title: String, subtitle: String, symbol: String, i
     val version = if (appPackages.isNotEmpty()) installedAppVersionV1(context, appPackages) else null
     Card(
         onClick = { if (installIfMissing) runAppTestOrInstallV1(context, appPackages, onClick) else onClick() },
-        modifier = modifier.height(if (appPackages.isNotEmpty()) 124.dp else 112.dp),
+        modifier = modifier.height(124.dp),
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)),
@@ -6878,13 +6951,13 @@ private fun QuickTestCompactCardV12(
 @Composable
 private fun AppIconTileV1(symbol: String, color: Color) {
     Surface(
-        modifier = Modifier.size(46.dp),
+        modifier = Modifier.size(48.dp),
         shape = RoundedCornerShape(13.dp),
         color = color.copy(alpha = 0.12f)
     ) {
         Box(contentAlignment = Alignment.Center) {
             if (symbol == "PING" || symbol == "REC" || symbol == "CALL") {
-                Canvas(Modifier.size(34.dp)) {
+                Canvas(Modifier.size(44.dp)) {
                     val scale = size.minDimension / 100f
                     fun point(x: Float, y: Float) = Offset(x * scale, y * scale)
                     when (symbol) {
@@ -6939,17 +7012,17 @@ private fun InstalledAppIconV1(packageNames: List<String>, fallbackSymbol: Strin
     }
     if (drawable != null) {
         Surface(
-            modifier = Modifier.size(46.dp),
+            modifier = Modifier.size(48.dp),
             shape = RoundedCornerShape(13.dp),
             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
         ) {
             Box(contentAlignment = Alignment.Center) {
                 AndroidView(
                     factory = { ctx -> android.widget.ImageView(ctx).apply {
-                        scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+                        scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
                     } },
                     update = { it.setImageDrawable(drawable) },
-                    modifier = Modifier.size(38.dp).clip(RoundedCornerShape(10.dp))
+                    modifier = Modifier.size(40.dp).clip(RoundedCornerShape(11.dp))
                 )
             }
         }

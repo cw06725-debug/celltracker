@@ -1,3 +1,12 @@
+## v1.2.70 Preview 3 — Home setup overlays and application icons (versionCode 249)
+
+- FIX: Initial YouTube Loading, WhatsApp Image Send, Ping, Call Setup and HTTP Throughput configuration dialogs now draw on the Home composition instead of exposing their old history/test screens beneath the modal. Page content is only rendered once the user proceeds with setup. Cancelling dismisses the test route to Home.
+- FIX: Call Setup's Configure Device Link / SIM button now advances out of preparation mode and correctly shows the existing Device Link screen; Agent mode retains its screen.
+- FIX: Reports by Type uses real installed app icons for TikTok, YouTube, WhatsApp. Package visibility already declared in manifest. Fallback glyphs remain when app isn't installed/visible.
+- FIX: Home test icon tiles use a normalized 48-dp container; installed icons render inside 40-dp artwork box, custom icons are centred in the same tile.
+- SAFETY: No changes to the existing report database/files, logger launch, ADB export, or real test measurement engines. Multi-Agent sync and summary report still not implemented.
+- VALIDATION: Source parser checked with standalone Kotlin compiler, but Android/Compose Gradle build and handset regression are still required.
+
 ## v1.2.70 Preview 2 — Test Setup navigation / icons / vendor log import (source only)
 
 - Cancel initial YouTube, WhatsApp Send, Ping and Throughput setup to Home; retain original test workflows.

@@ -83,7 +83,7 @@ internal object HttpThroughputEngine {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ThroughputScreen(onBack: () -> Unit) {
+fun ThroughputScreen(onBack: () -> Unit, setupOnly: Boolean = false, onSetupFinished: () -> Unit = {}) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
     var showSetup by remember { mutableStateOf(true) }
@@ -95,6 +95,7 @@ fun ThroughputScreen(onBack: () -> Unit) {
     var message by remember { mutableStateOf("Ready") }
     var output by remember { mutableStateOf<File?>(null) }
     val samples = remember { mutableStateListOf<HttpThroughputSample>() }
+    if (!setupOnly) {
     Scaffold(topBar = { TopAppBar(title = { Text("Throughput · HTTP DL") },
         navigationIcon = { TextButton(onClick = onBack) { Text("Back") } }) }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(16.dp).verticalScroll(rememberScrollState()),
@@ -126,6 +127,7 @@ fun ThroughputScreen(onBack: () -> Unit) {
             }
         }
     }
+    } // end Throughput page until start
     if (showSetup) {
         UnifiedTestSetupDialogV1270("Throughput Test", onDismiss = onBack) {
                     OutlinedTextField(task, {task=it.take(64)},label={Text("Task name")},singleLine=true)
@@ -138,6 +140,7 @@ fun ThroughputScreen(onBack: () -> Unit) {
                         val endpoint = url.trim()
                         val count = number.toIntOrNull() ?: 1
                         showSetup = false
+                        onSetupFinished()
                         samples.clear();output=null
                         runningJob = scope.launch {
                             isRunning = true

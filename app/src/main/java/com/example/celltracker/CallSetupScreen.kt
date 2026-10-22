@@ -59,7 +59,9 @@ fun CallSetupScreen(
     onStopTest:()->Unit,
     onOpenDetail:(String)->Unit,
     onCloseDetail:()->Unit,
-    onExport:(String)->Unit
+    onExport:(String)->Unit,
+    setupOnly: Boolean = false,
+    onSetupFinished: () -> Unit = {}
 ) {
     // Keep the history scroll position while a detail page temporarily replaces this content.
     // Returning from View Details now lands exactly where the user entered it.
@@ -129,14 +131,15 @@ fun CallSetupScreen(
                     val selectedANumber=phoneBySlot[aSim].orEmpty()
                     val selectedBNumber=link.peerProfile?.phoneForSlot(bSim).orEmpty()
                     val canStart=link.status==DeviceLinkStatus.CONNECTED&&selectedANumber.isNotBlank()&&selectedBNumber.isNotBlank()
-                    if(test.isRunning)Button(onClick=onStopTest){Text("STOP TEST")}else Button(onClick={showCallSetup=false;onStartTest(CallSetupConfig(task.ifBlank{"CallSetup"},direction,count.toIntOrNull()?:10,(timeout.toLongOrNull()?:30)*1000,(hold.toLongOrNull()?:10)*1000,(interval.toLongOrNull()?:10)*1000,(threshold.toLongOrNull()?:8)*1000,autoRecord,aSim,bSim,mode,voiceMonitor))},enabled=canStart){Text("Start Call Setup Test")}
+                    if(test.isRunning)Button(onClick=onStopTest){Text("STOP TEST")}else Button(onClick={showCallSetup=false;onSetupFinished();onStartTest(CallSetupConfig(task.ifBlank{"CallSetup"},direction,count.toIntOrNull()?:10,(timeout.toLongOrNull()?:30)*1000,(hold.toLongOrNull()?:10)*1000,(interval.toLongOrNull()?:10)*1000,(threshold.toLongOrNull()?:8)*1000,autoRecord,aSim,bSim,mode,voiceMonitor))},enabled=canStart){Text("Start Call Setup Test")}
                     if(!test.isRunning&&!canStart) Text(when{link.status!=DeviceLinkStatus.CONNECTED->"Connect DUT B first.";selectedANumber.isBlank()->"Save DUT A SIM ${aSim+1} phone number first.";else->"Save DUT B SIM ${bSim+1} phone number on the Agent first."},style=MaterialTheme.typography.bodySmall)
                     if(!test.isRunning&&!canStart) {
-                        OutlinedButton(onClick = { showCallSetup = false }, modifier = Modifier.fillMaxWidth()) {
+                        OutlinedButton(onClick = { showCallSetup = false; onSetupFinished() }, modifier = Modifier.fillMaxWidth()) {
                             Text("CONFIGURE DEVICE LINK / SIM")
                         }
                     }
                 }
+    if (!setupOnly) {
     Scaffold(
         topBar={TopAppBar(title={Text("Device Link + Call Setup")},navigationIcon={TextButton(onClick=onBack){Text("Back")}})},
         snackbarHost={SnackbarHost(snackbar)}
@@ -255,6 +258,7 @@ fun CallSetupScreen(
             }
         }
     }
+    } // end Call Setup page while preparing from Home
 }
 
 private fun bluetoothPermissionsGranted(context:Context):Boolean = if(Build.VERSION.SDK_INT>=31){
@@ -289,6 +293,7 @@ private fun detectPhoneNumber(context:Context,simSlot:Int):String?{
 
 
 @Composable private fun DeviceRow(d:BluetoothPeer,onConnect:()->Unit,onPair:(()->Unit)?,enabled:Boolean){Card(Modifier.fillMaxWidth()){Row(Modifier.padding(12.dp).fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text(d.name);Text(d.address,style=MaterialTheme.typography.bodySmall)};if(onPair!=null)OutlinedButton(onClick=onPair,enabled=enabled){Text("Pair")};Spacer(Modifier.width(6.dp));Button(onClick=onConnect,enabled=enabled&&d.bonded){Text("Connect")}}}}
+
 @Composable private fun AgentPanel(link:DeviceLinkState,test:CallSetupTestState,onStop:()->Unit){CCard("Agent status"){CField("Controller",link.peerProfile?.deviceName?:"--");CField("Session",test.sessionId.ifBlank{"--"});CField("Direction",test.currentDirection);CField("Role",test.localRole);CField("Attempt",test.currentAttempt.toString());CField("Call State",test.localCallState);CField("RAT / Voice RAT",test.localSnapshot?.let{"${it.displayRat} / ${it.voiceRat}"}?:"--");CField("Signal",test.localSnapshot?.rsrp?:"--");if(test.isRunning)Button(onClick=onStop,colors=ButtonDefaults.buttonColors(containerColor=MaterialTheme.colorScheme.error)){Text("EMERGENCY STOP TEST")}}}
 @Composable private fun LiveTestPanel(link:DeviceLinkState,s:CallSetupTestState){CCard("Live Controller result"){CField("Status",s.statusMessage);CField("Attempt","${s.currentAttempt} / ${expectedAttempts(s.config)}");CField("Direction",s.currentDirection);CField("DUT A / ${s.localRole}","${s.localSnapshot?.operator?:link.localProfile.operator} · ${s.localSnapshot?.displayRat?:link.localProfile.rat} · ${s.localSnapshot?.voiceRat?:link.localProfile.voiceRat} · ${s.localCallState}");CField("DUT B / ${s.peerRole}","${s.peerSnapshot?.operator?:link.peerProfile?.operator?:"--"} · ${s.peerSnapshot?.displayRat?:link.peerProfile?.rat?:"--"} · ${s.peerSnapshot?.voiceRat?:link.peerProfile?.voiceRat?:"--"} · ${s.peerCallState}");CField("Success / Failure","${s.success} / ${s.failure}");CField("Success Rate",String.format(Locale.US,"%.1f%%",s.successRate));CField("Current / Avg", "${s.currentSetupLatencyMs?.let{"$it ms"}?:"--"} / ${ms(s.averageMs)}");CField("Min / Max","${ms(s.minMs)} / ${ms(s.maxMs)}");CField("P50 / P90 / P95","${ms(s.p50Ms)} / ${ms(s.p90Ms)} / ${ms(s.p95Ms)}");CField("Consecutive failures",s.consecutiveFailures.toString());CField("Bluetooth",link.status.name);CField("Automation",s.automationCapability)}}
 
