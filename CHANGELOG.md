@@ -1,3 +1,10 @@
+# v1.2.61 (versionCode 238)
+
+- YouTube Semi-auto: prevent premature AUTO LOADED when recommendation text/cards are present but thumbnails are still blank/gray placeholders.
+- Recommendation readiness now requires both Accessibility card evidence and screenshot-based visual thumbnail detail.
+- CellTracker overlay is masked from recommendation visual sampling to avoid self-induced false positives.
+- Manual LOADED remains available as the fallback for unusual YouTube layouts.
+
 # v1.2.58
 - Fix Kotlin compile error in dated DUT log cleanup path regex (`\d` escaping).
 - Keeps v1.2.57 dated log-folder behavior unchanged.
@@ -1341,3 +1348,9 @@ Build note: local assembleDebug could not run because this environment cannot re
 - Make playback freeze detection more sensitive relative to each video's learned motion baseline while keeping photo/static posts conservative.
 - Persist a pending PLAYBACK lag when the video remains frozen until the next automatic swipe instead of silently dropping it.
 - Reduce playback freeze confirmation to ~1.2 s / 3 samples and show progress-motion debug value (P) beside Motion/Baseline.
+
+## v1.2.60
+- Added vivo / MTK official log quick-entry shortcuts.
+- Added reusable Test Log quick manager on Tests page.
+- Start/stop REF AP log and export DUT debuglogger without reopening ADB Tools.
+- Preserved date-based Logs export structure and stable signing setup.

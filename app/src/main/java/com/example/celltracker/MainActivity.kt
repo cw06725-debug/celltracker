@@ -5815,7 +5815,21 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
                 Field("REF ADB",adb.remoteStatus); Field("REF identity",adb.remoteIdentity)
                 }
             }
-            GlassSection("4 · $refType REF AP Log") {
+            GlassSection("4 · vivo / MTK Official Log") {
+                Text("Quick entry for vivo MediaTek platform logging. The dialer is opened with the known service code; availability depends on the REF firmware.", style=MaterialTheme.typography.bodySmall)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick={
+                        runCatching { context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + Uri.encode("*#*#112#*#*")))) }
+                            .onFailure { Toast.makeText(context,"Unable to open vivo log entry",Toast.LENGTH_SHORT).show() }
+                    }, modifier=Modifier.weight(1f)) { Text("VIVO LOG") }
+                    OutlinedButton(onClick={
+                        runCatching { context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + Uri.encode("*#*#3646633#*#*")))) }
+                            .onFailure { Toast.makeText(context,"Unable to open MTK EngineerMode",Toast.LENGTH_SHORT).show() }
+                    }, modifier=Modifier.weight(1f)) { Text("MTK LOGGER") }
+                }
+                Text("vivo log code: *#*#112#*#* · MTK EngineerMode: *#*#3646633#*#*. If the ROM blocks service-code launch, enter the code manually in the phone dialer.", style=MaterialTheme.typography.bodySmall)
+            }
+            GlassSection("5 · $refType REF AP Log") {
                 Field("REF device",if(refType=="Custom") customRefName.ifBlank{"Custom"} else refType)
                 Field("Log folder","Download/CellTracker/${SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())}/Logs/$refLabel")
                 OutlinedTextField(logcatCommand,{logcatCommand=it},label={Text("Logcat command")},modifier=Modifier.fillMaxWidth())
@@ -5826,7 +5840,7 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
                 }
                 Text("Presets: AP = logcat -v threadtime · Radio = logcat -b radio -v threadtime",style=MaterialTheme.typography.bodySmall)
             }
-            GlassSection("5 · ADB Shell / Custom Command") {
+            GlassSection("6 · ADB Shell / Custom Command") {
                 OutlinedTextField(shellCommand,{shellCommand=it},label={Text("Command (without 'adb shell')")},modifier=Modifier.fillMaxWidth())
                 Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
                     AssistChip(onClick={shellCommand="logcat -b radio -d -v threadtime"},label={Text("Radio")}); AssistChip(onClick={shellCommand="getprop"},label={Text("Getprop")}); AssistChip(onClick={shellCommand="dumpsys telephony.registry"},label={Text("Telephony")})
@@ -5834,7 +5848,7 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
                 Button(onClick={scope.launch{busy=true;val r=CellTrackerAdbEngine.commandRef(context,shellCommand);shellOutput=r.fold({it},{"ERROR: ${it.message}"});busy=false}},modifier=Modifier.fillMaxWidth()){Text("RUN COMMAND")}
                 if(shellOutput.isNotBlank()) SelectionContainer{Text(shellOutput.take(12000),style=MaterialTheme.typography.bodySmall)}
             }
-            GlassSection("6 · Connection Strategy") {
+            GlassSection("7 · Connection Strategy") {
                 Text("Recommended: USB ADB for REF devices. It does not need a hotspot, pairing port or connect port. Auto mode prefers USB whenever the REF is connected by OTG/data cable.",style=MaterialTheme.typography.bodySmall)
                 Text("Wireless ADB remains available as fallback. Legacy TCP 5555 can be used only on ROMs where adbd has already been switched to TCP mode; CellTracker does not enable insecure TCP automatically.",style=MaterialTheme.typography.bodySmall)
             }
@@ -5889,6 +5903,59 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
     }
 }
 
+
+@Composable
+private fun QuickTestLogManagerV1() {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val adb by AdbToolStore.state.collectAsStateWithLifecycle()
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
+    var testName by rememberSaveable { mutableStateOf("") }
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp), verticalArrangement=Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment=Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Test Log", fontWeight=FontWeight.SemiBold)
+                    Text(if(adb.logcatRunning) "REF AP Log · RECORDING" else "Start / stop / export without opening ADB Tools", style=MaterialTheme.typography.bodySmall)
+                }
+                TextButton(onClick={expanded=!expanded}) { Text(if(expanded) "HIDE" else "LOG") }
+            }
+            if(expanded) {
+                OutlinedTextField(testName,{testName=it},label={Text("Test name / remark")},singleLine=true,modifier=Modifier.fillMaxWidth())
+                Row(Modifier.fillMaxWidth(), horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                    Button(enabled=!adb.logcatRunning && !busy,onClick={scope.launch{
+                        busy=true
+                        val label="vivo_REF"
+                        val r=if(adb.usbStatus=="Connected") CellTrackerAdbEngine.startUsbLogcat(context,"logcat -v threadtime",label)
+                        else runCatching { CellTrackerAdbEngine.startLogcat(context,"logcat -v threadtime",label); "Started" }
+                        if(r.isFailure) Toast.makeText(context,r.exceptionOrNull()?.message?:"REF log start failed",Toast.LENGTH_LONG).show()
+                        busy=false
+                    }},modifier=Modifier.weight(1f)){Text("START REF LOG")}
+                    OutlinedButton(enabled=adb.logcatRunning,onClick={CellTrackerAdbEngine.stopLogcat()},modifier=Modifier.weight(1f)){Text("STOP REF")}
+                }
+                Button(enabled=!busy && !adb.exportRunning && adb.localStatus=="Connected",onClick={scope.launch{
+                    busy=true
+                    val remark=testName.trim().ifBlank{"Test"}
+                    val r=CellTrackerAdbEngine.exportDebuglogger(context,"/data/debuglogger",remark,false,false)
+                    if(r.isFailure) Toast.makeText(context,r.exceptionOrNull()?.message?:"DUT log export failed",Toast.LENGTH_LONG).show()
+                    busy=false
+                }},modifier=Modifier.fillMaxWidth()) { Text(if(adb.exportRunning) "EXPORTING DUT LOG…" else "EXPORT DUT LOG") }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick={
+                        runCatching { context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + Uri.encode("*#*#112#*#*")))) }
+                    },modifier=Modifier.weight(1f)){Text("VIVO LOG")}
+                    OutlinedButton(onClick={
+                        runCatching { context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + Uri.encode("*#*#3646633#*#*")))) }
+                    },modifier=Modifier.weight(1f)){Text("MTK LOGGER")}
+                }
+                if(adb.logcatPath.isNotBlank()) Field("REF log",adb.logcatPath)
+                if(adb.exportPath.isNotBlank()) Field("DUT export",adb.exportPath)
+                Text("Recommended flow: open/start vendor log before the test → run the test → stop vendor log → export DUT/REF logs here. Existing date-based Logs folders are preserved.",style=MaterialTheme.typography.bodySmall)
+            }
+        }
+    }
+}
 
 private enum class ScenarioV1Type(val title: String, val subtitle: String) {
     LONG_STAY("Long Stay", "School · Residential building · Market · Custom location"),
@@ -6063,6 +6130,8 @@ private fun ScenarioTestsV1(
             )
         }
     }
+
+    QuickTestLogManagerV1()
 
     if (quickFilter == "All Tests" || quickFilter == "Video") {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {

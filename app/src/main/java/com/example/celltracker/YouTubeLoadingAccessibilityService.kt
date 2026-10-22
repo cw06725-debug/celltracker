@@ -122,6 +122,8 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
     private val visualExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private var autoCaptureFailureCount = 0
     private var autoLastCaptureError = 0
+    @Volatile private var lastRecommendationVisualReady = false
+    @Volatile private var lastRecommendationVisualScore = 0.0
     // v0.9.3.0.30 Visual AI Collector.
     // Every successful Accessibility screenshot is also sampled into PLAYER + RECS ROIs.
     private var collectorLastSavedElapsed = 0L
@@ -257,6 +259,8 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
 
         autoCaptureFailureCount = 0
         autoLastCaptureError = 0
+        lastRecommendationVisualReady = false
+        lastRecommendationVisualScore = 0.0
         val audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
         val audioWasActiveAtT0 = runCatching { audioManager.isMusicActive }.getOrDefault(false)
 
@@ -310,7 +314,10 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                 // Condition B: the recommendation list under the player is populated.
                 // Check at a lower cadence to avoid Accessibility tree pressure.
                 if (SystemClock.elapsedRealtime() - attemptT0Elapsed >= 500L) {
-                    val recReady = detectRecommendationListLoaded()
+                    // Text/clickable recommendation nodes can appear before thumbnail bitmaps finish
+                    // loading. Require BOTH the populated Accessibility tree and real visual detail
+                    // in the recommendation thumbnail ROI before declaring RECS ready.
+                    val recReady = detectRecommendationListLoaded() && lastRecommendationVisualReady
                     recommendationStreak = if (recReady) recommendationStreak + 1 else 0
                 }
                 val recommendationsReady = recommendationStreak >= 2
@@ -321,7 +328,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                     append("SEMI · #"); append(seq); append(" ")
                     append(if (playbackReady) "PLAY✓" else "PLAY…")
                     append("  ")
-                    append(if (recommendationsReady) "RECS✓" else "RECS…")
+                    append(if (recommendationsReady) "RECS✓" else if (lastRecommendationVisualReady) "RECS text…" else "RECS img…")
                     append(" · LOADED=fallback")
                 }
 
@@ -421,6 +428,12 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                                 val hardware = Bitmap.wrapHardwareBuffer(buffer, screenshot.colorSpace)
                                 val bitmap = hardware?.copy(Bitmap.Config.ARGB_8888, false)
                                 val signature = bitmap?.let {
+                                    // Keep recommendation-image readiness tied to the same screenshot
+                                    // used for playback motion. This prevents text-only/placeholder
+                                    // recommendation cards from prematurely completing Semi-auto.
+                                    val visual = recommendationVisualReadiness(it, currentYouTubeOverlayRect())
+                                    lastRecommendationVisualReady = visual.first
+                                    lastRecommendationVisualScore = visual.second
                                     maybeCollectVisualAiFrame(it)
                                     playerSignature(it)
                                 }
@@ -526,6 +539,87 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                 contentResolver.delete(uri, null, null)
             }
         }
+    }
+
+    private fun currentYouTubeOverlayRect(): Rect? = runCatching {
+        val v = overlay ?: return@runCatching null
+        if (!v.isShown || v.width <= 0 || v.height <= 0) return@runCatching null
+        val loc = IntArray(2)
+        v.getLocationOnScreen(loc)
+        Rect(loc[0], loc[1], loc[0] + v.width, loc[1] + v.height)
+    }.getOrNull()
+
+    /**
+     * Verify that the recommendation area contains an actually rendered thumbnail rather than
+     * YouTube's blank/gray placeholder. Accessibility nodes and titles often arrive earlier than
+     * the image bitmap, which caused Semi-auto to report LOADED too early.
+     *
+     * We sample the first recommendation-thumbnail band and measure local luminance detail. The
+     * CellTracker overlay is explicitly ignored so its buttons/text cannot create a false positive.
+     */
+    private fun recommendationVisualReadiness(bitmap: Bitmap, overlayRect: Rect?): Pair<Boolean, Double> {
+        if (bitmap.width < 16 || bitmap.height < 16) return false to 0.0
+        val left = (bitmap.width * 0.06f).toInt()
+        val right = (bitmap.width * 0.94f).toInt().coerceAtLeast(left + 1)
+        val top = (bitmap.height * 0.52f).toInt()
+        val bottom = (bitmap.height * 0.80f).toInt().coerceAtLeast(top + 1)
+        val cols = 30
+        val rows = 16
+        val values = Array(rows) { IntArray(cols) { -1 } }
+        var minLum = 255
+        var maxLum = 0
+        var valid = 0
+        var total = 0L
+
+        for (r in 0 until rows) {
+            val y = top + ((bottom - top - 1) * (r + 1)) / (rows + 1)
+            for (c in 0 until cols) {
+                val x = left + ((right - left - 1) * (c + 1)) / (cols + 1)
+                if (overlayRect != null && overlayRect.contains(x, y)) continue
+                val color = bitmap.getPixel(x.coerceIn(0, bitmap.width - 1), y.coerceIn(0, bitmap.height - 1))
+                val red = (color shr 16) and 0xff
+                val green = (color shr 8) and 0xff
+                val blue = color and 0xff
+                val lum = (red * 30 + green * 59 + blue * 11) / 100
+                values[r][c] = lum
+                minLum = kotlin.math.min(minLum, lum)
+                maxLum = kotlin.math.max(maxLum, lum)
+                total += lum
+                valid++
+            }
+        }
+        if (valid < 120) return false to 0.0
+
+        val mean = total.toDouble() / valid
+        var variance = 0.0
+        var edges = 0
+        var edgePairs = 0
+        for (r in 0 until rows) {
+            for (c in 0 until cols) {
+                val v = values[r][c]
+                if (v < 0) continue
+                val d = v - mean
+                variance += d * d
+                if (c + 1 < cols && values[r][c + 1] >= 0) {
+                    edgePairs++
+                    if (kotlin.math.abs(v - values[r][c + 1]) >= 20) edges++
+                }
+                if (r + 1 < rows && values[r + 1][c] >= 0) {
+                    edgePairs++
+                    if (kotlin.math.abs(v - values[r + 1][c]) >= 20) edges++
+                }
+            }
+        }
+        val stdDev = kotlin.math.sqrt(variance / valid)
+        val edgeRatio = if (edgePairs > 0) edges.toDouble() / edgePairs else 0.0
+        val range = (maxLum - minLum).coerceAtLeast(0)
+
+        // Placeholder/blank recommendation cards are typically nearly uniform. A real thumbnail
+        // has both spatial detail and luminance spread, even when the artwork is dark/grayscale.
+        val ready = (stdDev >= 18.0 && edgeRatio >= 0.10 && range >= 70) ||
+            (stdDev >= 24.0 && edgeRatio >= 0.07 && range >= 95)
+        val score = stdDev + edgeRatio * 100.0 + range / 10.0
+        return ready to score
     }
 
     private fun playerSignature(bitmap: Bitmap): IntArray {
@@ -1104,6 +1198,8 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
 
         autoCaptureFailureCount = 0
         autoLastCaptureError = 0
+        lastRecommendationVisualReady = false
+        lastRecommendationVisualScore = 0.0
         val audioManager = getSystemService(AudioManager::class.java)
         val audioWasActiveAtT0 = runCatching { audioManager.isMusicActive }.getOrDefault(false)
 
@@ -1153,7 +1249,8 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                 }
 
                 if (elapsed >= 500L) {
-                    recommendationStreak = if (detectRecommendationListLoaded()) recommendationStreak + 1 else 0
+                    val recReady = detectRecommendationListLoaded() && lastRecommendationVisualReady
+                    recommendationStreak = if (recReady) recommendationStreak + 1 else 0
                 }
                 val recommendationsReady = recommendationStreak >= 2
 
@@ -1162,7 +1259,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
                     append(" · AUTO AI · ")
                     append(if (playbackReady) "PLAY✓" else "PLAY…")
                     append(" ")
-                    append(if (recommendationsReady) "RECS✓" else "RECS…")
+                    append(if (recommendationsReady) "RECS✓" else if (lastRecommendationVisualReady) "RECS text…" else "RECS img…")
                     if (playbackReady && playbackSource.isNotBlank()) { append(" · "); append(playbackSource) }
                 }
 
