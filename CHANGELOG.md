@@ -1,4 +1,5 @@
 # v1.2.69
+- Fix five Home/Tests Quick Start callback arguments by explicitly naming `onClick`; resolves Kotlin compile errors at MainActivity.kt:6074-6075 and 6615-6617.
 - Moved MTK Logger / QTI LogKit launch shortcuts to Home > Quick Start (not Tests > Quick Start).
 - Show MTK Logger only on MediaTek SoCs when the vendor logger has an exported, accessible entry point; applies to vivo, TECNO, Infinix, and other MTK devices.
 - Show Qualcomm QTI LogKit only on Qualcomm SoCs when an accessible installed LogKit Activity/launcher is found; never assume it is present on every Qualcomm phone.

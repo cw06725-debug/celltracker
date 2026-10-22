@@ -6071,8 +6071,8 @@ private fun ScenarioTestsV1(
             QuickTestCompactCardV12("TikTok Upload", "Upload timing", "↑", Color(0xFF111111), listOf("com.zhiliaoapp.musically", "com.ss.android.ugc.trill"), Modifier.weight(1f)) { tikTokTool = "UPLOAD" }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            QuickTestCompactCardV12("YouTube", "Video loading", "▶", Color(0xFFFF0033), listOf("com.google.android.youtube"), Modifier.weight(1f), onVideoLoading)
-            QuickTestCompactCardV12("WhatsApp", "Image sending", "☎", Color(0xFF25D366), listOf("com.whatsapp", "com.whatsapp.w4b"), Modifier.weight(1f), onWhatsAppSend)
+            QuickTestCompactCardV12("YouTube", "Video loading", "▶", Color(0xFFFF0033), listOf("com.google.android.youtube"), Modifier.weight(1f), onClick = onVideoLoading)
+            QuickTestCompactCardV12("WhatsApp", "Image sending", "☎", Color(0xFF25D366), listOf("com.whatsapp", "com.whatsapp.w4b"), Modifier.weight(1f), onClick = onWhatsAppSend)
         }
     }
     if (quickFilter == "All Tests" || quickFilter == "Network") {
@@ -6612,9 +6612,9 @@ private fun HomeScreenV121(
 
         HomeSectionHeaderV121("Quick Start", "Start a test instantly", "See All", onSeeAllTests)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            HomeQuickCardV121("TikTok", "Video Lag", "♪", Color(0xFF111111), listOf("com.zhiliaoapp.musically", "com.ss.android.ugc.trill"), Modifier.weight(1f), onTikTokLag)
-            HomeQuickCardV121("YouTube", "Loading", "▶", Color(0xFFFF0033), listOf("com.google.android.youtube"), Modifier.weight(1f), onVideoLoading)
-            HomeQuickCardV121("WhatsApp", "Image Send", "☎", Color(0xFF25D366), listOf("com.whatsapp", "com.whatsapp.w4b"), Modifier.weight(1f), onWhatsAppSend)
+            HomeQuickCardV121("TikTok", "Video Lag", "♪", Color(0xFF111111), listOf("com.zhiliaoapp.musically", "com.ss.android.ugc.trill"), Modifier.weight(1f), onClick = onTikTokLag)
+            HomeQuickCardV121("YouTube", "Loading", "▶", Color(0xFFFF0033), listOf("com.google.android.youtube"), Modifier.weight(1f), onClick = onVideoLoading)
+            HomeQuickCardV121("WhatsApp", "Image Send", "☎", Color(0xFF25D366), listOf("com.whatsapp", "com.whatsapp.w4b"), Modifier.weight(1f), onClick = onWhatsAppSend)
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             HomeQuickCardV121("Ping", "Test", "◉", MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f), onClick = onPingTest)
