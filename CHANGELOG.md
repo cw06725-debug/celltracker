@@ -1,3 +1,17 @@
+# CellTracker v1.3.0 Preview 2 — Experience Analysis (source preview)
+
+- New **Reports → Experience Analysis · Daily / Weekly** with sessions, local report loading, test-case Excel/CSV import, clearly-labelled manual input and DUT1/DUT2/REF1/REF2 role assignment.
+- New **per-metric editable verdict rule engine**: percent gap for durations/latencies, absolute stall counts, percentage-point gaps for success rates, separate OBSERVE/FAIL limits and minimum attempts; default rules disabled, auto verdict and evidence preserved after manual override / Bug ID entry.
+- Enforces comparable date/scenario/operator/RAT and prevents automatic FAIL when RAT comes only from user selection. Radio metrics shown as preliminary evidence, not confirmed modem root causes.
+- Original four-sheet Communication Experience Test Cases and Results V1.0 `.xlsx` retained as Android asset and filled without deleting existing DUT/REF difference formulas; supplemental nine-sheet analysis XLSX includes raw indices, decisions and rule snapshot.
+- Original 8-section English Daily Report `.docx` template retained as Android asset and dynamically filled with verified records; optional HTML preview.
+- Weekly W42-inspired editable HTML report, aggregating selected 7-day history and allowing personalized findings, risk tracking, lessons and next-week plan.
+- Protects original raw reports, leaves unsupported values empty/`N/A`, and does not derive integer call/ping successes from rounded success rates.
+- Does **not** yet implement automatic 1 Controller + 3 Agent report transfer, multi-session sync or complete automated Bug workflow. Requires GitHub Actions Android compilation and device validation before release.
+- `versionName = 1.3.0`, `versionCode = 253`. Keep only `README.md` and `CHANGELOG.md` in project root.
+
+---
+
 ## v1.3.0 Preview 1 — Kotlin compile fix / package cleanup (2026-10-22)
 
 - Correct six `OverlayStyleV130.card` calls by passing the enclosing Android Service as `Context` instead of the `LinearLayout` receiver; addresses the `:app:compileDebugKotlin` type-mismatch errors at `BasementTestService.kt`, `ScreenCaptureService.kt`, `WhatsAppSendAccessibilityService.kt`, and `YouTubeLoadingAccessibilityService.kt`.

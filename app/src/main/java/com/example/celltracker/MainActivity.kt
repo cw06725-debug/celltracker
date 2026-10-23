@@ -1468,6 +1468,11 @@ private fun ReportsHome(
         return
     }
 
+    if (category == "ANALYSIS") {
+        ExperienceAnalysisScreenV130(onBack = { category = null })
+        return
+    }
+
     if (category != null) {
         val cat = category!!
         val count = when (cat) {
@@ -1606,6 +1611,13 @@ private fun ReportsHome(
         contentPadding = PaddingValues(top = 8.dp, bottom = 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        item {
+            ReportListCard(
+                title = "Experience Analysis · Daily / Weekly",
+                subtitle = "Compare DUT/REF with your own threshold rules; generate test result and reports",
+                onClick = { category = "ANALYSIS" }
+            )
+        }
         item {
             Text("Reports by Type", style = MaterialTheme.typography.titleLarge)
             Text("Choose a test type to view all saved test reports.", style = MaterialTheme.typography.bodySmall)
