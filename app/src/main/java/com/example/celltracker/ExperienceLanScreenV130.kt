@@ -1,6 +1,13 @@
 package com.example.celltracker
 
 import android.content.Context
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -29,6 +36,7 @@ private fun saveLanPeers(c:Context,peers:List<LanPeerConfig>){
 @Composable
 internal fun ExperienceLanScreenV130(
     server:ExperienceLanShareV130,
+    p2p:ExperienceP2pV130,
     repository:ExperienceRepositoryV130,
     session:String,date:String,scenario:String,operator:String,rat:String,
     role:String,onRoleChange:(String)->Unit,
@@ -37,10 +45,16 @@ internal fun ExperienceLanScreenV130(
     val context=LocalContext.current
     var peers by remember { mutableStateOf(loadLanPeers(context)) }
     var revision by remember { mutableIntStateOf(0) }
+    var showManual by remember { mutableStateOf(false) }
     val isSynced = remember(revision) { server.isSynced }
     Column(verticalArrangement=Arrangement.spacedBy(12.dp)) {
         Text("Post-test Wi-Fi Report Collection",style=MaterialTheme.typography.titleMedium)
-        Text("Four phones test independently. Only AFTER finishing tests, join one trusted Wi-Fi network/hotspot and use this page to collect results. Bluetooth Call Setup is unchanged.",style=MaterialTheme.typography.bodySmall)
+        Text("After testing, one phone creates a CellTracker Wi-Fi Direct group. Agents find ONLY advertised CellTracker Controllers, connect, and share reports. Bluetooth Call Setup is unchanged.",style=MaterialTheme.typography.bodySmall)
+        ExperienceP2pPanelV130(p2p,server,repository,session,date,scenario,operator,rat,role,onRoleChange,busy,onJob,onMessage)
+        OutlinedButton(onClick={showManual=!showManual},modifier=Modifier.fillMaxWidth()){
+            Text(if(showManual) "Hide manual LAN / hotspot fallback" else "Manual LAN / hotspot fallback (IP + pairing code)")
+        }
+        if(showManual) {
         Card { Column(Modifier.padding(14.dp),verticalArrangement=Arrangement.spacedBy(10.dp)) {
             Text("On each Agent: share completed reports",fontWeight=FontWeight.SemiBold)
             Text("Selected Session: $session | Date: $date",style=MaterialTheme.typography.bodySmall)
@@ -127,7 +141,8 @@ internal fun ExperienceLanScreenV130(
             Text("For a filtered daily analysis, use Collect All first, then Data > select dates, test items and exact reports > Apply Selected Reports > Compare / Reports. Full Session export above bypasses the Data selection.",style=MaterialTheme.typography.bodySmall)
             Text("Duplicate Report IDs are deduplicated; each Agent is marked Synced only after the Controller stores a verified archive. Failed Agents can be retried without losing their test data.",style=MaterialTheme.typography.bodySmall)
         } }
-        Text("Data privacy: use a trusted, isolated Wi-Fi/hotspot only. This initial LAN protocol has a temporary access code and checksums but not end-to-end encryption; do not use on public Wi-Fi. Leave Agent sharing off outside report collection.",style=MaterialTheme.typography.bodySmall)
+        }
+        Text("Wi-Fi Direct connects nearby devices using an app-specific service. Android may request permission/connection approval. Reports still use the current non-TLS local transfer protocol; work only with trusted devices and turn sharing off afterward.",style=MaterialTheme.typography.bodySmall)
     }
 }
 
@@ -142,4 +157,151 @@ private fun LanRoleChoice(role:String,onChange:(String)->Unit){
             }
         }
     }
+}
+
+/** Wi-Fi Direct primary path: Controller creates a group; Agents discover our DNS-SD service only. */
+@Composable
+private fun ExperienceP2pPanelV130(
+    p2p:ExperienceP2pV130,
+    server:ExperienceLanShareV130,
+    repository:ExperienceRepositoryV130,
+    session:String,date:String,scenario:String,operator:String,rat:String,
+    role:String,onRoleChange:(String)->Unit,
+    busy:Boolean,onJob:((()->String)->Unit),onMessage:(String)->Unit
+) {
+    val context=LocalContext.current
+    var mode by remember { mutableStateOf("Controller") }
+    var tick by remember { mutableIntStateOf(0) }
+    var pending by remember { mutableStateOf("") }
+    var autoShareAttempted by remember { mutableStateOf("") }
+    // Refresh only this small status panel while it is visible; no global AppState polling.
+    LaunchedEffect(p2p) { while(true){ delay(2500); tick++ } }
+    val observed=tick
+    // The user's tap on Connect is the explicit post-test action. Prepare and announce
+    // automatically on connection; no second mandatory Agent button.
+    val connectionFingerprint=if(mode=="Agent" && p2p.connected && !p2p.isOwner)
+        "${p2p.groupOwnerIp}|$session|$date|$role" else ""
+    LaunchedEffect(connectionFingerprint) {
+        if(connectionFingerprint.isNotBlank() && connectionFingerprint!=autoShareAttempted && !busy){
+            autoShareAttempted=connectionFingerprint
+            onJob {
+                // A few devices report P2P CONNECTED before their interface obtains IPv4.
+                repeat(6) { attempt ->
+                    if(ExperienceLanV130.p2pAddresses().isEmpty() && attempt<5)Thread.sleep(700)
+                }
+                require(ExperienceLanV130.p2pAddresses().isNotEmpty()) {
+                    "Wi-Fi Direct IPv4 address is not ready. Reconnect and retry."
+                }
+                val b=server.start(session,date,scenario,operator,rat,role)
+                val announced=runCatching{
+                    var response=""
+                    repeat(4){retry->
+                        if(response.isEmpty()){
+                            response=runCatching{p2p.announce(role,session,server.accessCode)}.getOrElse{
+                                if(retry<3)Thread.sleep(800)
+                                else throw it
+                                ""
+                            }
+                        }
+                    }
+                    response
+                }.getOrElse{throw IllegalStateException("Share ready, Controller registration failed: ${it.message}")}
+                "Automatically shared ${b.rowCount} measurements / ${b.files} original files. $announced"
+            }
+        }
+    }
+    val permissionNames=if(Build.VERSION.SDK_INT>=33)
+        arrayOf(Manifest.permission.NEARBY_WIFI_DEVICES,Manifest.permission.ACCESS_FINE_LOCATION)
+        else arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
+    fun permitted()=permissionNames.all{ContextCompat.checkSelfPermission(context,it)==PackageManager.PERMISSION_GRANTED}
+    fun start(requested:String){
+        runCatching { if(requested=="controller")p2p.startController(session) else p2p.findControllers() }
+            .onFailure { onMessage("Wi-Fi Direct: ${it.message}") }
+        tick++
+    }
+    val permissionLauncher=rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()){grants->
+        if(grants.values.all{it})start(pending)
+        else onMessage("Grant Nearby Wi-Fi and Location access, then try again. Android may also require Location services enabled.")
+        pending=""
+    }
+    fun requestStart(which:String){
+        if(permitted())start(which)
+        else {pending=which;permissionLauncher.launch(permissionNames)}
+    }
+    Card { Column(Modifier.fillMaxWidth().padding(14.dp),verticalArrangement=Arrangement.spacedBy(10.dp)) {
+        Text("Discover & Connect — CellTracker only",fontWeight=FontWeight.SemiBold)
+        if(!p2p.available){Text("Wi-Fi Direct not available: use manual LAN below.",color=MaterialTheme.colorScheme.error)}
+        Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+            listOf("Controller","Agent").forEach{choice->
+                FilterChip(selected=mode==choice,onClick={
+                    if(mode!=choice){if(mode=="Agent")server.stop();p2p.stop();mode=choice;tick++}
+                },label={Text(choice)},colors=FilterChipDefaults.filterChipColors(
+                    selectedContainerColor=MaterialTheme.colorScheme.primary,
+                    selectedLabelColor=MaterialTheme.colorScheme.onPrimary))
+            }
+        }
+        Text("My role",style=MaterialTheme.typography.labelMedium)
+        LanRoleChoice(role,onRoleChange)
+        Text("Connection: ${p2p.status}",style=MaterialTheme.typography.bodySmall)
+        if(mode=="Controller") {
+            Text("Creates a nearby local Wi-Fi Direct group for up to 3 Agents. No mobile data hotspot or Bluetooth connection is needed.",style=MaterialTheme.typography.bodySmall)
+            Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                Button(enabled=!busy&&p2p.available&&session.isNotBlank(),onClick={requestStart("controller")}){
+                    Text(if(p2p.controllerMode)"Restart Group" else "Start Controller")
+                }
+                OutlinedButton(enabled=p2p.running,onClick={p2p.stop();tick++}){Text("Stop")}
+            }
+            Text("Registered Agents (${p2p.agents().size})",fontWeight=FontWeight.Medium)
+            p2p.agents().forEach{agent->
+                HorizontalDivider()
+                Text("${agent.role} · ${agent.name.ifBlank{"Unknown model"}}",fontWeight=FontWeight.Medium)
+                Text("Device ${agent.deviceId.take(12)} · ${agent.ip}",style=MaterialTheme.typography.bodySmall)
+                OutlinedButton(enabled=!busy&&agent.role!=role&&agent.session==session,onClick={
+                    onJob{ExperienceLanV130.fetch(context,repository,agent.ip,agent.key,session,agent.role)}
+                }){Text("Collect ${agent.role}")}
+            }
+            val agents=p2p.agents().filter{it.role!=role && it.session==session}
+            Button(enabled=!busy&&agents.isNotEmpty()&&agents.map{it.role}.distinct().size==agents.size,onClick={
+                onJob {
+                    val local=runCatching{repository.scanLocal(session,date,scenario,operator,rat,role)}
+                        .fold(onSuccess={"Controller local: $it new readings"},onFailure={"Controller local scan: ${it.message}"})
+                    local+"\n"+agents.joinToString("\n"){a->"${a.role}: "+runCatching{
+                        ExperienceLanV130.fetch(context,repository,a.ip,a.key,session,a.role)
+                    }.getOrElse{"Failed: ${it.message}"}}
+                }
+            }){Text("Collect All Connected Agents")}
+            Text("After collection: Data → choose dates and test items → Apply Selected Reports → Compare / Reports. Missing Agents can reconnect and retry.",style=MaterialTheme.typography.bodySmall)
+        }else {
+            Text("Scan lists only verified CellTracker Wi-Fi Direct services, not neighboring hotspots. Android may show a system confirmation.",style=MaterialTheme.typography.bodySmall)
+            Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                Button(enabled=!busy&&p2p.available,onClick={requestStart("scan")}){Text("Find Controllers")}
+                OutlinedButton(enabled=p2p.running,onClick={p2p.stop();tick++}){Text("Disconnect")}
+            }
+            Text("Found Controllers (${p2p.hosts().size})",fontWeight=FontWeight.Medium)
+            p2p.hosts().forEach{host->
+                Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
+                    Column(Modifier.weight(1f)){
+                        Text(host.name.ifBlank{"CellTracker Controller"},fontWeight=FontWeight.Medium)
+                        Text(host.address.take(18),style=MaterialTheme.typography.bodySmall)
+                    }
+                    Button(enabled=!busy&&!p2p.connected,onClick={runCatching{p2p.connect(host)}.onFailure{onMessage(it.message.orEmpty())};tick++}){Text("Connect")}
+                }
+            }
+            if(p2p.connected&&!p2p.isOwner) {
+                Text("Connected: preparing and registering the report automatically.",style=MaterialTheme.typography.bodySmall)
+                Button(enabled=!busy&&session.isNotBlank(),onClick={
+                    onJob{
+                        val b=server.start(session,date,scenario,operator,rat,role)
+                        val r=p2p.announce(role,session,server.accessCode)
+                        "${b.rowCount} measurements / ${b.files} raw reports ready. $r"
+                    }
+                }){Text(if(server.isSharing)"Refresh Shared Reports" else "Retry Report Sharing")}
+                if(server.isSharing){
+                    Text("Local archive ready · ${server.report?.rowCount} readings · ${if(server.isSynced)"Synced" else "Awaiting collection"}",style=MaterialTheme.typography.bodySmall)
+                    OutlinedButton(onClick={server.stop();tick++}){Text("Stop Sharing")}
+                }
+            }
+        }
+        TextButton(onClick={tick++}){Text("Refresh Connection Status")}
+    } }
 }

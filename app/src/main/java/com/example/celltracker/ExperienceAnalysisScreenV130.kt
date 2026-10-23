@@ -33,7 +33,8 @@ fun ExperienceAnalysisScreenV130(onBack:()->Unit) {
     val repo=remember(context){ExperienceRepositoryV130(context)}
     val scope=rememberCoroutineScope()
     val lanServer=remember(context){ExperienceLanShareV130(context)}
-    DisposableEffect(lanServer){ onDispose { lanServer.dispose() } }
+    val p2p=remember(context){ExperienceP2pV130(context)}
+    DisposableEffect(lanServer,p2p){ onDispose { p2p.dispose();lanServer.dispose() } }
     var page by remember { mutableStateOf("Data") }
     var session by remember { mutableStateOf("Field_${SimpleDateFormat("yyyyMMdd",Locale.US).format(Date())}") }
     var date by remember { mutableStateOf(SimpleDateFormat("yyyy-MM-dd",Locale.US).format(Date())) }
@@ -203,7 +204,7 @@ fun ExperienceAnalysisScreenV130(onBack:()->Unit) {
             }
             if(page=="Wi-Fi") {
                 ExperienceLanScreenV130(
-                    server=lanServer,repository=repo,session=session,date=date,scenario=scenario,
+                    server=lanServer,p2p=p2p,repository=repo,session=session,date=date,scenario=scenario,
                     operator=operator,rat=rat,role=role,onRoleChange={role=it},
                     busy=busy,onJob={job->runJob(job)},onMessage={message=it}
                 )

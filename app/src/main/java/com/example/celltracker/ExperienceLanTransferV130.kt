@@ -55,8 +55,14 @@ internal object ExperienceLanV130 {
     fun localAddresses():List<String> = runCatching {
         val interfaces=NetworkInterface.getNetworkInterfaces()?.toList().orEmpty()
         interfaces.filter{it.isUp&&!it.isLoopback &&
-            listOf("wlan","swlan","ap","softap","eth").any { prefix -> it.name.startsWith(prefix,true) }}
-            .sortedBy { if(it.name.startsWith("wlan")||it.name.startsWith("ap"))0 else 1 }
+            listOf("p2p","wlan","swlan","ap","softap","eth").any { prefix -> it.name.startsWith(prefix,true) }}
+            .sortedBy { if(it.name.startsWith("p2p"))0 else if(it.name.startsWith("wlan")||it.name.startsWith("ap"))1 else 2 }
+            .flatMap{it.inetAddresses.toList()}.filterIsInstance<Inet4Address>()
+            .map{it.hostAddress.orEmpty()}.filter{runCatching{safeAddress(it)}.isSuccess}.distinct()
+    }.getOrDefault(emptyList())
+    fun p2pAddresses():List<String> = runCatching {
+        NetworkInterface.getNetworkInterfaces()?.toList().orEmpty()
+            .filter{it.isUp && !it.isLoopback && it.name.startsWith("p2p",true)}
             .flatMap{it.inetAddresses.toList()}.filterIsInstance<Inet4Address>()
             .map{it.hostAddress.orEmpty()}.filter{runCatching{safeAddress(it)}.isSuccess}.distinct()
     }.getOrDefault(emptyList())
@@ -243,7 +249,10 @@ internal object ExperienceLanV130 {
         require(wifi!=null || localAddresses().isNotEmpty()) { "Connect to a trusted Wi-Fi or enable a local hotspot" }
         fun request(path:String,method:String="GET",headers:Map<String,String> = emptyMap()):HttpURLConnection {
             val url=URL("http://$ip:$PORT$path")
-            val conn= (wifi?.openConnection(url) ?: url.openConnection()) as HttpURLConnection
+            // A Wi-Fi Direct group has its own interface. Do not route P2P traffic over
+            // a separate internet-facing WLAN that may also be connected.
+            val p2p=runCatching{NetworkInterface.getNetworkInterfaces()?.toList()?.any{it.isUp && it.name.startsWith("p2p",true)}}.getOrDefault(false)==true
+            val conn= (if(p2p)url.openConnection() else (wifi?.openConnection(url) ?: url.openConnection())) as HttpURLConnection
             conn.requestMethod=method;conn.connectTimeout=9000;conn.readTimeout=60000
             conn.setRequestProperty("X-CellTracker-Key",token)
             headers.forEach{(k,v)->conn.setRequestProperty(k,v)}

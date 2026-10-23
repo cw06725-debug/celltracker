@@ -52,3 +52,16 @@ Source preview. Version name `1.3.0`, `versionCode` `255`. Android Gradle build 
 ## Signing and building
 
 Use the GitHub Actions workflow or Android Studio to build `assembleDebug`. Keep the same internal testing signing certificate to upgrade without wiping reports. The bundled `keystore/celltracker-dev.jks` is for internal development only, not production. See `celltracker-signing.properties.example` for private signing. Only `README.md` and `CHANGELOG.md` are kept as Markdown in the project ZIP.
+
+
+## Preview 5: post-test Wi-Fi Direct Controller / Agent
+
+Open **Reports → Experience Analysis → Wi-Fi** on all devices after the cellular experience tests are finished.
+
+1. On one phone, select **Controller** and its DUT/REF role. Set the same Session ID as the other devices, then tap **Start Controller**. Android may display a Wi-Fi Direct permission/confirmation prompt.
+2. On each other phone, select **Agent** and its unique DUT/REF role, tap **Find Controllers**, choose the listed **CellTracker Controller** service and tap **Connect**. Nearby ordinary hotspots are not shown in this service list.
+3. Once connected, an Agent automatically attempts to package its previously saved reports and register with the Controller. If this cannot complete (missing records, Wi-Fi Direct IP not ready, mismatched Session), review the error and use **Retry Report Sharing** after correction.
+4. Controller can see each registered Agent's role, model, and device ID, tap **Collect** individually or **Collect All Connected Agents**, then use **Data → selected dates / multiple test items / exact reports → Apply Selected Reports → Compare / Reports** for analysis and output.
+5. If discovery/grouping fails on a device, expand **Manual LAN / hotspot fallback (IP + pairing code)** and use a trusted shared Wi-Fi LAN or phone hotspot. Controller does not need to be an internet gateway: Wi-Fi Direct is a local-only P2P group, not the system's normal mobile data tethering hotspot.
+
+**Requirements & caveats:** Enable Wi-Fi, Nearby Devices permission, and Location access/service when prompted; vendor Android builds differ in P2P group-owner and multi-client support. Phone models must pass a real four-device test. The advertised service type filters unrelated hotspots but is **not cryptographic proof of peer identity**. Existing archive transfer uses local HTTP with a temporary key and SHA-256 integrity checks, not TLS; only use on trusted devices. Stop Agent sharing and Controller group after collection. Bluetooth Call Setup remains independent. No reports are sent while cellular testing is in progress.

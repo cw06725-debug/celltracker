@@ -1,3 +1,14 @@
+## v1.3.0 Preview 5 — Post-Test Wi-Fi Direct Discovery (versionCode 256)
+
+- Added a **post-test Controller/Agent Wi-Fi Direct** flow. Controller creates an application-advertised local Wi-Fi Direct group; Agents discover only the CellTracker DNS-SD service and tap Connect, without typing an IPv4 address or pairing token.
+- Agent automatically prepares its locally saved report snapshot and registers itself with the Controller after a successful connection (with Retry Sharing when permissions/data/network timing prevent automatic sharing).
+- Controller displays registered agents (role/model/device ID/status), can collect one or all; the existing SHA-256-verified archive, de-duplication, receipt confirmation and analysis/report-export workflow remain in use.
+- Controller scans its own local reports during Collect All. Selected-date, multiple-test-item and exact-run confirmation remain under Reports → Experience Analysis → Data before comparison/export.
+- The earlier **manual LAN IP + code** flow is retained as a collapsed fallback for hardware or ROMs with incomplete Wi-Fi Direct support.
+- Bluetooth Device Link and Call Setup are unchanged; no multi-device connection is required while performing 4G/5G tests.
+- Added required Wi-Fi Direct permissions and scoped service discovery. This PREVIEW still uses HTTP after P2P association, and is not end-to-end encrypted; use trusted devices only.
+- Complete Android Gradle build and four-device real-world compatibility tests are pending. Performance improvements requested after Preview 4 are not claimed complete in this change.
+
 ## v1.3.0 Preview 4 — Compilation / Matching UI (versionCode 255)
 - Fixed unresolved `horizontalScroll` import blocking `:app:compileDebugKotlin` in Preview 3.
 - Removed Reports `Weak Coverage Route` category card without removing weak-coverage tests/history.
