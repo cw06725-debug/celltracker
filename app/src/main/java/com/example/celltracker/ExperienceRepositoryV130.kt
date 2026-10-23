@@ -43,12 +43,14 @@ class ExperienceRepositoryV130(private val context: Context) {
         }.getOrNull() }
     }
     fun saveRows(rows: List<ExperienceObservation>) {
-        val a=JSONArray(); rows.takeLast(2000).forEach { r -> a.put(JSONObject().apply {
+        require(rows.size <= 2000) { "Workspace limit reached (2000 measurements). Export/archive earlier sessions before receiving more; nothing has been dropped." }
+        val a=JSONArray(); rows.forEach { r -> a.put(JSONObject().apply {
             put("id",r.id);put("session",r.session);put("date",r.date);put("scenario",r.scenario)
             put("operator",r.operator);put("rat",r.rat);put("role",r.role);put("metric",r.metricId)
             put("value",r.value);put("attempts",r.attempts);put("source",r.source);put("origin",r.dataOrigin)
             put("time",r.recordedAt);put("band",r.band);put("pci",r.pci);put("rsrp",r.rsrp);put("sinr",r.sinr)
-        }) }; prefs.edit().putString("measurements",a.toString()).apply()
+        }) }
+        check(prefs.edit().putString("measurements",a.toString()).commit()) { "Could not durably save measurement data" }
     }
     fun addRows(new: List<ExperienceObservation>): Int {
         val rows=rows().associateByTo(linkedMapOf()) { it.id }

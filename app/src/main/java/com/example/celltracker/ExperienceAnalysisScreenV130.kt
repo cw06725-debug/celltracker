@@ -30,6 +30,8 @@ fun ExperienceAnalysisScreenV130(onBack:()->Unit) {
     val context=LocalContext.current
     val repo=remember(context){ExperienceRepositoryV130(context)}
     val scope=rememberCoroutineScope()
+    val lanServer=remember(context){ExperienceLanShareV130(context)}
+    DisposableEffect(lanServer){ onDispose { lanServer.dispose() } }
     var page by remember { mutableStateOf("Data") }
     var session by remember { mutableStateOf("Field_${SimpleDateFormat("yyyyMMdd",Locale.US).format(Date())}") }
     var date by remember { mutableStateOf(SimpleDateFormat("yyyy-MM-dd",Locale.US).format(Date())) }
@@ -61,9 +63,9 @@ fun ExperienceAnalysisScreenV130(onBack:()->Unit) {
     }
     Column(Modifier.fillMaxSize()) {
         TopAppBar(title={Text("Experience Analysis")},navigationIcon={TextButton(onClick=onBack){Text("Back")}})
-        Row(Modifier.fillMaxWidth().padding(horizontal=8.dp),horizontalArrangement=Arrangement.spacedBy(4.dp)) {
-            listOf("Data","Rules","Compare","Reports").forEach{tab->
-                FilterChip(selected=page==tab,onClick={page=tab},label={Text(tab)},modifier=Modifier.weight(1f))
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal=8.dp),horizontalArrangement=Arrangement.spacedBy(4.dp)) {
+            listOf("Data","Wi-Fi","Rules","Compare","Reports").forEach{tab->
+                FilterChip(selected=page==tab,onClick={page=tab},label={Text(tab)})
             }
         }
         if(message.isNotBlank()) Text(message,modifier=Modifier.padding(horizontal=16.dp,vertical=6.dp),style=MaterialTheme.typography.bodySmall)
@@ -112,6 +114,13 @@ fun ExperienceAnalysisScreenV130(onBack:()->Unit) {
                         TextButton(onClick={repo.remove(r.id);refresh()}){Text("Delete")}
                     } }
                 }
+            }
+            if(page=="Wi-Fi") {
+                ExperienceLanScreenV130(
+                    server=lanServer,repository=repo,session=session,date=date,scenario=scenario,
+                    operator=operator,rat=rat,role=role,onRoleChange={role=it},
+                    busy=busy,onJob={job->runJob(job)},onMessage={message=it}
+                )
             }
             if(page=="Rules") {
                 Text("2. Configurable PASS / OBSERVE / FAIL rules",style=MaterialTheme.typography.titleMedium)
@@ -201,7 +210,7 @@ fun ExperienceAnalysisScreenV130(onBack:()->Unit) {
                     val intent=Intent(Intent.ACTION_SEND).apply{type="*/*";putExtra(Intent.EXTRA_STREAM,uri);addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)}
                     runCatching{context.startActivity(Intent.createChooser(intent,"Share report"))}.onFailure{Toast.makeText(context,it.message,Toast.LENGTH_SHORT).show()}
                 }){Text("Share Last Export")}
-                Text("Note: multi-agent automatic synchronization remains pending. Daily uses the supplied Word template; weekly currently exports editable HTML based on W42 sections.",style=MaterialTheme.typography.bodySmall)
+                Text("Use Wi-Fi tab after testing to collect data from Agents. Daily uses the supplied Word template; weekly currently exports editable HTML based on W42 sections.",style=MaterialTheme.typography.bodySmall)
             }
             Spacer(Modifier.height(28.dp))
         }

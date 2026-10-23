@@ -1,45 +1,42 @@
-# CellTracker — v1.3.0 Preview 2 (Experience Analysis)
+# CellTracker — v1.3.0 Preview 3: Post-test Wi-Fi Report Collection
 
-Android field-testing app for communication experience, network diagnostics, reports and vendor logging.
+Source preview. Version name `1.3.0`, `versionCode` `254`.
 
-## Release status
+## Correct workflow: NEVER require 4 phones to connect while testing
 
-- App version: `1.3.0`; `versionCode` `253` (Preview 2).
-- **Preview source only:** pure-Kotlin analysis engine and template processors passed isolated Kotlin compile/regression checks. A full Android `assembleDebug`, device tests and end-to-end imported-report tests must still pass in GitHub Actions / field devices.
-- All existing v1.3.0 Preview 1 features and raw reports are retained.
-- This update adds a new **Reports → Experience Analysis · Daily / Weekly** entry.
+1. Test independently on DUT1, DUT2, REF1, and REF2. Each device runs the appropriate CellTracker / MFT business tests and saves its own reports. **No Wi-Fi sync and no multi-device connection is required during the cellular experience test.**
+2. Once all tests are complete, put four phones on the same **trusted** Wi-Fi LAN or hotspot. The original Bluetooth Device Link remains exclusively for its pre-existing **Call Setup** workflow; its implementation is unchanged.
+3. On the Controller open **Reports → Experience Analysis**. In **Data**, set the exact same Session ID, test date, scenario, operator and RAT on every device; choose DUT1 (or the Controller's actual role). Import external MFT results using the supported template if needed.
+4. Each Agent opens the same **Experience Analysis → Wi-Fi** page, chooses its own device role (e.g. DUT2, REF1 or REF2) and taps **Start Sharing**. Keep the Agent's analysis screen open. Copy its local IP address and temporary 12-character pairing code to the Controller. Each Agent runs its own temporary HTTP listener only after the user explicitly starts sharing.
+5. On Controller → **Wi-Fi**, enter each Agent's IP, current code and role. Tap **Collect All Configured Agents**, or **Collect + Analyze + Generate Reports**. The latter also imports the Controller's supported local records, executes the saved Rules and produces results workbooks, Daily Word/HTML and Weekly HTML in Downloads. It continues with a clearly flagged *partial report* if an Agent is unavailable.
+6. In **Compare**, review the DUT / REF results, radio evidence and manually approved PASS/OBSERVE/FAIL thresholds. Revise a conclusion with the mandatory reason and optional Bug ID. In **Reports**, edit custom daily/weekly narratives and export again if needed.
+7. Stop sharing after syncing. Leaving the Experience Analysis screen also stops its temporary Agent listener. Do not uninstall a device's data-bearing app without first backing up its reports.
 
-## Analysis workflow
+## Wi-Fi design and data integrity
 
-1. In **Reports → Experience Analysis**, choose Session ID, test date, test scenario, operator, RAT and role (`DUT1`, `DUT2`, `REF1`, `REF2`).
-2. Tap **Load My Local Reports** for supported native records; assign the actual local device role first. The scan covers supported local Ping, TikTok CSV, YouTube, WhatsApp Image and Call records from the selected date. Original reports are never modified.
-3. For external test phones, import the supplied `Communication Experience Test Cases and Results V1.0` Excel workbook/`Test Results` CSV. The `Role (DUT/REF)` column must explicitly hold `DUT1`, `DUT2`, `REF1` or `REF2` (generic `DUT`/`REF` is ambiguous and skipped). Alternatively **Add measurement manually**, always labelled `MANUAL`.
-4. In **Rules**, enable the applicable individual metric and configure OBSERVE and FAIL thresholds and minimum attempts. Relative latency/upload/loading differences use **%**, stall counts use **absolute count**, and success rates use **percentage points**. Until enabled, a rule cannot silently declare FAIL or PASS.
-5. In **Compare**, review DUT versus matching REF and optionally enter a manual assessment **with required justification** and Bug ID. The automated verdict is preserved alongside the final verdict.
-6. In **Reports**, customize narrative fields and export:
-   - **Communication Experience Test Result:** original four-sheet supplied XLSX template when the workbook fits its 100-row capacity **plus** a nine-sheet analysis workbook.
-   - **Daily Report:** original supplied 8-section English Word (`.docx`) template filled with the selected session, plus an HTML preview.
-   - **Weekly Report:** editable HTML following the five principal sections of the prior W42 weekly report; covers the seven days ending on the selected date.
+- Transport: direct local IPv4 TCP/HTTP on port `48731` to a trusted private Wi-Fi/hotspot address. No cloud, Bluetooth, cellular API traffic or permanent report server. Uses Android `Network.openConnection` to route Controller's traffic on Wi-Fi when available; supports hotspot-host local interfaces as fallback.
+- A temporary one-time session pairing code is required to request the bundle. The listener is bound only to an available Wi-Fi/hotspot LAN interface, not to cellular. Twelve invalid attempts block new requests until sharing is restarted.
+- The Agent creates a snapshot of normalized real measurements, with provenance, time and available Band/PCI/RSRP/SINR. Accessible original reports are attached **without modifying their contents** in a ZIP with manifest and SHA-256 digests. Limits: ~12 MB/file and ~55 MB per bundle; missing/large original files are explicitly counted, not fabricated.
+- The Controller verifies metadata, Session ID, DUT/REF role, Report ID, filenames and file checksums before archiving incoming original files in app-private `files/experience_lan_imports/`, then durably commits observations. The same report may be resent; deterministic IDs deduplicate data. Controller sends receipt confirmation only after it has saved the file and metrics.
+- Existing locally saved reports remain intact. Bluetooth Call Setup protocol and UI are not modified by this transfer module.
+- Controller may collect from three Agents sequentially, with independent IP/code/role configuration. Agent listener sessions are concurrent, so each can be ready at the same time. Auto-discovery/QR and fully unattended device-to-device sync are **not** implemented.
 
-Files are stored under `Downloads/CellTracker/<date>/Analysis` through Android MediaStore.
+## Important security and acceptance limits
 
-## Important accuracy limits
+**Preview-only security limitation:** The local HTTP transfer is not end-to-end encrypted. Pairing codes, file integrity checks and LAN restriction are not substitutes for authenticated TLS. Use only an isolated, trusted Wi-Fi/hotspot network; never transfer confidential raw logs on public, shared, or unknown networks. TLS/verified peer identity is a required hardening step before a production-grade release. The manifest has `android:usesCleartextTraffic=true` solely to enable this initial local HTTP transport.
 
-- **Automatic 1 Controller + 3 Agents transfer/synchronization is not yet implemented**. Transfer comparison results by importing exported worksheets / CSV or explicitly labelled manual entry.
-- Results are evaluated only when **date, scenario, operator and RAT** are comparable. Missing observations/REF are `N/A`; unverified user-declared RAT is `OBSERVE` at most. RSRP/Band/PCI/SINR are *context*, not proof of a root cause.
-- Field app reports have different schemas. Not every existing test type is auto-parsed; MFT Ping, MFT Short Video and dedicated VoLTE/WhatsApp Call are distinguished from CellTracker native tests and may need template import/manual input.
-- Rates do not imply exact raw successful attempts. The exporter does **not** reconstruct or invent success counts from rounded percentages.
-- Weekly output is HTML, not the exact Word/PDF layout. Visual/end-to-end field validation is pending; no fake sample results are shipped.
-- Keep the same Android signing certificate to update an installation without losing stored reports. Do **not** uninstall a data-bearing copy without backing it up.
+**Supported automatic raw report coverage:** local Ping, YouTube, WhatsApp Image, TikTok CSV and existing Call Setup summaries recognized by Preview 2. MFT results may still need import via the original Results XLSX/CSV template. Import provenance remains explicit and never pretends to be automatically acquired. Private or inaccessible raw source files may be missing from bundles; normalized metrics can still be present.
 
-## Build
+**Engineering status:** The supplied source has not passed a full Android SDK / Gradle APK build or real four-phone Wi-Fi field test. Do not label it a stable release. Validate Wi-Fi/LAN interfaces and firewall/client-isolation behavior on actual Transsion/vivo/Samsung devices, slow links, retries, duplicate sync, wrong code/role, partial results, and the existing Bluetooth call workflow.
 
-Use the GitHub Actions workflow or Android Studio's `assembleDebug`. Verify all active Compose screens, Android MediaStore exports and imported templates on actual devices. A build success does not confirm multi-device compatibility.
+## Analysis functionality carried over from Preview 2
 
-## Signing
+- User-defined per-metric OBSERVE / FAIL thresholds and minimum sample counts, percentage / absolute count / percentage-point differences.
+- DUT/REF date, operator, RAT and scenario comparability checks; unverified RAT can only yield OBSERVE; N/A where data is insufficient.
+- Original Communication Experience Test Results Excel template and extended analysis workbook.
+- Original eight-section English Daily DOCX and editable HTML; W42-style editable Weekly HTML.
+- All conclusions remain human-reviewable with reason and Bug ID.
 
-For test builds, existing `keystore/celltracker-dev.jks` is for internal use only. Use the same certificate to update previously installed builds. Configure private signing credentials through `celltracker-signing.properties` as explained in `celltracker-signing.properties.example`; never publish production keys.
+## Signing and building
 
-## Changelog
-
-See `CHANGELOG.md`. Deliberately no historical preview-validation Markdown files are included in this project archive.
+Use the GitHub Actions workflow or Android Studio to build `assembleDebug`. Keep the same internal testing signing certificate to upgrade without wiping reports. The bundled `keystore/celltracker-dev.jks` is for internal development only, not production. See `celltracker-signing.properties.example` for private signing. Only `README.md` and `CHANGELOG.md` are kept as Markdown in the project ZIP.

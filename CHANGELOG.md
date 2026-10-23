@@ -1,3 +1,14 @@
+# CellTracker v1.3.0 Preview 3 — Wi-Fi post-test reporting (versionCode 254)
+
+- New Reports → Experience Analysis → Wi-Fi page. Four devices test **independently**. After testing, Controller collects from three Agents using the same trusted Wi-Fi LAN/hotspot; no multi-device connection is required during the actual business tests.
+- Bluetooth Device Link for Call Setup is unchanged. No multi-agent Bluetooth transport was introduced.
+- Agent: explicitly start/stop temporary LAN sharing, role/session/date metadata, private Wi-Fi-interface-bound server, temporary pairing code, on-device original files preserved.
+- Controller: configured per-Agent IP/code/role, one-by-one/all-Agent collection, verified original ZIP archives, SHA-256 integrity, deterministic Report ID dedup, durable observation import, post-save ACK, retry-safe partial results.
+- New post-test one-action Collect + Analyze + Generate Reports path using the existing configured Rules and original XLSX/DOCX templates plus Weekly HTML.
+- Guardrails: only private local IPv4 targets, no cellular business tests touched, raw file and total ZIP caps, imported-manifest validation, explicit report source, no missing-data fabrication. Preview LAN protocol is HTTP **without end-to-end encryption**: trusted isolated Wi-Fi only, pending production security hardening.
+- Development status: static source checks only; full Android SDK compilation and genuine 4-device end-to-end testing pending. This is NOT a stable release.
+- Clean project ZIP: only README.md and CHANGELOG.md.
+
 # CellTracker v1.3.0 Preview 2 — Experience Analysis (source preview)
 
 - New **Reports → Experience Analysis · Daily / Weekly** with sessions, local report loading, test-case Excel/CSV import, clearly-labelled manual input and DUT1/DUT2/REF1/REF2 role assignment.
