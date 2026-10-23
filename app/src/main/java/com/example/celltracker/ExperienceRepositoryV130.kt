@@ -39,7 +39,8 @@ class ExperienceRepositoryV130(private val context: Context) {
             ExperienceObservation(o.getString("id"),o.optString("session"),o.optString("date"),o.optString("scenario"),
                 o.optString("operator"),o.optString("rat"),o.optString("role"),o.optString("metric"),o.getDouble("value"),
                 o.optInt("attempts",0),o.optString("source"),o.optString("origin"),o.optLong("time"),
-                o.optString("band"),o.optString("pci"),o.optString("rsrp"),o.optString("sinr"))
+                o.optString("band"),o.optString("pci"),o.optString("rsrp"),o.optString("sinr"),
+                o.optString("deviceModel"),o.optString("deviceId"),o.optString("runId"))
         }.getOrNull() }
     }
     fun saveRows(rows: List<ExperienceObservation>) {
@@ -49,6 +50,7 @@ class ExperienceRepositoryV130(private val context: Context) {
             put("operator",r.operator);put("rat",r.rat);put("role",r.role);put("metric",r.metricId)
             put("value",r.value);put("attempts",r.attempts);put("source",r.source);put("origin",r.dataOrigin)
             put("time",r.recordedAt);put("band",r.band);put("pci",r.pci);put("rsrp",r.rsrp);put("sinr",r.sinr)
+            put("deviceModel",r.deviceModel);put("deviceId",r.deviceId);put("runId",r.runId)
         }) }
         check(prefs.edit().putString("measurements",a.toString()).commit()) { "Could not durably save measurement data" }
     }
@@ -61,7 +63,9 @@ class ExperienceRepositoryV130(private val context: Context) {
     fun remove(id: String) = saveRows(rows().filterNot { it.id == id })
     fun addManual(session:String,date:String,scenario:String,operator:String,rat:String,role:String,metric:String,value:Double,attempts:Int):Int {
         return addRows(listOf(ExperienceObservation(UUID.randomUUID().toString(),session,date,scenario,operator,rat,role,metric,
-            value,attempts,"Manual field entry","MANUAL",System.currentTimeMillis())))
+            value,attempts,"Manual field entry","MANUAL",System.currentTimeMillis(),
+            deviceModel="${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}".trim(),
+            deviceId=ExperienceLanV130.deviceId(context),runId="MANUAL")))
     }
     fun overrides():Map<String,Triple<ExperienceVerdict,String,String>> {
         val json=runCatching{JSONObject(prefs.getString("overrides","{}"))}.getOrDefault(JSONObject())
@@ -87,7 +91,9 @@ class ExperienceRepositoryV130(private val context: Context) {
             if(!fresh(time)||value==null||!value.isFinite()||attempts<1) return
             results+=ExperienceObservation("$session|$role|$metric|${source.hashCode()}",session,date,scenario,
                 op.ifBlank { operator },rat.ifBlank { declaredRat },role,metric,value,attempts,source,origin,time,
-                band,pci,rsrp,sinr)
+                band,pci,rsrp,sinr,
+                deviceModel="${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}".trim(),
+                deviceId=ExperienceLanV130.deviceId(context),runId=source)
         }
         runCatching { PingRepository(context).loadHistory() }.getOrDefault(emptyList()).filter { fresh(it.startedAt) }.forEach { p ->
             val samples=runCatching{PingRepository(context).loadDetail(p.path).samples}.getOrDefault(emptyList())
@@ -187,7 +193,8 @@ class ExperienceRepositoryV130(private val context: Context) {
             fun add(metric:String,v:Double?){if(v!=null && v.isFinite())incoming+=ExperienceObservation(
                 "$session|$actualRole|$metric|$source",session,measuredDate,sc,op,r,actualRole,metric,
                 v,attempts,source,"IMPORTED_TEMPLATE",System.currentTimeMillis()+i,
-                rsrp=get(row,"RSRP (dBm)"))}
+                rsrp=get(row,"RSRP (dBm)"),deviceModel=get(row,"Device"),
+                deviceId=get(row,"Device ID"),runId=get(row,"Report File / Link").ifBlank{"imported_row_${i+2}"})}
             when (test) {
                 "SIG-01" -> {
                     add("MFT_PING_AVG_MS",get(row,"Mean Latency (ms)").toDoubleOrNull())

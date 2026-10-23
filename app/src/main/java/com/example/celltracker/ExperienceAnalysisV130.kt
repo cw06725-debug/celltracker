@@ -47,7 +47,8 @@ data class ExperienceObservation(
     val operator: String, val rat: String, val role: String,
     val metricId: String, val value: Double, val attempts: Int,
     val source: String, val dataOrigin: String, val recordedAt: Long,
-    val band: String = "", val pci: String = "", val rsrp: String = "", val sinr: String = ""
+    val band: String = "", val pci: String = "", val rsrp: String = "", val sinr: String = "",
+    val deviceModel: String = "", val deviceId: String = "", val runId: String = ""
 )
 
 data class ExperienceDecision(

@@ -1,6 +1,18 @@
-# CellTracker — v1.3.0 Preview 3: Post-test Wi-Fi Report Collection
+# CellTracker — v1.3.0 Preview 4: Report Selection & Compile Fix
 
-Source preview. Version name `1.3.0`, `versionCode` `254`.
+Source preview. Version name `1.3.0`, `versionCode` `255`. Android Gradle build and device testing still required.
+
+## Preview 4: Experience Analysis report matching and UI fixes
+
+- Fixed the missing Compose `horizontalScroll` import that broke `ExperienceAnalysisScreenV130.kt:66` Kotlin compilation in Preview 3.
+- Reports no longer shows the **Weak Coverage Route** category card; the underlying Weak Coverage test and historical report data have **not** been deleted.
+- Experience Analysis top tabs (`Data`, `Wi-Fi`, `Rules`, `Compare`, `Reports`) highlight the selected tab with a solid blue background and white text.
+- In **Data**, choose a **From / To** date (including recent dates and dates already represented in report data), then **multi-select** test items, then select *individual matched report runs*. Shows device role, model, optional device ID, original session, recorded time and source. `Select All` / `Clear` affect item choices; a report must still be explicitly checked before it can be analyzed.
+- **Apply Selected Reports** provides a non-destructive scoped analysis view for Compare and Reports; exports use **only selected observation IDs**, while original local and Wi-Fi source data remain unchanged. Multiple metrics in one run stay grouped. Multiple runs of the same metric for the same DUT/REF role are flagged instead of silently replacing older attempts; do not aggregate repeated test rounds accidentally. Per-day report selection refuses combined dates; use individual days for Daily or weekly export as appropriate.
+- New observations persist optional `deviceModel`, `deviceId`, and `runId`. Local records identify their device when scanned, imported Test Results use the `Device` column and any available `Device ID`, and post-test Wi-Fi imports receive the Agent manifest's real model/device ID. For older records, these fields may show **Unknown**; never invent an identity.
+- `Device Model`/`Device ID`/`Test Run ID` appear in the expanded workbook's Raw Data Index; model names are also reflected in new exports. Original Excel source template layout is retained.
+- **Load Local Reports for Selected Dates** scans up to 15 days per action; Wi-Fi `Collect + Generate (Full Session)` intentionally remains a separate unfiltered shortcut. For filtered analyses, first Collect All, then apply the selection in Data, then use Compare/Reports.
+- Existing configurable Rules are unchanged pending user review. Bluetooth Call Setup and independent four-device field testing remain unchanged.
 
 ## Correct workflow: NEVER require 4 phones to connect while testing
 

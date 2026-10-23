@@ -123,7 +123,8 @@ internal fun ExperienceLanScreenV130(
                     summary.joinToString("\n") + "\nGenerated Excel, Daily Word/HTML and Weekly HTML from ${own.size} session readings. " +
                         if(summary.any{it.contains("Not synced")})"Partial report: retry missing Agents before final approval." else "Review rules and verdicts before final approval."
                 }
-            }){Text("Collect + Analyze + Generate Reports")}
+            }){Text("Collect + Generate (Full Session)")}
+            Text("For a filtered daily analysis, use Collect All first, then Data > select dates, test items and exact reports > Apply Selected Reports > Compare / Reports. Full Session export above bypasses the Data selection.",style=MaterialTheme.typography.bodySmall)
             Text("Duplicate Report IDs are deduplicated; each Agent is marked Synced only after the Controller stores a verified archive. Failed Agents can be retried without losing their test data.",style=MaterialTheme.typography.bodySmall)
         } }
         Text("Data privacy: use a trusted, isolated Wi-Fi/hotspot only. This initial LAN protocol has a temporary access code and checksums but not end-to-end encryption; do not use on public Wi-Fi. Leave Agent sharing off outside report collection.",style=MaterialTheme.typography.bodySmall)

@@ -48,7 +48,7 @@ object ExperienceOriginalTemplateV130 {
             val d=decisions.firstOrNull{it.metricId==r.metricId&&it.dutRole==r.role}
             val numbers=Array(23){""}
             numbers[0]=r.date;numbers[1]=r.scenario;numbers[3]=r.operator;numbers[4]=r.rat
-            numbers[5]=ids[r.metricId].orEmpty();numbers[6]=r.role;numbers[7]=r.role
+            numbers[5]=ids[r.metricId].orEmpty();numbers[6]=r.deviceModel.ifBlank{r.role};numbers[7]=r.role
             numbers[10]=r.attempts.toString();numbers[16]=r.rsrp
             when (r.metricId) {
                 "MFT_PING_AVG_MS","PING_AVG_MS","CALL_SETUP_AVG_MS"->numbers[13]=r.value.toString()
@@ -69,7 +69,7 @@ object ExperienceOriginalTemplateV130 {
             val a=Array(16){""}
             a[0]=r?.date.orEmpty();a[1]=r?.scenario.orEmpty();a[2]=r?.operator.orEmpty();a[3]=r?.rat.orEmpty()
             a[4]=ids[d.metricId].orEmpty();a[5]="${ExperienceMetrics.find(d.metricId)?.label} (${ExperienceMetrics.find(d.metricId)?.unit})"
-            a[6]=d.dutRole;a[7]=d.dutValue?.toString().orEmpty();a[8]="Comparable REF Mean";a[9]=d.refValue?.toString().orEmpty()
+            a[6]=r?.deviceModel?.ifBlank{d.dutRole} ?: d.dutRole;a[7]=d.dutValue?.toString().orEmpty();a[8]="Comparable REF Mean";a[9]=d.refValue?.toString().orEmpty()
             a[12]=if(ExperienceMetrics.find(d.metricId)?.direction==ExperienceDirection.LOWER_IS_BETTER)"Lower Better" else "Higher Better"
             a[13]=d.finalVerdict.name;a[14]=d.bugId;a[15]="${d.reason}; Evidence: ${d.evidenceIds.joinToString(";")}; ${d.overrideReason}"
             a.toList()

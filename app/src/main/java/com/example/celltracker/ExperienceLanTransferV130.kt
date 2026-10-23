@@ -76,6 +76,7 @@ internal object ExperienceLanV130 {
         put("value",r.value);put("attempts",r.attempts);put("source",r.source)
         put("origin",r.dataOrigin);put("time",r.recordedAt);put("band",r.band)
         put("pci",r.pci);put("rsrp",r.rsrp);put("sinr",r.sinr)
+        put("deviceModel",r.deviceModel);put("deviceId",r.deviceId);put("runId",r.runId)
     }
     private fun reportIdFor(device:String,session:String,role:String,date:String,scenario:String,
                             operator:String,rat:String,rows:List<ExperienceObservation>,files:List<String>):String {
@@ -93,7 +94,8 @@ internal object ExperienceLanV130 {
         o.getString("id"),o.getString("session"),o.getString("date"),o.getString("scenario"),
         o.getString("operator"),o.getString("rat"),o.getString("role"),o.getString("metric"),
         o.getDouble("value"),o.getInt("attempts"),o.getString("source"),o.getString("origin"),
-        o.getLong("time"),o.optString("band"),o.optString("pci"),o.optString("rsrp"),o.optString("sinr")
+        o.getLong("time"),o.optString("band"),o.optString("pci"),o.optString("rsrp"),o.optString("sinr"),
+        o.optString("deviceModel"),o.optString("deviceId"),o.optString("runId")
     )
     private fun shortName(s:String)=s.substringAfterLast('/').replace(Regex("[^A-Za-z0-9._-]"),"_").take(60).ifBlank{"report.csv"}
     private fun rawFile(c:Context, source:String):File? {
@@ -213,7 +215,9 @@ internal object ExperienceLanV130 {
             val rows=originalRows.map{original->
                 val file=sourceMap[original.source]?.let{File(destination,id+"/"+it).absolutePath}
                 original.copy(id="LAN_${device}_${original.id}",dataOrigin="LAN_${original.dataOrigin}",
-                    source=file?:"LAN_AGENT:$device:${original.source.take(180)}")
+                    source=file?:"LAN_AGENT:$device:${original.source.take(180)}",
+                    deviceId=device,deviceModel=m.optString("model").ifBlank{original.deviceModel},
+                    runId=original.runId.ifBlank{original.source})
             }
             val finalDir=File(destination,id)
             if(finalDir.exists()) {

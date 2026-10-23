@@ -1622,7 +1622,7 @@ private fun ReportsHome(
             Text("Reports by Type", style = MaterialTheme.typography.titleLarge)
             Text("Choose a test type to view all saved test reports.", style = MaterialTheme.typography.bodySmall)
         }
-        item { ReportCategoryCard("Weak Coverage Route", basementReports.size) { category = "WEAK" } }
+        // Weak Coverage Route removed from Reports categories. Underlying tests and history are retained.
         item { ReportCategoryCard("Ping", state.pingHistory.size) { category = "PING" } }
         item { ReportCategoryCard("YouTube Video Loading", videoReports.size) { category = "YOUTUBE" } }
         item { ReportCategoryCard("WhatsApp Image Send", whatsappReports.size) { category = "WHATSAPP" } }

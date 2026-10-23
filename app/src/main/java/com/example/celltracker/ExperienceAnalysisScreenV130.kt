@@ -9,6 +9,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -22,6 +23,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
+import java.time.LocalDate
 import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -48,7 +50,18 @@ fun ExperienceAnalysisScreenV130(onBack:()->Unit) {
     var manualValue by remember { mutableStateOf("") }
     var manualAttempts by remember { mutableStateOf("20") }
     var lastExport by remember { mutableStateOf<android.net.Uri?>(null) }
-    val decisions=remember(rows,rules,session,overrides){ExperienceAnalyzer.compare(rows,rules,session,overrides)}
+    val today=remember { LocalDate.now().toString() }
+    var fromDate by remember { mutableStateOf(today) }
+    var toDate by remember { mutableStateOf(today) }
+    var selectedTestItems by remember { mutableStateOf(ExperienceTestCatalogV130.all.map{it.id}.toSet()) }
+    var chosenReports by remember { mutableStateOf<Set<String>>(emptySet()) }
+    // Null means the previous manually entered session workflow remains available.
+    // A non-null value freezes the user's explicit selected report IDs for analysis and export.
+    var analysisIds by remember { mutableStateOf<Set<String>?>(null) }
+    val effectiveRows=remember(rows,analysisIds,session) {
+        if(analysisIds==null) rows else rows.filter{it.id in analysisIds.orEmpty()}.map{it.copy(session=session)}
+    }
+    val decisions=remember(effectiveRows,rules,session,overrides){ExperienceAnalyzer.compare(effectiveRows,rules,session,overrides)}
     fun refresh(){rows=repo.rows();rules=repo.rules();overrides=repo.overrides()}
     fun runJob(block:()->String){
         if(busy)return
@@ -65,18 +78,83 @@ fun ExperienceAnalysisScreenV130(onBack:()->Unit) {
         TopAppBar(title={Text("Experience Analysis")},navigationIcon={TextButton(onClick=onBack){Text("Back")}})
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal=8.dp),horizontalArrangement=Arrangement.spacedBy(4.dp)) {
             listOf("Data","Wi-Fi","Rules","Compare","Reports").forEach{tab->
-                FilterChip(selected=page==tab,onClick={page=tab},label={Text(tab)})
+                FilterChip(selected=page==tab,onClick={page=tab},label={Text(tab)},
+                    colors=FilterChipDefaults.filterChipColors(
+                        selectedContainerColor=MaterialTheme.colorScheme.primary,
+                        selectedLabelColor=MaterialTheme.colorScheme.onPrimary,
+                        containerColor=MaterialTheme.colorScheme.surfaceVariant,
+                        labelColor=MaterialTheme.colorScheme.onSurfaceVariant),
+                    border=BorderStroke(1.dp,if(page==tab) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant))
             }
         }
         if(message.isNotBlank()) Text(message,modifier=Modifier.padding(horizontal=16.dp,vertical=6.dp),style=MaterialTheme.typography.bodySmall)
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal=16.dp,vertical=8.dp),
             verticalArrangement=Arrangement.spacedBy(12.dp)) {
             if(page=="Data") {
-                Text("1. Session / Matching Conditions",style=MaterialTheme.typography.titleMedium)
-                OutlinedTextField(session,{session=it},label={Text("Session ID (required for comparison)")},singleLine=true,modifier=Modifier.fillMaxWidth())
+                Text("1. Select reports for analysis",style=MaterialTheme.typography.titleMedium)
+                Text("Choose dates, multiple test items, then verify the device/model and individual test runs. The selected reports—not matching task names—determine comparison and exports.",style=MaterialTheme.typography.bodySmall)
+                val dates=remember(rows,today) {
+                    ((0..30).map{LocalDate.now().minusDays(it.toLong()).toString()} +
+                        rows.map{it.date}.filter{runCatching{LocalDate.parse(it)}.isSuccess})
+                        .distinct().sorted()
+                }
+                Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                    Box(Modifier.weight(1f)){ExperienceChoice("From",fromDate,dates){fromDate=it;date=it;chosenReports=emptySet();analysisIds=null}}
+                    Box(Modifier.weight(1f)){ExperienceChoice("To",toDate,dates){toDate=it;date=it;chosenReports=emptySet();analysisIds=null}}
+                }
+                Text("Test items · multi-select",fontWeight=FontWeight.SemiBold)
+                Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick={selectedTestItems=ExperienceTestCatalogV130.all.map{it.id}.toSet();analysisIds=null}) { Text("Select All") }
+                    OutlinedButton(onClick={selectedTestItems=emptySet();chosenReports=emptySet();analysisIds=null}) { Text("Clear") }
+                }
+                ExperienceTestCatalogV130.all.forEach { item ->
+                    Row(Modifier.fillMaxWidth().clickable {
+                        selectedTestItems=if(item.id in selectedTestItems)selectedTestItems-item.id else selectedTestItems+item.id
+                        chosenReports=emptySet();analysisIds=null
+                    }.padding(vertical=2.dp),verticalAlignment=Alignment.CenterVertically) {
+                        Checkbox(checked=item.id in selectedTestItems,onCheckedChange={ checked ->
+                            selectedTestItems=if(checked)selectedTestItems+item.id else selectedTestItems-item.id
+                            chosenReports=emptySet();analysisIds=null
+                        })
+                        Text(item.label,style=MaterialTheme.typography.bodyMedium)
+                    }
+                }
+                val candidateRows=remember(rows,fromDate,toDate,selectedTestItems) {
+                    ExperienceReportSelectionV130.candidates(rows,fromDate,toDate,selectedTestItems)
+                }
+                val groups=remember(candidateRows) { ExperienceReportSelectionV130.groupRuns(candidateRows) }
+                Text("Matched test runs (${groups.size}) · confirm model and role",fontWeight=FontWeight.SemiBold)
+                if (fromDate>toDate) Text("Start date must be on/before end date.",color=MaterialTheme.colorScheme.error)
+                else if(groups.isEmpty()) Text("No reports match the selected date and test items. Load local data or collect Wi-Fi reports first.",style=MaterialTheme.typography.bodySmall)
+                groups.forEach { g ->
+                    Row(Modifier.fillMaxWidth().clickable {
+                        chosenReports=if(g.key in chosenReports)chosenReports-g.key else chosenReports+g.key
+                        analysisIds=null
+                    }.padding(vertical=4.dp),verticalAlignment=Alignment.CenterVertically) {
+                        Checkbox(checked=g.key in chosenReports,onCheckedChange={ checked ->
+                            chosenReports=if(checked)chosenReports+g.key else chosenReports-g.key
+                            analysisIds=null
+                        })
+                        Column(Modifier.weight(1f)) {
+                            Text("${g.role} · ${g.model.ifBlank { "Model unknown" }} · ${g.date}",fontWeight=FontWeight.Medium)
+                            Text("${g.testItems.joinToString()} · ${g.timeLabel} · ${g.source.takeLast(46)}",style=MaterialTheme.typography.bodySmall)
+                            Text("ID ${g.deviceId.ifBlank { "unknown" }.take(14)} · ${g.originSession}",style=MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+                val chosen=groups.filter{it.key in chosenReports}.flatMap{it.rows}
+                val conflict=ExperienceReportSelectionV130.conflict(chosen)
+                if(chosen.isNotEmpty() && conflict!=null) Text(conflict,color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)
+                Button(enabled=!busy&&chosen.isNotEmpty()&&conflict==null&&session.isNotBlank(),onClick={
+                    analysisIds=chosen.map{it.id}.toSet()
+                    date=chosen.first().date
+                    message="Selected ${groups.count{it.key in chosenReports}} test runs / ${chosen.size} measurements for Compare and Reports. Review before export."
+                }){Text("Apply Selected Reports")}
+                if(analysisIds!=null) Text("Active selection: ${effectiveRows.count{it.session==session}} readings · available in Compare / Reports",color=MaterialTheme.colorScheme.primary,style=MaterialTheme.typography.bodySmall)
+                OutlinedTextField(session,{session=it},label={Text("Analysis / output Session ID")},singleLine=true,modifier=Modifier.fillMaxWidth())
                 val existingSessions=rows.map{it.session}.distinct().filter{it.isNotBlank()}
                 if(existingSessions.isNotEmpty()) ExperienceChoice("Saved session",session,existingSessions){chosen->
-                    session=chosen
+                    session=chosen;analysisIds=null;chosenReports=emptySet()
                     rows.firstOrNull{it.session==chosen}?.let{r->date=r.date;scenario=r.scenario;operator=r.operator;rat=r.rat}
                 }
                 OutlinedTextField(date,{date=it},label={Text("Test date: YYYY-MM-DD")},singleLine=true,modifier=Modifier.fillMaxWidth())
@@ -89,7 +167,15 @@ fun ExperienceAnalysisScreenV130(onBack:()->Unit) {
                 Card { Column(Modifier.padding(14.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
                     Text("Import existing measurements",fontWeight=FontWeight.SemiBold)
                     Text("Reads this device's Ping, TikTok, YouTube, WhatsApp Image and Call reports, with source paths retained. Confirm role and RAT first.",style=MaterialTheme.typography.bodySmall)
-                    Button(onClick={runJob{val count=repo.scanLocal(session,date,scenario,operator,rat,role);"Added $count local readings; existing IDs de-duplicated"}},enabled=!busy&&session.isNotBlank()) { Text("Load My Local Reports") }
+                    Button(onClick={runJob{
+                        val first=LocalDate.parse(fromDate);val last=LocalDate.parse(toDate)
+                        val days=java.time.temporal.ChronoUnit.DAYS.between(first,last)
+                        require(days in 0..14) { "For local scanning, select a period of up to 15 days" }
+                        val count=(0L..days).sumOf { offset ->
+                            repo.scanLocal(session,first.plusDays(offset).toString(),scenario,operator,rat,role)
+                        }
+                        "Added $count local readings; original report IDs de-duplicated"
+                    }},enabled=!busy&&session.isNotBlank()&&fromDate<=toDate) { Text("Load Local Reports for Selected Dates") }
                     OutlinedButton(onClick={importer.launch(arrayOf("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","text/*","application/octet-stream"))},enabled=!busy&&session.isNotBlank()) { Text("Import Test Results Excel / CSV") }
                     Text("Excel input: Communication Experience Test Cases and Results V1.0 → Test Results. The Role column must identify DUT1, DUT2, REF1 or REF2; ambiguous DUT/REF rows are skipped.",style=MaterialTheme.typography.bodySmall)
                 } }
@@ -104,8 +190,8 @@ fun ExperienceAnalysisScreenV130(onBack:()->Unit) {
                         runJob{repo.addManual(session,date,scenario,operator,rat,role,manualMetric,manualValue.toDouble(),manualAttempts.toInt());"Manual measurement saved with MANUAL provenance"}
                     }) { Text("Save Manual Result") }
                 } }
-                Text("Current session readings (${rows.count{it.session==session}})",style=MaterialTheme.typography.titleMedium)
-                rows.filter{it.session==session}.takeLast(50).forEach{r->
+                Text("Current session readings (${effectiveRows.count{it.session==session}})",style=MaterialTheme.typography.titleMedium)
+                effectiveRows.filter{it.session==session}.takeLast(50).forEach{r->
                     Card { Row(Modifier.fillMaxWidth().padding(12.dp),verticalAlignment=Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)){
                             Text("${r.role} · ${ExperienceMetrics.find(r.metricId)?.label ?: r.metricId} · ${"%.2f".format(Locale.US,r.value)}",style=MaterialTheme.typography.bodyMedium)
@@ -186,25 +272,25 @@ fun ExperienceAnalysisScreenV130(onBack:()->Unit) {
                     OutlinedTextField(content,{content=it;repo.saveNote(id,it)},label={Text(label)},modifier=Modifier.fillMaxWidth(),minLines=2,maxLines=5)
                 }
                 Button(onClick={runJob{
-                    val full=ExperienceReportExportV130.exportResults(context,session,rows,decisions,rules,date,repo.ruleVersion())
-                    val sessionRows=rows.count{it.session==session};val comparisons=decisions.count{it.dutValue!=null||it.refValue!=null}
+                    val full=ExperienceReportExportV130.exportResults(context,session,effectiveRows,decisions,rules,date,repo.ruleVersion())
+                    val sessionRows=effectiveRows.count{it.session==session};val comparisons=decisions.count{it.dutValue!=null||it.refValue!=null}
                     if(sessionRows<=100 && comparisons<=100) {
-                        val template=ExperienceOriginalTemplateV130.export(context,session,rows,decisions,date)
+                        val template=ExperienceOriginalTemplateV130.export(context,session,effectiveRows,decisions,date)
                         lastExport=template
                         "Exported template workbook + 9-sheet analysis workbook to Downloads / CellTracker / $date / Analysis"
                     } else {lastExport=full;"Exported complete 9-sheet analysis workbook. Original template capped at 100 rows; no entries dropped."}
-                }},enabled=!busy&&rows.any{it.session==session}){Text("Export Test Result Excel")}
+                }},enabled=!busy&&effectiveRows.any{it.session==session}){Text("Export Test Result Excel")}
                 Button(onClick={runJob{
                     val notes=listOf("summary","actions","group","author","reviewer","city","owner").associateWith{repo.note(it)}
-                    ExperienceReportExportV130.exportDaily(context,session,date,rows,decisions,notes,repo.ruleVersion())
+                    ExperienceReportExportV130.exportDaily(context,session,date,effectiveRows,decisions,notes,repo.ruleVersion())
                     val uri=ExperienceDailyDocxV130.export(context,session,date,rows,decisions,notes,repo.ruleVersion())
                     lastExport=uri;"Generated daily Word DOCX (from original template) + HTML preview"
-                }},enabled=!busy&&rows.any{it.session==session}){Text("Generate Daily Report")}
+                }},enabled=!busy&&effectiveRows.any{it.session==session}){Text("Generate Daily Report")}
                 Button(onClick={runJob{
                     val notes=listOf("weekly_findings","weekly_risks","weekly_knowledge","weekly_plan").associateWith{repo.note(it)}
-                    val uri=ExperienceReportExportV130.exportWeekly(context,date,rows,rules,notes,repo.ruleVersion())
+                    val uri=ExperienceReportExportV130.exportWeekly(context,date,effectiveRows,rules,notes,repo.ruleVersion())
                     lastExport=uri;"Weekly HTML exported for the 7 days ending $date"
-                }},enabled=!busy&&rows.isNotEmpty()){Text("Generate Weekly Report")}
+                }},enabled=!busy&&effectiveRows.isNotEmpty()){Text("Generate Weekly Report")}
                 if(lastExport!=null)OutlinedButton(onClick={
                     val uri=lastExport?:return@OutlinedButton
                     val intent=Intent(Intent.ACTION_SEND).apply{type="*/*";putExtra(Intent.EXTRA_STREAM,uri);addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)}

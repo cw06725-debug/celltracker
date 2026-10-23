@@ -62,8 +62,8 @@ object ExperienceDailyDocxV130 {
         fillTable(doc,1,listOf(
             listOf("Date / Time Window",date),listOf("Test Scenario / Site",scenario),
             listOf("Operator / SIM Setup",op),listOf("Planned / Actual RAT",current.map{it.rat}.distinct().joinToString(", ")),
-            listOf("DUT 1 / DUT 2",current.filter{it.role.startsWith("DUT")}.map{it.role}.distinct().joinToString(", ")),
-            listOf("REF 1 / REF 2",current.filter{it.role.startsWith("REF")}.map{it.role}.distinct().joinToString(", ")),
+            listOf("DUT 1 / DUT 2",current.filter{it.role.startsWith("DUT")}.map{"${it.role}: ${it.deviceModel.ifBlank { "Unknown model" }}"}.distinct().joinToString(", ")),
+            listOf("REF 1 / REF 2",current.filter{it.role.startsWith("REF")}.map{"${it.role}: ${it.deviceModel.ifBlank { "Unknown model" }}"}.distinct().joinToString(", ")),
             listOf("Apps / Tool versions","CellTracker 1.3.0; original report source linked"),
             listOf("Session / Report ID","$session · $version")))
         fun value(m:String,role:String):String=current.filter{it.metricId==m&&it.role==role}.maxByOrNull{it.recordedAt}?.value?.let{"%.3f".format(Locale.US,it)}?:"N/A"

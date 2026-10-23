@@ -44,7 +44,7 @@ object ExperienceReportExportV130 {
         rows.forEach{r->val m=ExperienceMetrics.find(r.metricId)?:return@forEach
             val d=decisions.firstOrNull{it.metricId==r.metricId && it.dutRole==r.role}
             val status=if(r.role.startsWith("DUT"))d?.finalVerdict?.name.orEmpty() else "REFERENCE"
-            testResults+=listOf(r.date,r.scenario,"",r.operator,r.rat,caseIds[r.metricId].orEmpty(),r.role,r.role,
+            testResults+=listOf(r.date,r.scenario,"",r.operator,r.rat,caseIds[r.metricId].orEmpty(),r.deviceModel.ifBlank{r.role},r.role,
                 if(r.dataOrigin=="AUTO_LOCAL")SimpleDateFormat("yyyy-MM-dd HH:mm:ss",Locale.US).format(Date(r.recordedAt)) else "","",r.attempts.toString(),"","",
                 if(m.unit=="ms")fmt(r.value) else "",if(m.unit=="s")fmt(r.value) else "","",r.rsrp,
                 if(r.metricId=="TIKTOK_STALLS")fmt(r.value) else "",if(r.metricId=="TIKTOK_STALL_SEC")fmt(r.value) else "",
@@ -58,7 +58,7 @@ object ExperienceReportExportV130 {
             val diff=if(d.dutValue!=null&&refMean!=null)d.dutValue-refMean else null
             val pct=if(diff!=null&&refMean!=null&&kotlin.math.abs(refMean)>0.0000001)diff/kotlin.math.abs(refMean)*100 else null
             compare+=listOf(src?.date.orEmpty(),src?.scenario.orEmpty(),src?.operator.orEmpty(),src?.rat.orEmpty(),caseIds[m.id].orEmpty(),"${m.label} (${m.unit})",
-                d.dutRole,fmt(d.dutValue),"Comparable REF mean",fmt(refMean),fmt(diff),fmt(pct),m.direction.name,
+                src?.deviceModel?.ifBlank { d.dutRole }.orEmpty(),fmt(d.dutValue),"Comparable REF mean",fmt(refMean),fmt(diff),fmt(pct),m.direction.name,
                 d.finalVerdict.name,d.bugId,"${d.reason}; rule=$ruleVersion; evidence=${d.evidenceIds.joinToString(";")}; override=${d.overrideReason}")
         }
         val summary=mutableListOf(listOf("Communication Experience Test Result"),listOf("Session ID",session),listOf("Date",date),
@@ -76,8 +76,8 @@ object ExperienceReportExportV130 {
         decisions.filter{it.automated==ExperienceVerdict.FAIL||it.automated==ExperienceVerdict.OBSERVE}.forEach{d->abnormal+=listOf(metric(d.metricId),d.dutRole,d.automated.name,d.finalVerdict.name,fmt(d.difference),d.ruleSnapshot?.toString().orEmpty(),d.evidenceIds.joinToString(";"),d.reason)}
         val issues=mutableListOf(listOf("Metric","DUT","AUTO","FINAL","Override Reason","Bug ID","Follow-up"))
         decisions.filter{it.finalVerdict==ExperienceVerdict.FAIL||it.finalVerdict==ExperienceVerdict.OBSERVE}.forEach{d->issues+=listOf(metric(d.metricId),d.dutRole,d.automated.name,d.finalVerdict.name,d.overrideReason,d.bugId,"Review actual network traces and submit/track Bug where evidence supports disadvantage")}
-        val source=mutableListOf(listOf("Report ID","Session","Role","Metric","Original Source","Origin","Timestamp","Attempts"))
-        rows.forEach{r->source+=listOf(r.id,r.session,r.role,r.metricId,r.source,r.dataOrigin,r.recordedAt.toString(),r.attempts.toString())}
+        val source=mutableListOf(listOf("Report ID","Session","Role","Device Model","Device ID","Test Run ID","Metric","Original Source","Origin","Timestamp","Attempts"))
+        rows.forEach{r->source+=listOf(r.id,r.session,r.role,r.deviceModel,r.deviceId,r.runId,r.metricId,r.source,r.dataOrigin,r.recordedAt.toString(),r.attempts.toString())}
         val rulesSheet=mutableListOf(listOf("Rule Version",ruleVersion),listOf("Metric","Active","Delta Unit","Observe At","Fail At","Min Attempts"))
         rules.forEach{r->rulesSheet+=listOf(metric(r.metricId),r.enabled.toString(),ExperienceMetrics.find(r.metricId)?.deltaUnit?.name.orEmpty(),fmt(r.observeAt),fmt(r.failAt),r.minAttempts.toString())}
         val sheets=listOf("Summary" to summary,"Test Results" to testResults,"DUT vs REF" to compare,"Test Details" to details,
@@ -97,8 +97,8 @@ object ExperienceReportExportV130 {
         val sc=filtered.map{it.scenario}.distinct().joinToString(", ")
         val overview=listOf(listOf("Date / Time Window",date),listOf("Test Scenario / Site",sc),listOf("Operator / SIM Setup",op),
             listOf("Planned / Actual RAT",filtered.map{it.rat}.distinct().joinToString(", ")),
-            listOf("DUT 1 / DUT 2",filtered.filter{it.role.startsWith("DUT")}.map{it.role}.distinct().joinToString(", ")),
-            listOf("REF 1 / REF 2",filtered.filter{it.role.startsWith("REF")}.map{it.role}.distinct().joinToString(", ")),
+            listOf("DUT 1 / DUT 2",filtered.filter{it.role.startsWith("DUT")}.map{"${it.role}: ${it.deviceModel.ifBlank { "Unknown model" }}"}.distinct().joinToString(", ")),
+            listOf("REF 1 / REF 2",filtered.filter{it.role.startsWith("REF")}.map{"${it.role}: ${it.deviceModel.ifBlank { "Unknown model" }}"}.distinct().joinToString(", ")),
             listOf("Session / Report ID",session),listOf("Evaluation Rule",ruleVersion))
         val metrics=visible.map{d->listOf(metric(d.metricId),d.dutRole,fmt(d.dutValue),fmt(d.refValue),d.finalVerdict.name,htmlSafeText(d.reason))}
         val findings=visible.filter{it.finalVerdict!=ExperienceVerdict.PASS}.map{d->listOf(d.finalVerdict.name,metric(d.metricId)+" – "+d.dutRole,

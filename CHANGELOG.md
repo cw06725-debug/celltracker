@@ -1,3 +1,13 @@
+## v1.3.0 Preview 4 — Compilation / Matching UI (versionCode 255)
+- Fixed unresolved `horizontalScroll` import blocking `:app:compileDebugKotlin` in Preview 3.
+- Removed Reports `Weak Coverage Route` category card without removing weak-coverage tests/history.
+- Made Experience Analysis top selected tabs solid blue with white text.
+- Added date-range report discovery, multi-select test items, explicit per-device/run matching and scoped Compare/Reports exports.
+- Preserved actual device model and ID across local extraction, Excel import, LAN transfers and Raw Data Index.
+- Prevented silent duplicate-round and device-identity mergers during selected daily analysis.
+- Existing Bluetooth call test and LAN data transfer stay intact. Rules unchanged pending next review.
+- Android Gradle APK build and four-device UI tests not performed in the current environment.
+
 # CellTracker v1.3.0 Preview 3 — Wi-Fi post-test reporting (versionCode 254)
 
 - New Reports → Experience Analysis → Wi-Fi page. Four devices test **independently**. After testing, Controller collects from three Agents using the same trusted Wi-Fi LAN/hotspot; no multi-device connection is required during the actual business tests.
