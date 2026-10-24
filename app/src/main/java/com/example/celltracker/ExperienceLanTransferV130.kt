@@ -308,12 +308,12 @@ internal class ExperienceLanShareV130(private val context:Context) {
     @Volatile private var servingAddress=""
     val addressText get()=servingAddress.ifBlank{"No private Wi-Fi address detected"}
     val isSynced get()=bundle?.id?.let{context.getSharedPreferences("experience_lan_v130",0).getBoolean("synced_$it",false)}?:false
-    fun start(session:String,date:String,scenario:String,operator:String,rat:String,role:String):ExperienceLanV130.Bundle {
+    fun start(session:String,date:String,scenario:String,operator:String,rat:String,role:String, preferP2p:Boolean=false):ExperienceLanV130.Bundle {
         stop()
         val prepared=ExperienceLanV130.prepare(context,session,date,scenario,operator,rat,role)
         try {
-            val ip=ExperienceLanV130.localAddresses().firstOrNull()
-                ?:error("No usable Wi-Fi/hotspot address. Connect to local Wi-Fi after testing.")
+            val ip=(if(preferP2p)ExperienceLanV130.p2pAddresses() else ExperienceLanV130.localAddresses()).firstOrNull()
+                ?:error(if(preferP2p)"No active Wi-Fi Direct IPv4 interface; wait for connection or reconnect" else "No usable Wi-Fi/hotspot address. Connect to local Wi-Fi after testing.")
             val listener=ServerSocket(ExperienceLanV130.PORT,8,java.net.InetAddress.getByName(ip))
             servingAddress=ip
             bundle=prepared;failed=0;code=ExperienceLanV130.randomCode();socket=listener

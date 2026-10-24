@@ -1,3 +1,21 @@
+## v1.3.0 Preview 7 — Wi-Fi Direct 1+3 reliability fix (versionCode 258)
+
+- Repaired Controller registration TCP bind: derive the local P2P IPv4 from the actual interface, never rely on the possibly anonymized GO's `WifiP2pInfo.groupOwnerAddress`.
+- Separate P2P member count, application-level Agent registration, and report-ready status. Register Agent presence even if no matching local report exists; block report collection until the report share is actually available.
+- Agent registration sockets and Agent HTTP report-sharing listeners now bind specifically to P2P IPv4; retain manual LAN IP/code fallback unchanged.
+- Improved re-scan/rejoin lifecycle: stop discovery before connect, clear stale DNS-SD requests, guard duplicate pending connect, remove P2P group on both Agent and Controller disconnect, await group release before recreating Controller group, ignore callbacks from old generations, and handle loss of the Android P2P channel.
+- Preserve three independent Agent identities by Device ID, display each role/model/IP/readiness, guard against two different devices claiming the same role, and allow explicitly forgetting a stale Agent registration without disconnecting the other clients.
+- Correctly surface missing local reports as a separate readiness issue rather than claiming Wi-Fi connection failure.
+- No changes to Bluetooth Call Setup, Shizuku/Local ADB, the four independent cellular field tests, Rules, or analysis/export templates.
+- Simulation with 1 Group Owner + 3 Agents passed, plus Kotlin P2P module stub type check and modified-file syntax parse. **Actual Android Gradle compilation and real 4-device validation are still required.** Do not claim that vendor Wi-Fi Direct hardware necessarily supports three simultaneous clients.
+
+## v1.3.0 Preview 6 — Optional Shizuku Diagnostics (versionCode 257)
+
+- Integrated official Shizuku API/provider 13.1.5, one-time app authorization UI and service-UID/status display in Device Logs, with an allowlisted Shizuku UserService for `getprop persist.log.tag`, `setprop persist.log.tag` and read-only `/data/debuglogger/` accessibility probing.
+- Log D Check / Enable / Restore prefer an authorized Shizuku service and otherwise preserve the existing local ADB path; explicit Local ADB selection remains possible. Persistent baseline and getprop readback verification are preserved.
+- No privileged arbitrary-shell input is forwarded to Shizuku; existing Local ADB log export remains intact. Shizuku-based large file export is not claimed implemented.
+- No changes to Bluetooth Call Setup, Wi-Fi Direct, Experience Analysis or tests. Full Gradle Android build and device tests are pending.
+
 ## v1.3.0 Preview 5 — Post-Test Wi-Fi Direct Discovery (versionCode 256)
 
 - Added a **post-test Controller/Agent Wi-Fi Direct** flow. Controller creates an application-advertised local Wi-Fi Direct group; Agents discover only the CellTracker DNS-SD service and tap Connect, without typing an IPv4 address or pairing token.

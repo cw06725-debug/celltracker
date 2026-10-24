@@ -5659,6 +5659,8 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val adb by AdbToolStore.state.collectAsStateWithLifecycle()
+    val shizuku by ShizukuLogDBridge.state.collectAsStateWithLifecycle()
+    var useLocalAdbForLogD by rememberSaveable { mutableStateOf(false) }
     var dutPath by rememberSaveable { mutableStateOf("/data/debuglogger") }
     var dutLogName by rememberSaveable { mutableStateOf("") }
     var mftTaskName by rememberSaveable { mutableStateOf("") }
@@ -5709,6 +5711,7 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
         }
     }
     LaunchedEffect(Unit) {
+        ShizukuLogDBridge.initialize()
         CellTrackerAdbEngine.startDiscovery(context)
         val prefs = context.getSharedPreferences("celltracker_logd", Context.MODE_PRIVATE)
         if (prefs.getBoolean("has_previous", false)) {
@@ -5734,6 +5737,38 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
                             .onFailure { Toast.makeText(context, "Share failed: ${it.message}", Toast.LENGTH_LONG).show() }
                     }, modifier = Modifier.fillMaxWidth()) { Text("SHARE IMPORTED LOGS") }
                 }
+            }
+            GlassSection("Shizuku · Optional privileged access") {
+                Text("Use the official Shizuku app (ADB-started or rooted) as an alternative to pairing CellTracker's own Wireless ADB. On unrooted phones, Shizuku usually needs starting again after a reboot.",
+                    style = MaterialTheme.typography.bodySmall)
+                Field("Service", shizuku.status)
+                Field("Permission", if (shizuku.authorized) "Authorized" else "Not authorized")
+                if (shizuku.uid != null) Field("Identity", "UID ${shizuku.uid} · ${shizuku.detail}")
+                else if (shizuku.detail.isNotBlank()) Text(shizuku.detail, style = MaterialTheme.typography.bodySmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { ShizukuLogDBridge.refresh() }, modifier = Modifier.weight(1f)) {
+                        Text("CHECK STATUS", maxLines = 1, style = MaterialTheme.typography.labelSmall)
+                    }
+                    Button(enabled = !shizuku.authorized && !busy, onClick = {
+                        val result = ShizukuLogDBridge.requestAuthorization()
+                        result.onFailure { Toast.makeText(context, it.message ?: "Shizuku unavailable", Toast.LENGTH_LONG).show() }
+                    }, modifier = Modifier.weight(1f)) { Text("AUTHORIZE", maxLines = 1, style = MaterialTheme.typography.labelSmall) }
+                }
+                OutlinedButton(onClick = {
+                    val launch = context.packageManager.getLaunchIntentForPackage("moe.shizuku.privileged.api")
+                    if (launch != null) context.startActivity(launch)
+                    else Toast.makeText(context, "Install and start Shizuku from shizuku.rikka.app", Toast.LENGTH_LONG).show()
+                }, modifier = Modifier.fillMaxWidth()) { Text("OPEN SHIZUKU") }
+                OutlinedButton(enabled = !busy && shizuku.authorized, onClick = {
+                    scope.launch {
+                        busy = true
+                        try { ShizukuLogDBridge.probeLogFolder(context) }
+                        finally { busy = false }
+                    }
+                }, modifier = Modifier.fillMaxWidth()) { Text("CHECK /data/debuglogger/ ACCESS", maxLines = 1, style = MaterialTheme.typography.labelSmall) }
+                Text("Directory: ${shizuku.logDirectoryProbe}", style = MaterialTheme.typography.bodySmall)
+                Text("Access check is diagnostic only. Full original-log ZIP export still uses the existing Local ADB route. Shizuku does not grant root automatically.",
+                    style = MaterialTheme.typography.bodySmall)
             }
             GlassSection("1 · Local ADB / DUT") {
                 Text("Open Wireless debugging and choose Pair device with pairing code. CellTracker detects the temporary pairing service. Keep the system pairing dialog open, pull down notifications, expand CellTracker, and enter the 6-digit code there.",style=MaterialTheme.typography.bodySmall)
@@ -5814,23 +5849,43 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
                 }
             }
             GlassSection("Log D · Android logcat") {
-                Text("Uses persist.log.tag. Requires a connected, authorized local ADB shell. This is NOT the Qualcomm/MTK modem-log switch.",
+                Text("Uses persist.log.tag. Prefers authorized Shizuku, otherwise connected Local ADB. This does NOT start Qualcomm/MTK modem capture.",
                     style = MaterialTheme.typography.bodySmall)
+                Field("Selected access", if (!useLocalAdbForLogD && shizuku.authorized) "Shizuku" else "Local ADB")
+                Field("Last used", adb.logDAccessSource)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = useLocalAdbForLogD, onCheckedChange = { useLocalAdbForLogD = it })
+                    Text("Use Local ADB instead")
+                }
+                val logDReady = (!useLocalAdbForLogD && shizuku.authorized) || adb.localStatus == "Connected"
                 Field("Current value", adb.logDStatus)
                 if (adb.logDPrevious != null) Field("Saved previous value", adb.logDPrevious!!.ifEmpty { "(unset)" })
                 if (adb.logDLastResult.isNotBlank()) Text(adb.logDLastResult, style = MaterialTheme.typography.bodySmall)
-                OutlinedButton(enabled = !busy && adb.localStatus == "Connected", onClick = {
-                    scope.launch { busy = true; CellTrackerAdbEngine.readLogD(context); busy = false }
+                OutlinedButton(enabled = !busy && logDReady, onClick = {
+                    scope.launch {
+                        busy = true
+                        try { CellTrackerAdbEngine.readLogD(context, !useLocalAdbForLogD) }
+                        finally { busy = false }
+                    }
                 }, modifier = Modifier.fillMaxWidth()) { Text("CHECK LOG D (getprop)") }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(enabled = !busy && adb.localStatus == "Connected", onClick = {
-                        scope.launch { busy = true; CellTrackerAdbEngine.enableLogD(context); busy = false }
+                    Button(enabled = !busy && logDReady, onClick = {
+                        scope.launch {
+                            busy = true
+                            try { CellTrackerAdbEngine.enableLogD(context, !useLocalAdbForLogD) }
+                            finally { busy = false }
+                        }
                     }, modifier = Modifier.weight(1f)) { Text("ENABLE D") }
-                    OutlinedButton(enabled = !busy && adb.localStatus == "Connected" && adb.logDPrevious != null,
-                        onClick = { scope.launch { busy = true; CellTrackerAdbEngine.restoreLogD(context); busy = false } },
-                        modifier = Modifier.weight(1f)) { Text("RESTORE") }
+                    OutlinedButton(enabled = !busy && logDReady && adb.logDPrevious != null,
+                        onClick = {
+                            scope.launch {
+                                busy = true
+                                try { CellTrackerAdbEngine.restoreLogD(context, !useLocalAdbForLogD) }
+                                finally { busy = false }
+                            }
+                        }, modifier = Modifier.weight(1f)) { Text("RESTORE") }
                 }
-                Text("This persistent property can survive reboot. The previous value is saved privately until a verified restore. Opening the vendor Logger and starting modem capture are separate manual steps.",
+                Text("This persistent property may survive reboot. Previous value is stored until verified restoration. Open the vendor Logger separately to record modem logs.",
                     style = MaterialTheme.typography.bodySmall)
             }
             GlassSection(

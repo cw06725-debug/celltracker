@@ -175,38 +175,46 @@ private fun ExperienceP2pPanelV130(
     var pending by remember { mutableStateOf("") }
     var autoShareAttempted by remember { mutableStateOf("") }
     // Refresh only this small status panel while it is visible; no global AppState polling.
-    LaunchedEffect(p2p) { while(true){ delay(2500); tick++ } }
+    LaunchedEffect(p2p) { while(true){ delay(2500); p2p.refreshStatus(); tick++ } }
     val observed=tick
     // The user's tap on Connect is the explicit post-test action. Prepare and announce
     // automatically on connection; no second mandatory Agent button.
-    val connectionFingerprint=if(mode=="Agent" && p2p.connected && !p2p.isOwner)
+    val connectionFingerprint=if(mode=="Agent" && p2p.connected && !p2p.isOwner && p2p.groupOwnerIp.isNotBlank())
         "${p2p.groupOwnerIp}|$session|$date|$role" else ""
     LaunchedEffect(connectionFingerprint) {
-        if(connectionFingerprint.isNotBlank() && connectionFingerprint!=autoShareAttempted && !busy){
+        if(connectionFingerprint.isBlank()){
+            autoShareAttempted=""
+        } else if(connectionFingerprint!=autoShareAttempted && !busy){
             autoShareAttempted=connectionFingerprint
             onJob {
-                // A few devices report P2P CONNECTED before their interface obtains IPv4.
-                repeat(6) { attempt ->
-                    if(ExperienceLanV130.p2pAddresses().isEmpty() && attempt<5)Thread.sleep(700)
+                // Joining the group and report readiness are separate states.
+                // Register presence FIRST, even if this device has no local reports yet.
+                repeat(8) { attempt ->
+                    if(ExperienceLanV130.p2pAddresses().isEmpty() && attempt<7)Thread.sleep(500)
                 }
-                require(ExperienceLanV130.p2pAddresses().isNotEmpty()) {
-                    "Wi-Fi Direct IPv4 address is not ready. Reconnect and retry."
-                }
-                val b=server.start(session,date,scenario,operator,rat,role)
-                val announced=runCatching{
-                    var response=""
-                    repeat(4){retry->
-                        if(response.isEmpty()){
-                            response=runCatching{p2p.announce(role,session,server.accessCode)}.getOrElse{
-                                if(retry<3)Thread.sleep(800)
-                                else throw it
-                                ""
-                            }
+                val presence=runCatching {
+                    var answer=""
+                    repeat(5){tryNumber->
+                        if(answer.isEmpty())answer=runCatching{p2p.announcePresence(role,session)}.getOrElse{
+                            if(tryNumber<4)Thread.sleep(900) else throw it
+                            ""
                         }
                     }
-                    response
-                }.getOrElse{throw IllegalStateException("Share ready, Controller registration failed: ${it.message}")}
-                "Automatically shared ${b.rowCount} measurements / ${b.files} original files. $announced"
+                    answer
+                }.getOrElse { throw IllegalStateException("P2P connected, but Controller registration failed: ${it.message}") }
+                val b=runCatching{server.start(session,date,scenario,operator,rat,role,preferP2p=true)}
+                    .getOrElse{return@onJob "$presence Report not available: ${it.message}. Select the correct date/role, then Retry Report Sharing."}
+                val announced=runCatching {
+                    var answer=""
+                    repeat(5){tryNumber->
+                        if(answer.isEmpty())answer=runCatching{p2p.announce(role,session,server.accessCode)}.getOrElse{
+                            if(tryNumber<4)Thread.sleep(900) else throw it
+                            ""
+                        }
+                    }
+                    answer
+                }.getOrElse{throw IllegalStateException("Report prepared, but Controller update failed: ${it.message}")}
+                "Shared ${b.rowCount} measurements / ${b.files} original files. $announced"
             }
         }
     }
@@ -251,16 +259,22 @@ private fun ExperienceP2pPanelV130(
                 }
                 OutlinedButton(enabled=p2p.running,onClick={p2p.stop();tick++}){Text("Stop")}
             }
-            Text("Registered Agents (${p2p.agents().size})",fontWeight=FontWeight.Medium)
+            Text("P2P group members: ${p2p.groupClientCount} · Registered Agents: ${p2p.agents().size}",fontWeight=FontWeight.Medium)
+            Text(if(p2p.coordinatorReady) "Registration server: Ready" else "Registration server: Waiting for P2P interface",style=MaterialTheme.typography.bodySmall)
             p2p.agents().forEach{agent->
                 HorizontalDivider()
                 Text("${agent.role} · ${agent.name.ifBlank{"Unknown model"}}",fontWeight=FontWeight.Medium)
-                Text("Device ${agent.deviceId.take(12)} · ${agent.ip}",style=MaterialTheme.typography.bodySmall)
-                OutlinedButton(enabled=!busy&&agent.role!=role&&agent.session==session,onClick={
-                    onJob{ExperienceLanV130.fetch(context,repository,agent.ip,agent.key,session,agent.role)}
-                }){Text("Collect ${agent.role}")}
+                Text("Device ${agent.deviceId.take(12)} · ${agent.ip} · ${if(agent.reportReady)"Report ready" else "Connected, no report yet"}",style=MaterialTheme.typography.bodySmall)
+                Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(enabled=!busy&&agent.reportReady&&agent.role!=role&&agent.session==session,onClick={
+                        onJob{ExperienceLanV130.fetch(context,repository,agent.ip,agent.key,session,agent.role)}
+                    }){Text("Collect ${agent.role}")}
+                    TextButton(enabled=!busy,onClick={
+                        p2p.forgetAgent(agent.deviceId);tick++
+                    }){Text("Forget")}
+                }
             }
-            val agents=p2p.agents().filter{it.role!=role && it.session==session}
+            val agents=p2p.agents().filter{it.reportReady && it.role!=role && it.session==session}
             Button(enabled=!busy&&agents.isNotEmpty()&&agents.map{it.role}.distinct().size==agents.size,onClick={
                 onJob {
                     val local=runCatching{repository.scanLocal(session,date,scenario,operator,rat,role)}
@@ -272,7 +286,7 @@ private fun ExperienceP2pPanelV130(
             }){Text("Collect All Connected Agents")}
             Text("After collection: Data → choose dates and test items → Apply Selected Reports → Compare / Reports. Missing Agents can reconnect and retry.",style=MaterialTheme.typography.bodySmall)
         }else {
-            Text("Scan lists only verified CellTracker Wi-Fi Direct services, not neighboring hotspots. Android may show a system confirmation.",style=MaterialTheme.typography.bodySmall)
+            Text("Only devices advertising the CellTracker Wi-Fi Direct service are listed. Android may request confirmation.",style=MaterialTheme.typography.bodySmall)
             Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                 Button(enabled=!busy&&p2p.available,onClick={requestStart("scan")}){Text("Find Controllers")}
                 OutlinedButton(enabled=p2p.running,onClick={p2p.stop();tick++}){Text("Disconnect")}
@@ -288,10 +302,12 @@ private fun ExperienceP2pPanelV130(
                 }
             }
             if(p2p.connected&&!p2p.isOwner) {
-                Text("Connected: preparing and registering the report automatically.",style=MaterialTheme.typography.bodySmall)
+                Text(if(p2p.reportReadyWithController)"Controller connected; report is ready to collect." else if(p2p.registeredWithController)"Controller connected; no matching reports shared yet." else "Wi-Fi Direct group connected; registering with Controller…",style=MaterialTheme.typography.bodySmall)
                 Button(enabled=!busy&&session.isNotBlank(),onClick={
                     onJob{
-                        val b=server.start(session,date,scenario,operator,rat,role)
+                        val presence=p2p.announcePresence(role,session)
+                        val b=runCatching{server.start(session,date,scenario,operator,rat,role,preferP2p=true)}
+                            .getOrElse{return@onJob "$presence No matching reports: ${it.message}"}
                         val r=p2p.announce(role,session,server.accessCode)
                         "${b.rowCount} measurements / ${b.files} raw reports ready. $r"
                     }

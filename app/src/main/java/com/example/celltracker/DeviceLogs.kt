@@ -31,7 +31,7 @@ data class AdbUiState(
     val mftFiles:List<String> = emptyList(), val mftSelected:String="", val mftTransport:String="",
     val message:String="",
     val logDStatus:String="Not checked", val logDPrevious:String?=null,
-    val logDLastResult:String=""
+    val logDLastResult:String="", val logDAccessSource:String="Not checked"
 )
 object AdbToolStore { val state=MutableStateFlow(AdbUiState()) }
 
@@ -524,26 +524,44 @@ object CellTrackerAdbEngine {
     }
 
     /** Android logcat verbosity only. This never starts the vendor modem logger. */
-    suspend fun readLogD(context: Context): Result<String> = withContext(Dispatchers.IO) {
-        val result = command(context, "getprop persist.log.tag", 7_000)
-        result.onSuccess { raw ->
+    /** Shizuku first if authorized; the existing Local ADB remains a usable fallback. */
+    private suspend fun logDCommand(context: Context, kind: String, value: String = "", preferShizuku: Boolean = true): Pair<String, String> {
+        if (preferShizuku && ShizukuLogDBridge.isAuthorized()) {
+            val result = when (kind) {
+                "get" -> ShizukuLogDBridge.readLogD(context)
+                "set" -> ShizukuLogDBridge.writeLogD(context, value)
+                else -> error("Unknown Log D operation")
+            }
+            return "Shizuku" to result.getOrThrow()
+        }
+        val cmd = if (kind == "get") "getprop persist.log.tag" else {
+            check(value.matches(Regex("[A-Za-z0-9_.-]{0,64}"))) { "Invalid Log D value" }
+            if (value.isEmpty()) "setprop persist.log.tag ''" else "setprop persist.log.tag $value"
+        }
+        return "Local ADB" to command(context, cmd, 10_000).getOrThrow()
+    }
+
+    suspend fun readLogD(context: Context, preferShizuku: Boolean = true): Result<String> = withContext(Dispatchers.IO) {
+        val result = runCatching { logDCommand(context, "get", preferShizuku = preferShizuku) }
+        result.onSuccess { (source, raw) ->
             val current = raw.trim().ifEmpty { "(unset)" }
             AdbToolStore.state.value = AdbToolStore.state.value.copy(
-                logDStatus = current, logDLastResult = "Read from ADB shell"
+                logDStatus = current, logDLastResult = "Read and verified from $source", logDAccessSource = source
             )
         }.onFailure { e ->
             AdbToolStore.state.value = AdbToolStore.state.value.copy(
                 logDStatus = "Unknown", logDLastResult = "Read failed: ${e.message}"
             )
         }
-        result.map { it.trim().ifEmpty { "(unset)" } }
+        result.map { (_, raw) -> raw.trim().ifEmpty { "(unset)" } }
     }
 
-    suspend fun enableLogD(context: Context): Result<String> = withContext(Dispatchers.IO) {
+    suspend fun enableLogD(context: Context, preferShizuku: Boolean = true): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
-            val before = command(context, "getprop persist.log.tag").getOrThrow().trim()
-            val output = command(context, "setprop persist.log.tag D", 10_000).getOrThrow()
-            val after = command(context, "getprop persist.log.tag").getOrThrow().trim()
+            val (source, beforeRaw) = logDCommand(context, "get", preferShizuku = preferShizuku)
+            val before = beforeRaw.trim()
+            val output = logDCommand(context, "set", "D", preferShizuku = preferShizuku).second
+            val after = logDCommand(context, "get", preferShizuku = preferShizuku).second.trim()
             check(after == "D") { "Property did not become D (actual: $after). $output" }
             // Only save the previous value after a successful change; preserve the first baseline.
             val old = AdbToolStore.state.value
@@ -554,7 +572,7 @@ object CellTrackerAdbEngine {
             prefs.edit().putBoolean("has_previous", true).putString("previous", baseline).apply()
             AdbToolStore.state.value = old.copy(
                 logDPrevious = baseline,
-                logDStatus = after, logDLastResult = "Confirmed by getprop: D"
+                logDStatus = after, logDLastResult = "Confirmed D via $source", logDAccessSource = source
             )
             "Log D enabled (verified). Vendor modem log must be started separately."
         }.onFailure { e ->
@@ -562,24 +580,20 @@ object CellTrackerAdbEngine {
         }
     }
 
-    suspend fun restoreLogD(context: Context): Result<String> = withContext(Dispatchers.IO) {
+    suspend fun restoreLogD(context: Context, preferShizuku: Boolean = true): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
             val prefs = context.getSharedPreferences("celltracker_logd", Context.MODE_PRIVATE)
             val baseline = (if (prefs.getBoolean("has_previous", false))
                 prefs.getString("previous", "") else null)
                 ?: error("No previous value recorded by CellTracker")
             // An empty pre-existing property should be removed rather than set to a bogus level.
-            val cmd = if (baseline.isEmpty()) "setprop persist.log.tag ''" else {
-                check(baseline.matches(Regex("[A-Za-z0-9_.-]+"))) { "Invalid saved property value" }
-                "setprop persist.log.tag $baseline"
-            }
-            command(context, cmd, 10_000).getOrThrow()
-            val after = command(context, "getprop persist.log.tag").getOrThrow().trim()
+            val (source, _) = logDCommand(context, "set", baseline, preferShizuku = preferShizuku)
+            val after = logDCommand(context, "get", preferShizuku = preferShizuku).second.trim()
             check(after == baseline) { "Restore not verified: actual '$after'" }
             prefs.edit().clear().apply()
             AdbToolStore.state.value = AdbToolStore.state.value.copy(
                 logDPrevious = null, logDStatus = after.ifEmpty { "(unset)" },
-                logDLastResult = "Previous value restored and verified"
+                logDLastResult = "Previous value restored and verified via $source", logDAccessSource = source
             )
             "Restored: ${after.ifEmpty { "(unset)" }}"
         }.onFailure { e ->

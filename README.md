@@ -1,67 +1,45 @@
-# CellTracker — v1.3.0 Preview 4: Report Selection & Compile Fix
+# CellTracker v1.3.0 — Preview 7 Wi-Fi Direct Connection Fix
 
-Source preview. Version name `1.3.0`, `versionCode` `255`. Android Gradle build and device testing still required.
+**Source preview** · `versionCode=258`, `versionName=1.3.0`. Based on Preview 6 (Shizuku Access). Preview 5/6 previously compiled in the user's GitHub Actions flow, but **this Preview 7 source has not yet passed full Android Gradle compilation or a real 1+3 phone Wi-Fi test**. It is not a stable release.
 
-## Preview 4: Experience Analysis report matching and UI fixes
+## Exact workflow
 
-- Fixed the missing Compose `horizontalScroll` import that broke `ExperienceAnalysisScreenV130.kt:66` Kotlin compilation in Preview 3.
-- Reports no longer shows the **Weak Coverage Route** category card; the underlying Weak Coverage test and historical report data have **not** been deleted.
-- Experience Analysis top tabs (`Data`, `Wi-Fi`, `Rules`, `Compare`, `Reports`) highlight the selected tab with a solid blue background and white text.
-- In **Data**, choose a **From / To** date (including recent dates and dates already represented in report data), then **multi-select** test items, then select *individual matched report runs*. Shows device role, model, optional device ID, original session, recorded time and source. `Select All` / `Clear` affect item choices; a report must still be explicitly checked before it can be analyzed.
-- **Apply Selected Reports** provides a non-destructive scoped analysis view for Compare and Reports; exports use **only selected observation IDs**, while original local and Wi-Fi source data remain unchanged. Multiple metrics in one run stay grouped. Multiple runs of the same metric for the same DUT/REF role are flagged instead of silently replacing older attempts; do not aggregate repeated test rounds accidentally. Per-day report selection refuses combined dates; use individual days for Daily or weekly export as appropriate.
-- New observations persist optional `deviceModel`, `deviceId`, and `runId`. Local records identify their device when scanned, imported Test Results use the `Device` column and any available `Device ID`, and post-test Wi-Fi imports receive the Agent manifest's real model/device ID. For older records, these fields may show **Unknown**; never invent an identity.
-- `Device Model`/`Device ID`/`Test Run ID` appear in the expanded workbook's Raw Data Index; model names are also reflected in new exports. Original Excel source template layout is retained.
-- **Load Local Reports for Selected Dates** scans up to 15 days per action; Wi-Fi `Collect + Generate (Full Session)` intentionally remains a separate unfiltered shortcut. For filtered analyses, first Collect All, then apply the selection in Data, then use Compare/Reports.
-- Existing configurable Rules are unchanged pending user review. Bluetooth Call Setup and independent four-device field testing remain unchanged.
+1. Finish all cellular-experience tests independently on DUT1, DUT2, REF1, REF2. The phones do **not** need a data connection between each other during testing. Existing Bluetooth Device Link remains only for **Call Setup**.
+2. On all four phones open **Reports → Experience Analysis** and select the same **Analysis / output Session ID** (in Data) and matching test date. The Controller must set its own actual role; each Agent selects a unique DUT/REF role.
+3. On the Controller, open **Wi-Fi → Controller → Start Controller**. Wait for `Controller ready` and `Registration server: Ready`. A P2P group being formed is **not** enough to confirm that the app's report-registration server is ready.
+4. On each Agent, choose **Wi-Fi → Agent → Find Controllers**, choose the advertised CellTracker host, tap **Connect**, and approve the system dialog if shown. Join one Agent at a time initially; check the Controller's **P2P group members** and **Registered Agents** counters after each connection. Three simultaneous clients should be evaluated on real hardware before claiming support.
+5. On successful P2P connection, the Agent first registers its presence. If no local reports match the selected date/role, it can still appear as registered but with `Connected, no report yet`. Correct the local report selection and tap **Retry Report Sharing**. When report sharing succeeds, Controller shows `Report ready` and enables **Collect**. An Agent with a mismatched Session ID will be rejected; correct both Session IDs and retry.
+6. Controller taps **Collect** or **Collect All Connected Agents** to receive actual reports. The Controller then goes to **Data → date range → multi-select test items → select report runs → Apply Selected Reports**, followed by **Compare / Reports** to generate Excel, English Daily Word and Weekly HTML.
+7. After collection, tap **Stop Sharing** on Agents / **Stop** on Controller. If P2P fails to support three peers on the specific OEM devices, use the retained **Manual LAN / hotspot fallback (IP + pairing code)**; this is a separate local network mode, not the same as Wi-Fi Direct discovery.
 
-## Correct workflow: NEVER require 4 phones to connect while testing
+## Preview 7 reliability changes
 
-1. Test independently on DUT1, DUT2, REF1, and REF2. Each device runs the appropriate CellTracker / MFT business tests and saves its own reports. **No Wi-Fi sync and no multi-device connection is required during the cellular experience test.**
-2. Once all tests are complete, put four phones on the same **trusted** Wi-Fi LAN or hotspot. The original Bluetooth Device Link remains exclusively for its pre-existing **Call Setup** workflow; its implementation is unchanged.
-3. On the Controller open **Reports → Experience Analysis**. In **Data**, set the exact same Session ID, test date, scenario, operator and RAT on every device; choose DUT1 (or the Controller's actual role). Import external MFT results using the supported template if needed.
-4. Each Agent opens the same **Experience Analysis → Wi-Fi** page, chooses its own device role (e.g. DUT2, REF1 or REF2) and taps **Start Sharing**. Keep the Agent's analysis screen open. Copy its local IP address and temporary 12-character pairing code to the Controller. Each Agent runs its own temporary HTTP listener only after the user explicitly starts sharing.
-5. On Controller → **Wi-Fi**, enter each Agent's IP, current code and role. Tap **Collect All Configured Agents**, or **Collect + Analyze + Generate Reports**. The latter also imports the Controller's supported local records, executes the saved Rules and produces results workbooks, Daily Word/HTML and Weekly HTML in Downloads. It continues with a clearly flagged *partial report* if an Agent is unavailable.
-6. In **Compare**, review the DUT / REF results, radio evidence and manually approved PASS/OBSERVE/FAIL thresholds. Revise a conclusion with the mandatory reason and optional Bug ID. In **Reports**, edit custom daily/weekly narratives and export again if needed.
-7. Stop sharing after syncing. Leaving the Experience Analysis screen also stops its temporary Agent listener. Do not uninstall a device's data-bearing app without first backing up its reports.
+- The Controller registration TCP server no longer depends on the `groupOwnerAddress` reported to the Group Owner (it may be anonymized on recent Android). It waits for and binds specifically to an actual active P2P IPv4 interface.
+- `requestConnectionInfo` and `requestGroupInfo` track actual P2P connection/group membership, separately from registered Agent identities and report-ready status.
+- Registration supports a presence-only handshake before a report exists; missing local reports no longer masquerade as a Wi-Fi connection failure.
+- Agent registration explicitly uses the Wi-Fi Direct source IP. Wi-Fi Direct report sharing binds to the P2P interface rather than accidentally selecting a normal WLAN address.
+- Joining stops ongoing service discovery before `connect` to reduce OEM negotiation conflicts; repeated scans clear previous discovery requests; a concurrent `Connect` tap is ignored until the outstanding attempt is resolved.
+- `Disconnect`/`Stop` releases a P2P group on both Controller **and Agent** devices, waits for asynchronous release when restarting Controller, and guards callbacks against stale generations. A lost Android P2P manager channel is recreated for subsequent user retries.
+- Controller can keep three independent Agent records keyed by stable Device ID, reject duplicate device roles, and collect only Agents whose report share is ready. Old records may remain after an Agent drops unexpectedly; Controller can use **Forget** on a stale Agent record and allow that role to re-register without restarting the other peers. A failed fetch must be treated as offline/partial rather than silently successful.
+- `No local reports for selected date / role` is now a report-readiness warning, not a claim that P2P group formation failed.
 
-## Wi-Fi design and data integrity
+## Verification and remaining limits
 
-- Transport: direct local IPv4 TCP/HTTP on port `48731` to a trusted private Wi-Fi/hotspot address. No cloud, Bluetooth, cellular API traffic or permanent report server. Uses Android `Network.openConnection` to route Controller's traffic on Wi-Fi when available; supports hotspot-host local interfaces as fallback.
-- A temporary one-time session pairing code is required to request the bundle. The listener is bound only to an available Wi-Fi/hotspot LAN interface, not to cellular. Twelve invalid attempts block new requests until sharing is restarted.
-- The Agent creates a snapshot of normalized real measurements, with provenance, time and available Band/PCI/RSRP/SINR. Accessible original reports are attached **without modifying their contents** in a ZIP with manifest and SHA-256 digests. Limits: ~12 MB/file and ~55 MB per bundle; missing/large original files are explicitly counted, not fabricated.
-- The Controller verifies metadata, Session ID, DUT/REF role, Report ID, filenames and file checksums before archiving incoming original files in app-private `files/experience_lan_imports/`, then durably commits observations. The same report may be resent; deterministic IDs deduplicate data. Controller sends receipt confirmation only after it has saved the file and metrics.
-- Existing locally saved reports remain intact. Bluetooth Call Setup protocol and UI are not modified by this transfer module.
-- Controller may collect from three Agents sequentially, with independent IP/code/role configuration. Agent listener sessions are concurrent, so each can be ready at the same time. Auto-discovery/QR and fully unattended device-to-device sync are **not** implemented.
+**Completed in this source session:** Kotlin compiler type-check of the P2P module against isolated Android API stubs; Kotlin PSI syntax parsing of the three modified modules; simulated application protocol with one anonymized Group Owner and three Agent registrations, including a client disconnect that does not drop other clients; ZIP structure integrity inspection.
 
-## Important security and acceptance limits
+**Not completed:** full `assembleDebug` using the actual Android SDK, real four-phone Wi-Fi Direct interoperability, prolonged reconnection soak, and large-archive transfer across all devices. No code-only fix can guarantee a specific phone/OEM Wi-Fi Direct driver will allow three clients simultaneously. Record each phone's model/Android version, the exact failure code (`0=ERROR`, `1=P2P_UNSUPPORTED`, `2=BUSY`), P2P group members count, registered agents count, and Agent's report-ready state during testing.
 
-**Preview-only security limitation:** The local HTTP transfer is not end-to-end encrypted. Pairing codes, file integrity checks and LAN restriction are not substitutes for authenticated TLS. Use only an isolated, trusted Wi-Fi/hotspot network; never transfer confidential raw logs on public, shared, or unknown networks. TLS/verified peer identity is a required hardening step before a production-grade release. The manifest has `android:usesCleartextTraffic=true` solely to enable this initial local HTTP transport.
+**Security:** the current trusted-local-LAN/Direct report data path is HTTP, not authenticated TLS. The DNS-SD service filter excludes ordinary unrelated hotspots from the in-app list but is **not** proof of controller identity. Use an isolated trusted test environment; do not transfer sensitive logs on public networks.
 
-**Supported automatic raw report coverage:** local Ping, YouTube, WhatsApp Image, TikTok CSV and existing Call Setup summaries recognized by Preview 2. MFT results may still need import via the original Results XLSX/CSV template. Import provenance remains explicit and never pretends to be automatically acquired. Private or inaccessible raw source files may be missing from bundles; normalized metrics can still be present.
+## Preserved modules
 
-**Engineering status:** The supplied source has not passed a full Android SDK / Gradle APK build or real four-phone Wi-Fi field test. Do not label it a stable release. Validate Wi-Fi/LAN interfaces and firewall/client-isolation behavior on actual Transsion/vivo/Samsung devices, slow links, retries, duplicate sync, wrong code/role, partial results, and the existing Bluetooth call workflow.
+- Existing Bluetooth Device Link / Call Setup is unmodified.
+- Shizuku API and Local ADB fallback from Preview 6 are unmodified. Shizuku supports allowlisted Log D operations and `/data/debuglogger/` access probing, **not direct Shizuku export of the protected log directory**.
+- Reports, multi-select test-item selection, configurable Rules, network evidence, original Excel template export, editable Daily DOCX and Weekly HTML remain. Original raw reports and device history must remain intact.
+- Known performance/jank improvements and further Rules UI changes are **not** part of this Wi-Fi-only fix.
 
-## Analysis functionality carried over from Preview 2
+## Build / signing
 
-- User-defined per-metric OBSERVE / FAIL thresholds and minimum sample counts, percentage / absolute count / percentage-point differences.
-- DUT/REF date, operator, RAT and scenario comparability checks; unverified RAT can only yield OBSERVE; N/A where data is insufficient.
-- Original Communication Experience Test Results Excel template and extended analysis workbook.
-- Original eight-section English Daily DOCX and editable HTML; W42-style editable Weekly HTML.
-- All conclusions remain human-reviewable with reason and Bug ID.
+Use Android Studio or GitHub Actions with `./gradlew :app:assembleDebug`. Keep the same internal-test signing certificate (bundled test keystore or your own `celltracker-signing.properties`) for in-place upgrades without losing saved reports. Do not use the bundled development keystore for production distribution.
 
-## Signing and building
-
-Use the GitHub Actions workflow or Android Studio to build `assembleDebug`. Keep the same internal testing signing certificate to upgrade without wiping reports. The bundled `keystore/celltracker-dev.jks` is for internal development only, not production. See `celltracker-signing.properties.example` for private signing. Only `README.md` and `CHANGELOG.md` are kept as Markdown in the project ZIP.
-
-
-## Preview 5: post-test Wi-Fi Direct Controller / Agent
-
-Open **Reports → Experience Analysis → Wi-Fi** on all devices after the cellular experience tests are finished.
-
-1. On one phone, select **Controller** and its DUT/REF role. Set the same Session ID as the other devices, then tap **Start Controller**. Android may display a Wi-Fi Direct permission/confirmation prompt.
-2. On each other phone, select **Agent** and its unique DUT/REF role, tap **Find Controllers**, choose the listed **CellTracker Controller** service and tap **Connect**. Nearby ordinary hotspots are not shown in this service list.
-3. Once connected, an Agent automatically attempts to package its previously saved reports and register with the Controller. If this cannot complete (missing records, Wi-Fi Direct IP not ready, mismatched Session), review the error and use **Retry Report Sharing** after correction.
-4. Controller can see each registered Agent's role, model, and device ID, tap **Collect** individually or **Collect All Connected Agents**, then use **Data → selected dates / multiple test items / exact reports → Apply Selected Reports → Compare / Reports** for analysis and output.
-5. If discovery/grouping fails on a device, expand **Manual LAN / hotspot fallback (IP + pairing code)** and use a trusted shared Wi-Fi LAN or phone hotspot. Controller does not need to be an internet gateway: Wi-Fi Direct is a local-only P2P group, not the system's normal mobile data tethering hotspot.
-
-**Requirements & caveats:** Enable Wi-Fi, Nearby Devices permission, and Location access/service when prompted; vendor Android builds differ in P2P group-owner and multi-client support. Phone models must pass a real four-device test. The advertised service type filters unrelated hotspots but is **not cryptographic proof of peer identity**. Existing archive transfer uses local HTTP with a temporary key and SHA-256 integrity checks, not TLS; only use on trusted devices. Stop Agent sharing and Controller group after collection. Bluetooth Call Setup remains independent. No reports are sent while cellular testing is in progress.
+Only `README.md` and `CHANGELOG.md` are intentionally included as root Markdown documentation. External verification logs/scripts are not packaged.
