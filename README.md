@@ -1,3 +1,5 @@
+> **Preview 8 CompileFix:** Corrects four Kotlin smart-cast compile errors in TikTok Lag/Upload report details. Based on Preview 8 (`versionCode=259`); all other features preserved. Please run GitHub Actions `./gradlew :app:assembleDebug` to verify the full Android build.
+
 # CellTracker v1.3.0 Preview 8 — Shizuku Export, Speedtest and Performance Pass 1
 
 **TEST PREVIEW ONLY** · `versionCode=259` · `versionName=1.3.0` · based on Preview 7 Wi-Fi Direct stability fixes.

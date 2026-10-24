@@ -1160,13 +1160,15 @@ private fun ReportsHome(
                         }
                     }
                     "TIKTOK_LAG" -> tikTokLagReports.firstOrNull { it.uri == path }?.let { r ->
-                        val parsed by produceState<TikTokReportExporter.Parsed?>(initialValue = null, key1 = r.uri) {
+                        val parsedState = produceState<TikTokReportExporter.Parsed?>(initialValue = null, key1 = r.uri) {
                             value = withContext(Dispatchers.IO) {
                                 runCatching {
                                     context.contentResolver.openInputStream(Uri.parse(r.uri))?.bufferedReader()?.use { TikTokReportExporter.parse(it.readText()) }
                                 }.getOrNull()
                             }
                         }
+                        // Snapshot Compose state into an immutable local value so Kotlin can smart-cast it.
+                        val parsed = parsedState.value
                         val reviewState=parsed?.let{remember(r.uri,reviewRevision){ReportReviewV1.load(context,r.uri,it.events)}}
                         val reviewedEvents=if(parsed!=null && reviewState!=null) {
                             reviewState.events.mapNotNull { rev ->
@@ -1257,13 +1259,15 @@ private fun ReportsHome(
                         }
                     }
                     "TIKTOK_UPLOAD" -> tikTokUploadReports.firstOrNull { it.uri == path }?.let { r ->
-                        val parsed by produceState<TikTokReportExporter.Parsed?>(initialValue = null, key1 = r.uri) {
+                        val parsedState = produceState<TikTokReportExporter.Parsed?>(initialValue = null, key1 = r.uri) {
                             value = withContext(Dispatchers.IO) {
                                 runCatching {
                                     context.contentResolver.openInputStream(Uri.parse(r.uri))?.bufferedReader()?.use { TikTokReportExporter.parse(it.readText()) }
                                 }.getOrNull()
                             }
                         }
+                        // Snapshot Compose state into an immutable local value so Kotlin can smart-cast it.
+                        val parsed = parsedState.value
                         val reviewState=parsed?.let{remember(r.uri,reviewRevision){ReportReviewV1.load(context,r.uri,it.events)}}
                         val reviewedEvents=if(parsed!=null && reviewState!=null) {
                             reviewState.events.mapNotNull { rev ->

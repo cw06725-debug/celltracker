@@ -1,3 +1,7 @@
+## v1.3.0 Preview 8 CompileFix (versionCode 259)
+- Fix four `:app:compileDebugKotlin` smart-cast errors in `MainActivity.kt` (lines near 1173, 1227, 1270, 1323). Compose `produceState` was accessed via `by`, producing a custom-getter delegated property that Kotlin cannot smart-cast inside `parsed != null` guards. Each TikTok Lag/Upload report detail now obtains a stable local `val parsed = parsedState.value` while retaining asynchronous IO parsing and state-driven recomposition.
+- No changes to Speedtest, Shizuku, Wi-Fi Direct, reports, test business logic, or Android versionCode/name. Full GitHub Actions Gradle build and real-device verification still required.
+
 ## v1.3.0 Preview 8 (versionCode 259, unverified Android build)
 - Removed the nonfunctional Vendor Logs Import / Share UI card.
 - Added allowlisted Shizuku direct ZIP export of readable `/data/debuglogger/` in 64 KiB chunks with a conservative cap, explicit failure handling and no source deletion; preserved existing Local ADB fallback. Shizuku is still an external privileged service.
