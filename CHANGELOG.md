@@ -1,3 +1,12 @@
+## v1.3.0 Preview 8 (versionCode 259, unverified Android build)
+- Removed the nonfunctional Vendor Logs Import / Share UI card.
+- Added allowlisted Shizuku direct ZIP export of readable `/data/debuglogger/` in 64 KiB chunks with a conservative cap, explicit failure handling and no source deletion; preserved existing Local ADB fallback. Shizuku is still an external privileged service.
+- Improved `getprop persist.log.tag` read by adding safe Android SystemProperties retrieval when necessary; changes continue to require read-back verification.
+- Replaced the standalone HTTP DL test with external Ookla Speedtest DL/UL test setup: installed version/Play Store launch, per-round verified values, optional third-party-app-scoped Accessibility candidate read, optional screen recording, continuous network recording when available, original per-round CSV and XLSX reports.
+- Integrated `SPEEDTEST_DL_MBPS` and `SPEEDTEST_UL_MBPS` into Experience Analysis rules, selected metrics, case IDs and local report scanning, while preserving real network context.
+- Performance pass 1: telephony polling moved off the main UI thread, and TikTok report-detail parsing moved to IO via Compose `produceState`. Further full-root Compose optimization and profiling pending.
+- Isolated Kotlin syntax, Java service, XML, parser and analysis checks completed; full Gradle build and device verification NOT completed.
+
 ## v1.3.0 Preview 7 — Wi-Fi Direct 1+3 reliability fix (versionCode 258)
 
 - Repaired Controller registration TCP bind: derive the local P2P IPv4 from the actual interface, never rely on the possibly anonymized GO's `WifiP2pInfo.groupOwnerAddress`.

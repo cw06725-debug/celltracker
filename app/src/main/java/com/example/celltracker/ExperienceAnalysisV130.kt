@@ -15,6 +15,8 @@ data class ExperienceMetric(
 
 object ExperienceMetrics {
     val all = listOf(
+        ExperienceMetric("SPEEDTEST_DL_MBPS", "Speedtest download", "Mbps", ExperienceDirection.HIGHER_IS_BETTER, ExperienceDeltaUnit.PERCENT),
+        ExperienceMetric("SPEEDTEST_UL_MBPS", "Speedtest upload", "Mbps", ExperienceDirection.HIGHER_IS_BETTER, ExperienceDeltaUnit.PERCENT),
         ExperienceMetric("PING_AVG_MS", "Ping average latency", "ms", ExperienceDirection.LOWER_IS_BETTER, ExperienceDeltaUnit.PERCENT),
         ExperienceMetric("PING_SUCCESS", "Ping success rate", "%", ExperienceDirection.HIGHER_IS_BETTER, ExperienceDeltaUnit.PERCENT_POINTS),
         ExperienceMetric("YOUTUBE_AVG_MS", "YouTube average loading", "ms", ExperienceDirection.LOWER_IS_BETTER, ExperienceDeltaUnit.PERCENT),

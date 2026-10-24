@@ -118,6 +118,54 @@ class ExperienceRepositoryV130(private val context: Context) {
             push(r.path,r.startedAt,"CALL_SUCCESS",r.successRate,r.attempts,operator,declaredRat,origin="AUTO_LOCAL_RAT_DECLARED")
             push(r.path,r.startedAt,"CALL_SETUP_AVG_MS",r.averageMs,r.attempts,operator,declaredRat,origin="AUTO_LOCAL_RAT_DECLARED")
         }
+        // Speedtest values come from explicitly user-confirmed rounds, not inferred from third-party UI.
+        // CSVs are the immutable measurement source; generated XLSX copies are never re-imported.
+        runCatching {
+            val projection = arrayOf(android.provider.MediaStore.Downloads._ID,
+                android.provider.MediaStore.Downloads.DISPLAY_NAME,
+                android.provider.MediaStore.Downloads.RELATIVE_PATH)
+            context.contentResolver.query(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                projection, null, null, null)?.use { cursor ->
+                val idCol = cursor.getColumnIndexOrThrow(android.provider.MediaStore.Downloads._ID)
+                val nameCol = cursor.getColumnIndexOrThrow(android.provider.MediaStore.Downloads.DISPLAY_NAME)
+                val pathCol = cursor.getColumnIndexOrThrow(android.provider.MediaStore.Downloads.RELATIVE_PATH)
+                while (cursor.moveToNext()) {
+                    val name = cursor.getString(nameCol).orEmpty()
+                    val location = cursor.getString(pathCol).orEmpty()
+                    if (!name.startsWith("Speedtest_") || !name.endsWith(".csv") || !location.contains("/Speedtest")) continue
+                    val uri = android.content.ContentUris.withAppendedId(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI,cursor.getLong(idCol))
+                    val records = runCatching { context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { reader ->
+                        reader.readLine() // header
+                        reader.lineSequence().take(50).mapNotNull { line ->
+                            val a = line.split(',')
+                            if (a.size < 17 || a[3] != role || a[15] != "MANUAL_CONFIRMED_SPEEDTEST") null
+                            else a
+                        }.filter { (it[0].toLongOrNull() ?: 0L).let { t -> t > 0 && fresh(t) } }.toList()
+                    } }.getOrNull().orEmpty()
+                    val valid = records.filter { a ->
+                        a[5].toDoubleOrNull()?.isFinite() == true && a[6].toDoubleOrNull()?.isFinite() == true
+                    }
+                    if (valid.isNotEmpty()) {
+                        val whenMs = valid.first()[0].toLong()
+                        // Mixed or unknown RAT cannot be silently replaced by the selected RAT.
+                        fun consensus(index:Int, fallback:String): String {
+                            val values = valid.map { it[index] }.filter { it.isNotBlank() && it != "--" }.distinct()
+                            return when (values.size) { 0 -> fallback; 1 -> values.first(); else -> "MIXED" }
+                        }
+                        val observedOperator = consensus(7,operator)
+                        val observedRat = consensus(8,declaredRat)
+                        val band = consensus(9,"").takeUnless { it == "MIXED" }.orEmpty()
+                        val pci = consensus(10,"").takeUnless { it == "MIXED" }.orEmpty()
+                        val rsrp = consensus(11,"").takeUnless { it == "MIXED" }.orEmpty()
+                        val sinr = consensus(12,"").takeUnless { it == "MIXED" }.orEmpty()
+                        push(uri.toString(),whenMs,"SPEEDTEST_DL_MBPS",valid.map { it[5].toDouble() }.average(),valid.size,observedOperator,observedRat,
+                            band,pci,rsrp,sinr,origin="MANUAL_CONFIRMED_SPEEDTEST")
+                        push(uri.toString(),whenMs,"SPEEDTEST_UL_MBPS",valid.map { it[6].toDouble() }.average(),valid.size,observedOperator,observedRat,
+                            band,pci,rsrp,sinr,origin="MANUAL_CONFIRMED_SPEEDTEST")
+                    }
+                }
+            }
+        }
         // TikTok original CSV lives under MediaStore Downloads; never mistake exported summaries for test runs.
         runCatching {
             val collection=android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI

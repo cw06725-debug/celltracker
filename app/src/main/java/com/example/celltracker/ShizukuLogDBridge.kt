@@ -4,6 +4,17 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
+import android.content.ContentValues
+import android.net.Uri
+import android.os.Environment
+import android.os.Build
+import android.provider.MediaStore
+import java.util.Base64
+import java.util.zip.ZipOutputStream
+import java.util.zip.ZipEntry
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import android.os.IBinder
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -115,7 +126,7 @@ object ShizukuLogDBridge {
         service?.takeIf { it.asBinder().isBinderAlive }?.let { return it }
         check(isAuthorized()) { "Shizuku is not running or CellTracker is not authorized" }
         val args = Shizuku.UserServiceArgs(ComponentName(context, ShizukuDiagnosticsService::class.java))
-            .daemon(false).processNameSuffix("ct_diagnostics").tag("ct_log_diagnostics").version(1)
+            .daemon(false).processNameSuffix("ct_diagnostics").tag("ct_log_diagnostics").version(2)
         val (awaiter, shouldBind) = synchronized(lock) {
             val previous = serviceAwaiter
             if (previous != null && previous.isActive) previous to false
@@ -148,6 +159,62 @@ object ShizukuLogDBridge {
 
     suspend fun readLogD(context: Context): Result<String> = perform(context, 0)
     suspend fun writeLogD(context: Context, value: String): Result<String> = perform(context, 1, value)
+    /** The original directory stays untouched; write only to a fresh Downloads ZIP. */
+    suspend fun exportLogZip(context: Context, onProgress: (Int, Int) -> Unit = { _, _ -> }): Result<Uri> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val svc = userService(context.applicationContext)
+                val manifest = svc.listLogFiles()
+                check(manifest.startsWith("OK\n")) { manifest.removePrefix("ERROR\n") }
+                data class Item(val path: String, val size: Long, val modified: Long)
+                val items = manifest.lineSequence().drop(1).filter { it.isNotBlank() }.map { line ->
+                    val columns = line.split('\t')
+                    check(columns.size == 3) { "Malformed Shizuku file index" }
+                    val path = String(Base64.getUrlDecoder().decode(columns[0]), Charsets.UTF_8)
+                    Item(path, columns[1].toLong(), columns[2].toLong())
+                }.toList()
+                check(items.isNotEmpty()) { "No source files" }
+                val date = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+                val filename = "CellTracker_Shizuku_DebugLogger_$date.zip"
+                val values = ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, filename)
+                    put(MediaStore.MediaColumns.MIME_TYPE, "application/zip")
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/CellTracker/Vendor Logs")
+                    if (Build.VERSION.SDK_INT >= 29) put(MediaStore.MediaColumns.IS_PENDING, 1)
+                }
+                val uri = context.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                    ?: error("Could not allocate Downloads export")
+                try {
+                    context.contentResolver.openOutputStream(uri, "w")?.use { stream ->
+                        ZipOutputStream(stream).use { zip ->
+                            for ((index, item) in items.withIndex()) {
+                                check(item.size in 0..(256L * 1024 * 1024)) { "Invalid log size" }
+                                check(!item.path.startsWith("/") && !item.path.split('/').any { it == ".." }) { "Invalid logger path" }
+                                zip.putNextEntry(ZipEntry(item.path))
+                                var offset = 0L
+                                while (offset < item.size) {
+                                    val take = minOf(64 * 1024L, item.size - offset).toInt()
+                                    val part = svc.readLogChunk(item.path, offset, take)
+                                    check(part.size == take) { "Short read for ${item.path} at $offset" }
+                                    zip.write(part)
+                                    offset += part.size
+                                }
+                                zip.closeEntry()
+                                withContext(Dispatchers.Main) { onProgress(index + 1, items.size) }
+                            }
+                        }
+                    } ?: error("Cannot open ZIP output")
+                    if (Build.VERSION.SDK_INT >= 29) context.contentResolver.update(uri, ContentValues().apply {
+                        put(MediaStore.MediaColumns.IS_PENDING, 0)
+                    }, null, null)
+                    uri
+                } catch (e: Exception) {
+                    context.contentResolver.delete(uri, null, null)
+                    throw e
+                }
+            }.onFailure { state.value = state.value.copy(detail = "Shizuku export failed: ${it.message}") }
+        }
+
     suspend fun probeLogFolder(context: Context): Result<String> = perform(context, 2).also { result ->
         state.value = state.value.copy(logDirectoryProbe = result.getOrElse { "Not readable: ${it.message}" })
     }

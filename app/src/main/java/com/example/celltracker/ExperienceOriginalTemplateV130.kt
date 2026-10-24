@@ -14,7 +14,7 @@ import java.util.Locale
 /** Preserves the user's supplied workbook styles, test cases, formulas, formatting and four tabs. */
 object ExperienceOriginalTemplateV130 {
     private const val ASSET="Communication_Experience_Test_Cases_and_Results_V1.0_EN.xlsx"
-    private val ids=mapOf("PING_AVG_MS" to "APP-PING","PING_SUCCESS" to "APP-PING","MFT_PING_SUCCESS" to "SIG-01",
+    private val ids=mapOf("SPEEDTEST_DL_MBPS" to "DL-04", "SPEEDTEST_UL_MBPS" to "UL-03", "PING_AVG_MS" to "APP-PING","PING_SUCCESS" to "APP-PING","MFT_PING_SUCCESS" to "SIG-01",
         "MFT_PING_AVG_MS" to "SIG-01","MFT_SHORT_VIDEO_AVG_MS" to "DL-01","TIKTOK_STALLS" to "DL-02",
         "TIKTOK_STALL_SEC" to "DL-02","YOUTUBE_AVG_MS" to "DL-03","TIKTOK_UPLOAD_AVG_MS" to "UL-01",
         "TIKTOK_UPLOAD_MAX_MS" to "UL-01","WHATSAPP_SEND_AVG_MS" to "UL-02","CALL_SUCCESS" to "CALL-GENERIC",
@@ -54,6 +54,7 @@ object ExperienceOriginalTemplateV130 {
                 "MFT_PING_AVG_MS","PING_AVG_MS","CALL_SETUP_AVG_MS"->numbers[13]=r.value.toString()
                 "TIKTOK_STALLS"->numbers[17]=r.value.toString()
                 "TIKTOK_STALL_SEC"->numbers[18]=r.value.toString()
+                "SPEEDTEST_DL_MBPS", "SPEEDTEST_UL_MBPS" -> { /* Speed in Mbps is preserved in Notes, not falsely mapped to latency columns. */ }
                 "PING_SUCCESS","MFT_PING_SUCCESS","CALL_SUCCESS","VOLTE_SUCCESS","WHATSAPP_CALL_SUCCESS","VOLTE_LONG_SUCCESS"->{}
                 // Success/failure counts cannot be reconstructed accurately from a rounded rate;
                 // preserve the measured rate in Notes instead of inventing raw successes.

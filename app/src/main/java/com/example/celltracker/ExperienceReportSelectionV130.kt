@@ -11,6 +11,7 @@ object ExperienceTestCatalogV130 {
     val all = listOf(
         ExperienceTestItemV130("MFT_PING", "MFT Ping Test", setOf("MFT_PING_AVG_MS", "MFT_PING_SUCCESS")),
         ExperienceTestItemV130("MFT_VIDEO", "MFT Short Video Loading", setOf("MFT_SHORT_VIDEO_AVG_MS")),
+        ExperienceTestItemV130("SPEEDTEST", "Speedtest DL / UL", setOf("SPEEDTEST_DL_MBPS", "SPEEDTEST_UL_MBPS")),
         ExperienceTestItemV130("PING", "CellTracker Ping Test", setOf("PING_AVG_MS", "PING_SUCCESS")),
         ExperienceTestItemV130("TIKTOK_UPLOAD", "TikTok Video Upload", setOf("TIKTOK_UPLOAD_AVG_MS", "TIKTOK_UPLOAD_MAX_MS")),
         ExperienceTestItemV130("TIKTOK_BROWSE", "TikTok Video Browsing", setOf("TIKTOK_STALLS", "TIKTOK_STALL_SEC")),

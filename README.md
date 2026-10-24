@@ -1,3 +1,42 @@
+# CellTracker v1.3.0 Preview 8 — Shizuku Export, Speedtest and Performance Pass 1
+
+**TEST PREVIEW ONLY** · `versionCode=259` · `versionName=1.3.0` · based on Preview 7 Wi-Fi Direct stability fixes.
+**Android Gradle build and real-device testing are NOT completed in this environment.** Existing Wi-Fi Direct 1+3, Bluetooth Call Setup, Rules, Wi-Fi report collection, and Preview 7 source are preserved.
+
+## Device Logs changes
+
+- Removed the nonfunctional **Vendor logs / Import / Share without ADB** UI card. It is not the actual protected-path export mechanism.
+- Shizuku UserService retains its explicit authorization and strict allowlist. `getprop persist.log.tag` now has a second read-only Android system-property retrieval attempt if the binary reports a blank value. A genuinely unset value is still reported as unset. Setting D must be verified by reading the property again; no false success.
+- Added **EXPORT ORIGINAL LOGS VIA SHIZUKU**, gated by authorization. It enumerates `/data/debuglogger/`, reads source files in max. 64 KiB AIDL chunks and writes a new ZIP to **Downloads/CellTracker/Vendor Logs**. The source files are never deleted or modified. Export fails explicitly if OEM permissions/SELinux deny access or limits are exceeded: max 1200 files, 256 MiB per file, 512 MiB total; this is a conservative field-test cap, not proof that all large modem logs will export. Use existing Local ADB export if Shizuku lacks access.
+- **Shizuku is still a separate required app and service.** Its library API is embedded in CellTracker, not the privileged Shizuku server itself. This revision does NOT provide a third-party-free or reboot-persistent privileged server. Android's initial ADB/root authorization rules remain in force.
+
+## Third-party Speedtest workflow
+
+- Home **Speedtest** tile shows the installed app/version, or opens Google Play when not installed. Supports normal and Google-Play-region-specific Ookla packages.
+- Speedtest setup: customizable task, DUT1/DUT2/REF1/REF2 role, 1–10 rounds (default 3), optional user-approved screen recording, and simultaneous CellTracker network recording (when SIM/network permissions allow).
+- Opens Ookla Speedtest. After each real run, return to CellTracker to **complete the round**, confirm the real displayed **DL / UL Mbps** values, and save measured network cell information. No made-up throughput. Optional user-authorized **Speedtest-only Accessibility reader** attempts label-and-unit text detection. It never touches other apps, clicks, or captures raw text persistently. Extracted numbers are only candidates; user must verify. It can fail on custom/canvas UI, and manual entry always works.
+- Saves original-per-round CSV and single-sheet XLSX to **Downloads/CellTracker/YYYY-MM-DD/Speedtest**; speed average is computed from actual entered rounds. Both `SPEEDTEST_DL_MBPS` and `SPEEDTEST_UL_MBPS` are integrated in Experience Analysis rules, multi-select Test Item filters and supplementary output. Use Data → Load Local Reports after testing to bring those two metrics into the DUT/REF comparison. Speed Mbps is stored as text in the Notes column of the original historic template, since the original template has no dedicated speed column; it is numeric in the supplementary analytical XLSX and Speedtest's own XLSX.
+- Android MediaProjection screen recording always needs explicit consent for each session; one capture session is used across the Speedtest rounds, not silent recording.
+
+## First performance pass
+
+- The every-second dual-SIM/OEM telephony update loop now runs on `Dispatchers.IO` rather than the Compose UI/main thread, keeping configured measurement cadence.
+- Expensive TikTok report-detail parsing for Lag and Upload now runs once per report URI in a coroutine IO context instead of parsing the report synchronously on every recomposition.
+- **Jank is NOT certified fixed.** The full-AppState root Compose subscription, other report parsing, long lists and OEM RIL callbacks still require real device Perfetto/JankStats profiling and incremental fixes. Do not reduce actual RF/test sample cadence merely to hide UI slowdowns.
+
+## Suggested verification
+
+1. GitHub Actions: run `./gradlew :app:assembleDebug` and ensure no manifest/AIDL/Compose errors; install over previous Preview using the same development certificate.
+2. Device Logs: Shizuku check UID/permission; Test Check Log D → Enable D → Check Log D → Restore; on each MTK/Qualcomm device, compare `adb shell getprop persist.log.tag`. Test Shizuku export with a **small stopped original logger session** first. Ensure the ZIP opens and byte sizes/timestamps correspond to source. Check explicit permission failure and fallback on restricted phones.
+3. Speedtest: verify installed version/Not Installed Play Store behavior, 3 round completion and rounding, screen permission/MP4 recording, saved per-round CSV/XLSX and network recording; compare captured values to actual Ookla UI. Accessibility candidate depends on OEM/Speedtest version. Confirm Data Load Local Reports recognizes two Mbps metrics and Compare does not merge runs across different operators/RATs.
+4. Performance: compare Preview7 vs Preview8 Home scroll, Report page, Device Logs, ongoing measurement, two-SIM CPU/jank, and 4-phone post-test Wi-Fi. No claim of four-device Wi-Fi acceptance yet.
+
+**Build/status checks performed here:** Kotlin PSI syntax validation for touched source, Java Shizuku service compilation with a test stub, XML parsing, 4 pure Speedtest parser checks, pure Analysis + DUT/REF integration test. These are NOT the same as Android SDK Gradle compilation or real-device testing.
+
+Only README.md and CHANGELOG.md are retained as root Markdown files. Temporary validation scripts and test logs are intentionally excluded from the ZIP.
+
+---
+
 # CellTracker v1.3.0 — Preview 7 Wi-Fi Direct Connection Fix
 
 **Source preview** · `versionCode=258`, `versionName=1.3.0`. Based on Preview 6 (Shizuku Access). Preview 5/6 previously compiled in the user's GitHub Actions flow, but **this Preview 7 source has not yet passed full Android Gradle compilation or a real 1+3 phone Wi-Fi test**. It is not a stable release.

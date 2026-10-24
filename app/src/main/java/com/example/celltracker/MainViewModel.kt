@@ -23,6 +23,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -143,7 +144,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun restartCellLoop() {
         cellJob?.cancel()
-        cellJob = viewModelScope.launch {
+        // Telephony calls (including OEM allCellInfo fallbacks) are not UI work.
+        // Preserve the configured sampling cadence and execute them on IO.
+        cellJob = viewModelScope.launch(Dispatchers.IO) {
             while (true) {
                 val loopStartedAt = System.currentTimeMillis()
                 try {
@@ -160,16 +163,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     NetworkStore.dataNetwork = dataNet
                     val now = System.currentTimeMillis()
                     val trends = appendSignalTrends(_state.value.signalTrendBySubscription, sims, now)
-                    _state.value = _state.value.copy(
+                    _state.update { previous -> previous.copy(
                         sims = sims,
                         selectedSubscriptionId = selectedId,
-                        markTargetSubscriptionId = _state.value.markTargetSubscriptionId?.takeIf { id -> sims.any { it.subscriptionId == id } } ?: selectedId,
+                        markTargetSubscriptionId = previous.markTargetSubscriptionId?.takeIf { id -> sims.any { it.subscriptionId == id } } ?: selectedId,
                         dataSimSubscriptionId = dataSim,
                         dataNetwork = dataNet,
                         signalTrendBySubscription = trends,
                         lastUpdated = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(now)),
                         error = null
-                    )
+                    ) }
                 } catch (e: Exception) {
                     _state.value = _state.value.copy(error = e.message ?: "Unable to read cellular info")
                 }

@@ -1,3 +1,4 @@
 <resources>    <string name="accessibility_youtube_loading_desc">CellTracker manual timing for YouTube loading and WhatsApp image sending.</string>
     <string name="accessibility_whatsapp_send_desc">CellTracker WhatsApp image send manual timing</string>
+    <string name="accessibility_speedtest_results_desc">Read explicitly requested Speedtest download and upload results during an active CellTracker test. Does not operate or control Speedtest.</string>
 </resources>

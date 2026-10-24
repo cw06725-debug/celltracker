@@ -32,7 +32,7 @@ object ExperienceReportExportV130 {
     private fun materialized(data:List<ExperienceObservation>,session:String)=data.filter{it.session==session}
     fun exportResults(context:Context,session:String,all:List<ExperienceObservation>,decisions:List<ExperienceDecision>,rules:List<ExperienceRule>,date:String,ruleVersion:String):Uri {
         val rows=materialized(all,session)
-        val caseIds=mapOf("PING_AVG_MS" to "APP-PING","PING_SUCCESS" to "APP-PING",
+        val caseIds=mapOf("SPEEDTEST_DL_MBPS" to "DL-04", "SPEEDTEST_UL_MBPS" to "UL-03", "PING_AVG_MS" to "APP-PING","PING_SUCCESS" to "APP-PING",
             "MFT_PING_SUCCESS" to "SIG-01", "MFT_PING_AVG_MS" to "SIG-01", "MFT_SHORT_VIDEO_AVG_MS" to "DL-01",
             "TIKTOK_STALLS" to "DL-02","TIKTOK_STALL_SEC" to "DL-02",
             "YOUTUBE_AVG_MS" to "DL-03","TIKTOK_UPLOAD_AVG_MS" to "UL-01","TIKTOK_UPLOAD_MAX_MS" to "UL-01",

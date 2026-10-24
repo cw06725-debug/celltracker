@@ -413,6 +413,9 @@ MainScreen(
                 if (showThroughputTest) {
                     ThroughputScreen(
                         onBack = { showThroughputTest = false },
+                        liveState = state,
+                        onStartNetworkRecording = vm::startRecording,
+                        onStopNetworkRecording = vm::stopRecording,
                         setupOnly = throughputPreparing,
                         onSetupFinished = { throughputPreparing = false }
                     )
@@ -1157,9 +1160,13 @@ private fun ReportsHome(
                         }
                     }
                     "TIKTOK_LAG" -> tikTokLagReports.firstOrNull { it.uri == path }?.let { r ->
-                        val parsed = runCatching {
-                            context.contentResolver.openInputStream(Uri.parse(r.uri))?.bufferedReader()?.use { TikTokReportExporter.parse(it.readText()) }
-                        }.getOrNull()
+                        val parsed by produceState<TikTokReportExporter.Parsed?>(initialValue = null, key1 = r.uri) {
+                            value = withContext(Dispatchers.IO) {
+                                runCatching {
+                                    context.contentResolver.openInputStream(Uri.parse(r.uri))?.bufferedReader()?.use { TikTokReportExporter.parse(it.readText()) }
+                                }.getOrNull()
+                            }
+                        }
                         val reviewState=parsed?.let{remember(r.uri,reviewRevision){ReportReviewV1.load(context,r.uri,it.events)}}
                         val reviewedEvents=if(parsed!=null && reviewState!=null) {
                             reviewState.events.mapNotNull { rev ->
@@ -1250,9 +1257,13 @@ private fun ReportsHome(
                         }
                     }
                     "TIKTOK_UPLOAD" -> tikTokUploadReports.firstOrNull { it.uri == path }?.let { r ->
-                        val parsed = runCatching {
-                            context.contentResolver.openInputStream(Uri.parse(r.uri))?.bufferedReader()?.use { TikTokReportExporter.parse(it.readText()) }
-                        }.getOrNull()
+                        val parsed by produceState<TikTokReportExporter.Parsed?>(initialValue = null, key1 = r.uri) {
+                            value = withContext(Dispatchers.IO) {
+                                runCatching {
+                                    context.contentResolver.openInputStream(Uri.parse(r.uri))?.bufferedReader()?.use { TikTokReportExporter.parse(it.readText()) }
+                                }.getOrNull()
+                            }
+                        }
                         val reviewState=parsed?.let{remember(r.uri,reviewRevision){ReportReviewV1.load(context,r.uri,it.events)}}
                         val reviewedEvents=if(parsed!=null && reviewState!=null) {
                             reviewState.events.mapNotNull { rev ->
@@ -5669,22 +5680,8 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
     var compressDutLog by rememberSaveable { mutableStateOf(false) }
     var deleteAfterZip by rememberSaveable { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
-    var importedVendorLogs by remember { mutableStateOf(VendorLogFileImport.savedFiles(context)) }
-    var vendorImportMessage by remember { mutableStateOf("Select files to import and share. Previously imported files remain available.") }
-    val vendorLogPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-        if (uris.isNotEmpty()) {
-            scope.launch {
-                busy = true
-                try {
-                    val result = withContext(Dispatchers.IO) { VendorLogFileImport.importSelected(context, uris) }
-                    importedVendorLogs = VendorLogFileImport.savedFiles(context)
-                    vendorImportMessage = result.message
-                } catch (e: Exception) {
-                    vendorImportMessage = "Import failed: ${e.message ?: "Unknown error"}"
-                } finally { busy = false }
-            }
-        }
-    }
+    var shizukuExportMessage by remember { mutableStateOf("No Shizuku export attempted") }
+    var shizukuExportUri by remember { mutableStateOf<Uri?>(null) }
     var remoteHost by rememberSaveable { mutableStateOf("") }
     var remotePairPort by rememberSaveable { mutableStateOf("") }
     var remoteConnectPort by rememberSaveable { mutableStateOf("") }
@@ -5721,23 +5718,6 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
     }
     Scaffold(topBar={TopAppBar(title={Text("Device Logs / ADB Tools")},navigationIcon={TextButton(onClick=onBack){Text("Back")}})},contentWindowInsets=WindowInsets(0,0,0,0)){pad->
         Column(Modifier.fillMaxSize().padding(pad).padding(16.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)){
-            GlassSection("Vendor logs · Import / Share without ADB") {
-                Text("Select files the OEM logger has saved in accessible storage or that you previously copied to this phone. This cannot directly open protected /data/debuglogger/. Original source files are never modified.", style = MaterialTheme.typography.bodySmall)
-                Button(enabled = !busy, onClick = { vendorLogPicker.launch(arrayOf("*/*")) }, modifier = Modifier.fillMaxWidth()) {
-                    Text("SELECT LOG FILES")
-                }
-                Text(vendorImportMessage, style = MaterialTheme.typography.bodySmall)
-                if (importedVendorLogs.isNotEmpty()) {
-                    Text("Imported ${importedVendorLogs.size} file(s)", style = MaterialTheme.typography.labelLarge)
-                    importedVendorLogs.takeLast(5).forEach { file ->
-                        Text(file.name, style = MaterialTheme.typography.bodySmall)
-                    }
-                    OutlinedButton(onClick = {
-                        runCatching { VendorLogFileImport.share(context, importedVendorLogs) }
-                            .onFailure { Toast.makeText(context, "Share failed: ${it.message}", Toast.LENGTH_LONG).show() }
-                    }, modifier = Modifier.fillMaxWidth()) { Text("SHARE IMPORTED LOGS") }
-                }
-            }
             GlassSection("Shizuku · Optional privileged access") {
                 Text("Use the official Shizuku app (ADB-started or rooted) as an alternative to pairing CellTracker's own Wireless ADB. On unrooted phones, Shizuku usually needs starting again after a reboot.",
                     style = MaterialTheme.typography.bodySmall)
@@ -5767,7 +5747,35 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
                     }
                 }, modifier = Modifier.fillMaxWidth()) { Text("CHECK /data/debuglogger/ ACCESS", maxLines = 1, style = MaterialTheme.typography.labelSmall) }
                 Text("Directory: ${shizuku.logDirectoryProbe}", style = MaterialTheme.typography.bodySmall)
-                Text("Access check is diagnostic only. Full original-log ZIP export still uses the existing Local ADB route. Shizuku does not grant root automatically.",
+                Button(enabled = !busy && shizuku.authorized, modifier = Modifier.fillMaxWidth(), onClick = {
+                    scope.launch {
+                        busy = true
+                        shizukuExportMessage = "Exporting original logs via Shizuku…"
+                        try {
+                            val result = ShizukuLogDBridge.exportLogZip(context) { done, total ->
+                                shizukuExportMessage = "Exporting $done / $total files…"
+                            }
+                            result.onSuccess { uri ->
+                                shizukuExportUri = uri
+                                shizukuExportMessage = "Verified ZIP saved to Downloads / CellTracker / Vendor Logs"
+                            }.onFailure { e ->
+                                shizukuExportMessage = "Shizuku export failed: ${e.message}. Try Local ADB if shell access is denied."
+                            }
+                        } finally { busy = false }
+                    }
+                }) { Text("EXPORT ORIGINAL LOGS VIA SHIZUKU", maxLines = 1, style = MaterialTheme.typography.labelSmall) }
+                Text(shizukuExportMessage, style = MaterialTheme.typography.bodySmall)
+                shizukuExportUri?.let { uri ->
+                    OutlinedButton(modifier = Modifier.fillMaxWidth(), onClick = {
+                        runCatching { context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+                            type = "application/zip"
+                            putExtra(Intent.EXTRA_STREAM, uri)
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }, "Share original logger ZIP")) }
+                            .onFailure { Toast.makeText(context, it.message ?: "Share failed", Toast.LENGTH_LONG).show() }
+                    }) { Text("SHARE EXPORTED ZIP") }
+                }
+                Text("Shizuku uses shell/root identity, not automatic root. If protected files cannot be read, export fails visibly. The original vendor logs are never deleted.",
                     style = MaterialTheme.typography.bodySmall)
             }
             GlassSection("1 · Local ADB / DUT") {
@@ -6884,7 +6892,8 @@ private fun HomeScreenV121(
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             HomeQuickCardV121("Network", if(state.isRecording) "Stop Recording" else "Recording", "REC",
                 Color(0xFF6D4AFF), modifier = Modifier.weight(1f), onClick = onNetworkRecording)
-            HomeQuickCardV121("Throughput", "HTTP DL", "⇅", Color(0xFF0891B2),
+            HomeQuickCardV121("Speedtest", "DL / UL", "⇅", Color(0xFF0891B2),
+                listOf("org.zwanoo.android.speedtest", "org.zwanoo.android.speedtest.gworld"),
                 modifier = Modifier.weight(1f), onClick = onThroughputTest)
             HomeQuickCardV121("Device Logs", "ADB Tools", "ADB", Color(0xFF64748B),
                 modifier = Modifier.weight(1f), onClick = onDeviceLogs)
