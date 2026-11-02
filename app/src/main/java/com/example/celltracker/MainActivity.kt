@@ -88,6 +88,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Dp
@@ -7084,39 +7086,138 @@ private fun HomeScreenV121(
                 else Text("Long-press any test to rearrange", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        // Stable keys + lazy grid item placement animation: untouched tiles slide into their
-        // new slots like a launcher rather than teleporting when another tile is released.
-        var gridWidth by remember { mutableIntStateOf(0) }
+        // Launcher-style reordering: the dragged tile is a separate floating layer.
+        // A transparent placeholder keeps its slot in the grid while neighboring tiles
+        // move ONE slot as soon as the finger crosses another cell (not on release).
+        // Never animate both the active LazyGrid item and its drag translation.
+        val density = LocalDensity.current
+        val gapPx = with(density) { 10.dp.toPx() }
+        val stepYPx = with(density) { 134.dp.toPx() }
         val rowCount = (orderedTiles.size + 2) / 3
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(3),
-            modifier = Modifier.fillMaxWidth().height((rowCount * 134 - 10).coerceAtLeast(124).dp)
-                .onSizeChanged { gridWidth = it.width },
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-            userScrollEnabled = false
-        ) {
-            gridItems(orderedTiles, key = { it.id }) { tile ->
-                val pos = orderedTiles.indexOfFirst { it.id == tile.id }
-                SortableHomeTileV130(tile, homeEdit,
-                    Modifier.animateItemPlacement(
-                        animationSpec = tween(durationMillis = 310,
-                            delayMillis = (pos % 12) * 14, easing = FastOutSlowInEasing)),
-                    onEdit = { homeEdit = true },
-                    onDrop = { dx, dy ->
-                        val density = context.resources.displayMetrics.density
-                        val slotW = ((gridWidth - 20f * density) / 3f + 10f * density)
-                        val slotH = 134f * density
-                        val colDelta = kotlin.math.round(dx / slotW.coerceAtLeast(1f)).toInt()
-                        val rowDelta = kotlin.math.round(dy / slotH).toInt()
-                        val target = (pos + rowDelta * 3 + colDelta).coerceIn(0, orderedTiles.lastIndex)
-                        val updated = HomeTestOrderV130.moved(orderedTiles.map { it.id }, pos, target)
-                        orderIds.clear(); orderIds.addAll(updated)
-                        HomeTestOrderV130.persist(context, updated)
-                        val targetCol = target % 3; val sourceCol = pos % 3
-                        val targetRow = target / 3; val sourceRow = pos / 3
-                        Pair((targetCol - sourceCol) * slotW, (targetRow - sourceRow) * slotH)
-                    })
+        var gridWidthPx by remember { mutableIntStateOf(0) }
+        val cellWidthPx = ((gridWidthPx - gapPx * 2f) / 3f).coerceAtLeast(1f)
+        val stepXPx = cellWidthPx + gapPx
+        var draggingId by remember { mutableStateOf<String?>(null) }
+        var dragStartIndex by remember { mutableIntStateOf(-1) }
+        var dragX by remember { mutableFloatStateOf(0f) }
+        var dragY by remember { mutableFloatStateOf(0f) }
+        var landing by remember { mutableStateOf(false) }
+        val landingX = remember { Animatable(0f) }
+        val landingY = remember { Animatable(0f) }
+        val reorderScope = rememberCoroutineScope()
+        val visibleIds = tiles.map { it.id }
+        fun beginTileDrag(id: String) {
+            if (draggingId != null || landing) return
+            val current = HomeTestOrderV130.normalized(orderIds.toList(), visibleIds)
+            val index = current.indexOf(id)
+            if (index < 0) return
+            homeEdit = true
+            draggingId = id
+            dragStartIndex = index
+            dragX = 0f
+            dragY = 0f
+        }
+        fun moveTileDrag(deltaX: Float, deltaY: Float) {
+            val id = draggingId ?: return
+            if (landing || gridWidthPx == 0) return
+            dragX += deltaX
+            dragY += deltaY
+            // Hover is measured from the ORIGINAL touch-start slot, not from the
+            // tile's animated layout coordinates, which move during reordering.
+            val centerX = (dragStartIndex % 3) * stepXPx + cellWidthPx / 2f + dragX
+            val centerY = (dragStartIndex / 3) * stepYPx + (stepYPx - gapPx) / 2f + dragY
+            val column = kotlin.math.floor(centerX / stepXPx).toInt().coerceIn(0, 2)
+            val row = kotlin.math.floor(centerY / stepYPx).toInt().coerceIn(0, rowCount - 1)
+            val current = HomeTestOrderV130.normalized(orderIds.toList(), visibleIds)
+            val from = current.indexOf(id)
+            val target = (row * 3 + column).coerceIn(0, current.lastIndex)
+            if (from >= 0 && target != from) {
+                val next = HomeTestOrderV130.moved(current, from, target)
+                orderIds.clear()
+                orderIds.addAll(next)
+            }
+        }
+        fun releaseTileDrag() {
+            val id = draggingId ?: return
+            if (landing) return
+            val current = HomeTestOrderV130.normalized(orderIds.toList(), visibleIds)
+            val destination = current.indexOf(id)
+            if (destination < 0) { draggingId = null; return }
+            val xAtRelease = dragX
+            val yAtRelease = dragY
+            val endX = ((destination % 3) - (dragStartIndex % 3)) * stepXPx
+            val endY = ((destination / 3) - (dragStartIndex / 3)) * stepYPx
+            reorderScope.launch {
+                // Copy current floating position before switching to animatable values:
+                // avoids the one-frame teleport that happened on Preview 17 release.
+                landingX.snapTo(xAtRelease)
+                landingY.snapTo(yAtRelease)
+                landing = true
+                try {
+                    kotlinx.coroutines.coroutineScope {
+                        launch { landingX.animateTo(endX, spring(stiffness = Spring.StiffnessMedium, dampingRatio = 0.88f)) }
+                        launch { landingY.animateTo(endY, spring(stiffness = Spring.StiffnessMedium, dampingRatio = 0.88f)) }
+                    }
+                } finally {
+                    draggingId = null
+                    dragStartIndex = -1
+                    dragX = 0f
+                    dragY = 0f
+                    landing = false
+                    HomeTestOrderV130.persist(context, orderIds.toList())
+                }
+            }
+        }
+        Box(modifier = Modifier.fillMaxWidth()
+            .height((rowCount * 134 - 10).coerceAtLeast(124).dp)
+            .onSizeChanged { gridWidthPx = it.width }) {
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(3),
+                modifier = Modifier.fillMaxSize(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                userScrollEnabled = false
+            ) {
+                gridItems(orderedTiles, key = { it.id }) { tile ->
+                    SortableHomeTileV130(
+                        tile = tile,
+                        editing = homeEdit,
+                        isDragged = draggingId == tile.id,
+                        modifier = Modifier.animateItemPlacement(
+                            animationSpec = spring(stiffness = Spring.StiffnessMedium, dampingRatio = 0.92f)),
+                        onDragStart = { beginTileDrag(tile.id) },
+                        onDrag = { dx, dy -> moveTileDrag(dx, dy) },
+                        onDragEnd = { releaseTileDrag() }
+                    )
+                }
+            }
+            val floatingTile = tiles.firstOrNull { it.id == draggingId }
+            if (floatingTile != null && gridWidthPx > 0 && dragStartIndex >= 0) {
+                Box(modifier = Modifier
+                    .offset {
+                        IntOffset(
+                            ((dragStartIndex % 3) * stepXPx).toInt(),
+                            ((dragStartIndex / 3) * stepYPx).toInt()
+                        )
+                    }
+                    .width(with(density) { cellWidthPx.toDp() })
+                    .height(124.dp)
+                    .zIndex(20f)
+                    .graphicsLayer {
+                        translationX = if (landing) landingX.value else dragX
+                        translationY = if (landing) landingY.value else dragY
+                        scaleX = 1.045f
+                        scaleY = 1.045f
+                    }
+                ) {
+                    HomeQuickCardV121(
+                        floatingTile.title, floatingTile.subtitle, floatingTile.symbol,
+                        floatingTile.color, floatingTile.packages,
+                        modifier = Modifier.fillMaxSize(),
+                        installIfMissing = floatingTile.installIfMissing,
+                        editing = true, onClick = {}
+                    )
+                }
             }
         }
 
@@ -7166,51 +7267,63 @@ private data class HomeTestTileV130(
     val onClick: () -> Unit
 )
 
-/** Long hold enters edit mode, then drag to a new grid slot. The active tile is lifted; edit-only wiggle. */
+/** Stable placeholder for launcher-style drag. Only OTHER tiles animate placement. */
 @Composable
 private fun SortableHomeTileV130(
-    tile: HomeTestTileV130, editing: Boolean, modifier: Modifier = Modifier,
-    onEdit: () -> Unit, onDrop: (Float,Float) -> Pair<Float,Float>
+    tile: HomeTestTileV130,
+    editing: Boolean,
+    isDragged: Boolean,
+    modifier: Modifier = Modifier,
+    onDragStart: () -> Unit,
+    onDrag: (Float, Float) -> Unit,
+    onDragEnd: () -> Unit
 ) {
-    val dx = remember { Animatable(0f) }
-    val dy = remember { Animatable(0f) }
+    // Callbacks must not be captured as stale closures: Home order updates every hover.
+    // Keep pointerInput keyed only by stable tile id so reordering never cancels drag.
+    val currentStart by rememberUpdatedState(onDragStart)
+    val currentDrag by rememberUpdatedState(onDrag)
+    val currentEnd by rememberUpdatedState(onDragEnd)
     val wiggle = remember { Animatable(0f) }
     LaunchedEffect(editing) {
-        if(editing) {
-            while(true) {
-                wiggle.animateTo(0.7f, tween(170))
-                wiggle.animateTo(-0.7f, tween(340))
-                wiggle.animateTo(0f, tween(170))
+        if (editing) {
+            while (true) {
+                wiggle.animateTo(0.6f, tween(180))
+                wiggle.animateTo(-0.6f, tween(360))
+                wiggle.animateTo(0f, tween(180))
             }
         } else wiggle.snapTo(0f)
     }
-    val scope = rememberCoroutineScope()
-    var trackingX by remember { mutableFloatStateOf(0f) }
-    var trackingY by remember { mutableFloatStateOf(0f) }
-    val gestures = Modifier.pointerInput(tile.id) {
-        detectDragGesturesAfterLongPress(
-            onDragStart = {onEdit();trackingX=0f;trackingY=0f},
-            onDragEnd = {
-                val shift = onDrop(trackingX, trackingY)
-                scope.launch {
-                    dx.snapTo(trackingX - shift.first)
-                    dy.snapTo(trackingY - shift.second)
-                    launch { dx.animateTo(0f, spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = Spring.DampingRatioMediumBouncy)) }
-                    launch { dy.animateTo(0f, spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = Spring.DampingRatioMediumBouncy)) }
-                }
-            },
-            onDragCancel = {scope.launch{launch{dx.animateTo(0f,spring())};launch{dy.animateTo(0f,spring())}}}
-        ) { change, amount ->
-            change.consume();trackingX+=amount.x;trackingY+=amount.y
-            scope.launch{dx.snapTo(trackingX);dy.snapTo(trackingY)}
+    // Derive displacement from coordinates in the ROOT instead of the item's
+    // local coordinate system. LazyGrid moves this placeholder under our finger;
+    // local positionChange() would report artificial movement (the "flying" bug).
+    val coordinates = remember { java.util.concurrent.atomic.AtomicReference<LayoutCoordinates?>(null) }
+    val previousRootTouch = remember { java.util.concurrent.atomic.AtomicReference<Offset?>(null) }
+    val gesture = Modifier.onGloballyPositioned { coordinates.set(it) }
+        .pointerInput(tile.id) {
+            detectDragGesturesAfterLongPress(
+                onDragStart = { start ->
+                    previousRootTouch.set(coordinates.get()?.localToRoot(start))
+                    currentStart()
+                },
+                onDragEnd = { previousRootTouch.set(null); currentEnd() },
+                onDragCancel = { previousRootTouch.set(null); currentEnd() }
+            ) { change, amount ->
+                change.consume()
+                val rootTouch = coordinates.get()?.localToRoot(change.position)
+                val last = previousRootTouch.getAndSet(rootTouch)
+                val delta = if (rootTouch != null && last != null) rootTouch - last else amount
+                currentDrag(delta.x, delta.y)
+            }
         }
-    }
-    Box(modifier.then(gestures).graphicsLayer {
-        translationX=dx.value;translationY=dy.value
-        rotationZ=wiggle.value
-    }.zIndex(if(dx.value != 0f || dy.value != 0f) 2f else 0f)) {
-        HomeQuickCardV121(tile.title,tile.subtitle,tile.symbol,tile.color,tile.packages,
-            modifier=Modifier.fillMaxWidth(),installIfMissing=tile.installIfMissing,editing=editing,onClick=tile.onClick)
+    Box(modifier.then(gesture).graphicsLayer {
+        alpha = if (isDragged) 0f else 1f
+        rotationZ = if (isDragged) 0f else wiggle.value
+    }) {
+        HomeQuickCardV121(
+            tile.title, tile.subtitle, tile.symbol, tile.color, tile.packages,
+            modifier = Modifier.fillMaxWidth(), installIfMissing = tile.installIfMissing,
+            editing = editing, onClick = tile.onClick
+        )
     }
 }
 

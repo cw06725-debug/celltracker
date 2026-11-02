@@ -1,3 +1,9 @@
+## v1.3.0 Preview 18 — iOS-style Live Home Rearrangement (versionCode 269)
+- Replaced the old drop-only Home sort with a continuous live-insertion layout. The dragged test stays on a floating layer; when hovering over a slot, adjacent cards shift exactly one slot and leave a placeholder.
+- Drag release animates only the floating tile into its destination; avoids competing `LazyVerticalGrid` placement and local drag-offset animations that caused flying/jumping. Uses stable tile IDs and position callbacks updated without resetting active pointer detection.
+- Pointer displacement is measured in root coordinates, compensating for grid item movement during a drag. Order is saved after drop and via Done / Back, preserving the existing tests, reports and histories.
+- All other Preview 17 features, icons, styling, recorder review, external video import and network/ADB modules are unchanged. This is still a Preview; full Gradle compile and real-device gesture tests are required.
+
 ## v1.3.0 Preview 17 — Home Reorder Motion, Gradients, External Video Timeline (versionCode 268)
 
 - Home: stable-key lazy grid; staggered item placement tween, drop spring and Back-to-save edit exit. Retain fixed test IDs and persisted order.

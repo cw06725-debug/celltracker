@@ -1,8 +1,8 @@
-# CellTracker v1.3.0 Preview 17 — Gradient UI & External Video Timeline
+# CellTracker v1.3.0 Preview 18 — Live Launcher Reordering
 
-**PREVIEW only · versionCode 268**. GitHub Actions Gradle build and real-device behavior are not verified in this environment.
+**PREVIEW only · versionCode 269**. GitHub Actions Gradle build and real-device behavior are not verified in this environment.
 
-- Home: keyed LazyVerticalGrid with staggered placement animation and spring-back on drag release; Android Back and DONE both exit edit mode and save order. Existing test IDs and local history remain unchanged.
+- Home: iOS-style live insertion. A floating dragged card follows the touch; other cards shift one slot immediately on crossing the target; release only settles the floating card into the blank slot. Absolute/root-coordinate motion prevents positional jumps while the keyed grid animates. Back and DONE still save/exit. Stable test IDs and history are untouched.
 - Shared low-saturation lavender/pink/mint visual style: category-accented Home and Reports cards, Cell Info detail cards, PUBG/Tamasha setup actions and native post-recording review panel. Primary gradient buttons use violet→blue→mint; secondary use soft pastel fill. Third-party installed app icons stay unchanged. Accent tint is static per test category to avoid expensive icon pixel extraction during 1-second telephony updates.
 - External/system screen recording: start/end a test-window timer independently of CellTracker MediaProjection; use "FIND MATCHING RECORDINGS" (requires media permission) or "SELECT SYSTEM VIDEO" (Android file picker) to pick video. Read MP4 duration and available timestamp metadata, show estimated start time to edit/confirm. On confirmation, save separate per-second TimeMap.csv and .srt under Downloads/CellTracker/.../ExternalTimeline, keep the original MP4 URI and open existing video review/manual stall markers.
 - All externally inferred timestamps are **ESTIMATED**, never frame-exact. DATE_TAKEN can be metadata-derived and DATE_ADDED/DATE_MODIFIED are not reliable capture start times. All candidate matches require human verification; visible event synchronization is advised for modem-log analysis. Origin is marked EXTERNAL_VIDEO_ESTIMATED / EXTERNAL_VIDEO_REVIEW_ESTIMATED. Recording through CellTracker continues to use its own elapsedRealtime/wall-time anchors.
