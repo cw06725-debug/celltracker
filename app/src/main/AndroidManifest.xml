@@ -48,6 +48,10 @@
         <package android:name="com.qualcomm.qti.logkit" />
         <package android:name="com.qualcomm.qti.logkit.lite" />
         <package android:name="com.google.android.youtube" />
+        <package android:name="com.spbtv.mobilinktv" />
+        <package android:name="com.tencent.ig" />
+        <package android:name="com.pubg.krmobile" />
+        <package android:name="com.vng.pubgmobile" />
         <package android:name="com.zhiliaoapp.musically" />
         <package android:name="com.ss.android.ugc.trill" />
         <package android:name="org.zwanoo.android.speedtest" />
@@ -81,6 +85,7 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <service android:name=".ManualStallServiceV130" android:exported="false" android:foregroundServiceType="dataSync" />
         <service
             android:name=".RecordingService"
             android:exported="false"

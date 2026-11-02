@@ -118,6 +118,35 @@ class ExperienceRepositoryV130(private val context: Context) {
             push(r.path,r.startedAt,"CALL_SUCCESS",r.successRate,r.attempts,operator,declaredRat,origin="AUTO_LOCAL_RAT_DECLARED")
             push(r.path,r.startedAt,"CALL_SETUP_AVG_MS",r.averageMs,r.attempts,operator,declaredRat,origin="AUTO_LOCAL_RAT_DECLARED")
         }
+        // Manual Tamasha/PUBG stall runs: read only immutable SUMMARY CSV rows.
+        // Tap timing is evidence of the observer's marks, not an automatically detected freeze.
+        runCatching {
+            val projection = arrayOf(android.provider.MediaStore.Downloads._ID,
+                android.provider.MediaStore.Downloads.DISPLAY_NAME,
+                android.provider.MediaStore.Downloads.RELATIVE_PATH)
+            context.contentResolver.query(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI,projection,null,null,null)?.use { cur ->
+                while(cur.moveToNext()) {
+                    val name=cur.getString(1).orEmpty();val path=cur.getString(2).orEmpty()
+                    if(!name.startsWith("Stall_")||!name.endsWith(".csv")||!path.contains("/ManualStall"))continue
+                    val uri=android.content.ContentUris.withAppendedId(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI,cur.getLong(0))
+                    val cells=context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { r ->
+                        r.readLine() // schema header
+                        r.readLine()?.take(8192)?.let { parseCsv(it).firstOrNull() }
+                    } ?: continue
+                    if(cells.size<19||cells[0]!="SUMMARY"||cells[3]!=role||cells[18]!="MANUAL_STALL_TAP")continue
+                    val started=cells[4].toLongOrNull()?:continue
+                    val count=cells[7].toDoubleOrNull()?:continue
+                    val sec=cells[8].toDoubleOrNull()?.div(1000.0)?:continue
+                    val type=cells[1]
+                    val countId=if(type=="LIVE")"TAMASHA_STALLS" else if(type=="GAME")"PUBG_STALLS" else continue
+                    val secId=if(type=="LIVE")"TAMASHA_STALL_SEC" else "PUBG_STALL_SEC"
+                    val testOp=cells[10];val observedRat=cells[11]
+                    val origin="MANUAL_TAP_NETWORK_START_SNAPSHOT"
+                    push(uri.toString(),started,countId,count,1,testOp,observedRat,cells[12],cells[13],cells[14],cells[15],origin)
+                    push(uri.toString(),started,secId,sec,1,testOp,observedRat,cells[12],cells[13],cells[14],cells[15],origin)
+                }
+            }
+        }
         // Speedtest values come from explicitly user-confirmed rounds, not inferred from third-party UI.
         // CSVs are the immutable measurement source; generated XLSX copies are never re-imported.
         runCatching {

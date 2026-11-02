@@ -15,6 +15,10 @@ data class ExperienceMetric(
 
 object ExperienceMetrics {
     val all = listOf(
+        ExperienceMetric("TAMASHA_STALLS", "Tamasha live stall count", "count", ExperienceDirection.LOWER_IS_BETTER, ExperienceDeltaUnit.ABSOLUTE),
+        ExperienceMetric("TAMASHA_STALL_SEC", "Tamasha live stall duration", "s", ExperienceDirection.LOWER_IS_BETTER, ExperienceDeltaUnit.ABSOLUTE),
+        ExperienceMetric("PUBG_STALLS", "PUBG gaming stall count", "count", ExperienceDirection.LOWER_IS_BETTER, ExperienceDeltaUnit.ABSOLUTE),
+        ExperienceMetric("PUBG_STALL_SEC", "PUBG gaming stall duration", "s", ExperienceDirection.LOWER_IS_BETTER, ExperienceDeltaUnit.ABSOLUTE),
         ExperienceMetric("SPEEDTEST_DL_MBPS", "Speedtest download", "Mbps", ExperienceDirection.HIGHER_IS_BETTER, ExperienceDeltaUnit.PERCENT),
         ExperienceMetric("SPEEDTEST_UL_MBPS", "Speedtest upload", "Mbps", ExperienceDirection.HIGHER_IS_BETTER, ExperienceDeltaUnit.PERCENT),
         ExperienceMetric("PING_AVG_MS", "Ping average latency", "ms", ExperienceDirection.LOWER_IS_BETTER, ExperienceDeltaUnit.PERCENT),

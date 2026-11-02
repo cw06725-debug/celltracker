@@ -215,6 +215,7 @@ class MainActivity : ComponentActivity() {
                 var showWhatsAppSend by remember { mutableStateOf(false) }
                 var showDeviceLogs by remember { mutableStateOf(false) }
                 var showThroughputTest by remember { mutableStateOf(false) }
+                var showManualStallTest by remember { mutableStateOf<ManualStallKindV130?>(null) }
                 // The test preparation overlay is drawn above the actual Home composition.
                 // The legacy test page is not composed until setup has completed.
                 var youtubePreparing by remember { mutableStateOf(true) }
@@ -292,7 +293,7 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                BackHandler(enabled = showSettings || detailPath != null || showPingTest || showCallSetup || showVideoLoading || showVisualAiCollector || showBasementTest || showWhatsAppSend || showDeviceLogs || showThroughputTest) {
+                BackHandler(enabled = showSettings || detailPath != null || showPingTest || showCallSetup || showVideoLoading || showVisualAiCollector || showBasementTest || showWhatsAppSend || showDeviceLogs || showThroughputTest || showManualStallTest != null) {
                     when {
                         detailPath != null -> detailPath = null
                         showCallSetup -> showCallSetup = false
@@ -301,6 +302,7 @@ class MainActivity : ComponentActivity() {
                         showBasementTest -> showBasementTest = false
                         showWhatsAppSend -> showWhatsAppSend = false
                         showDeviceLogs -> showDeviceLogs = false
+                        showManualStallTest != null -> showManualStallTest = null
                         showThroughputTest -> showThroughputTest = false
                         showPingTest -> showPingTest = false
                         showSettings -> showSettings = false
@@ -320,6 +322,7 @@ class MainActivity : ComponentActivity() {
                     showWhatsAppSend && !whatsappPreparing -> RootDestination.WhatsAppSend
                     showPingTest && !pingPreparing -> RootDestination.PingTest
                     showDeviceLogs -> RootDestination.DeviceLogs
+                    showManualStallTest != null -> RootDestination.ManualStall
                     showThroughputTest && !throughputPreparing -> RootDestination.Throughput
                     showSettings -> RootDestination.Settings
                     else -> RootDestination.Main
@@ -359,6 +362,7 @@ MainScreen(
                         onCallSetup = { callPreparing = !state.callSetup.isRunning && state.deviceLink.role == DeviceLinkRole.CONTROLLER; showCallSetup = true },
                         onDeviceLogs = { showDeviceLogs = true },
                         onThroughputTest = { throughputPreparing = true; showThroughputTest = true },
+                        onManualStallTest = { showManualStallTest = it },
                         onDismissMessage = vm::clearMessage
                     )
                 }
@@ -402,6 +406,7 @@ MainScreen(
                     RootDestination.WhatsAppSend -> Spacer(Modifier.fillMaxSize())
                     RootDestination.DeviceLogs -> DeviceLogsScreen(onBack = { showDeviceLogs = false })
                     RootDestination.Throughput -> Spacer(Modifier.fillMaxSize())
+                    RootDestination.ManualStall -> Spacer(Modifier.fillMaxSize())
                     RootDestination.PingTest -> Spacer(Modifier.fillMaxSize())
                     RootDestination.CallSetup -> Spacer(Modifier.fillMaxSize())
                     RootDestination.Settings -> SettingsScreen(
@@ -414,21 +419,31 @@ MainScreen(
                 }
                 } // end AnimatedContent; test components below keep their state across setup/launch
                 if (showVideoLoading) {
+                    SoftPageRevealV130(revealKey = "showVideoLoading-$youtubePreparing", modifier = Modifier.fillMaxSize()) {
                     VideoLoadingScreen(
                         onBack = { showVideoLoading = false },
                         onVisualAiCollector = { showVisualAiCollector = true; showVideoLoading = false },
                         setupOnly = youtubePreparing,
                         onSetupFinished = { youtubePreparing = false }
                     )
+                    }
                 }
                 if (showWhatsAppSend) {
+                    SoftPageRevealV130(revealKey = "showWhatsAppSend-$whatsappPreparing", modifier = Modifier.fillMaxSize()) {
                     WhatsAppSendScreen(
                         onBack = { showWhatsAppSend = false },
                         setupOnly = whatsappPreparing,
                         onSetupFinished = { whatsappPreparing = false }
                     )
+                    }
+                }
+                showManualStallTest?.let { kind ->
+                    SoftPageRevealV130(revealKey = "manual-test-${kind.name}", modifier = Modifier.fillMaxSize()) {
+                        ManualStallScreenV130(kind, state, onBack = { showManualStallTest = null })
+                    }
                 }
                 if (showThroughputTest) {
+                    SoftPageRevealV130(revealKey = "showThroughputTest-$throughputPreparing", modifier = Modifier.fillMaxSize()) {
                     ThroughputScreen(
                         onBack = { showThroughputTest = false },
                         liveState = state,
@@ -437,8 +452,10 @@ MainScreen(
                         setupOnly = throughputPreparing,
                         onSetupFinished = { throughputPreparing = false }
                     )
+                    }
                 }
                 if (showPingTest) {
+                    SoftPageRevealV130(revealKey = "showPingTest-$pingPreparing", modifier = Modifier.fillMaxSize()) {
                     PingTestScreen(
                         state = state.pingTest,
                         history = state.pingHistory,
@@ -455,8 +472,10 @@ MainScreen(
                         setupOnly = pingPreparing,
                         onSetupFinished = { pingPreparing = false }
                     )
+                    }
                 }
                 if (showCallSetup) {
+                    SoftPageRevealV130(revealKey = "showCallSetup-$callPreparing", modifier = Modifier.fillMaxSize()) {
                     CallSetupScreen(
                         link = state.deviceLink,
                         test = state.callSetup,
@@ -474,6 +493,7 @@ MainScreen(
                         setupOnly = callPreparing,
                         onSetupFinished = { callPreparing = false }
                     )
+                    }
                 }
                 } // Shared root: setup overlays are hosted directly above Home.
                 state.exportResult?.let { result ->
@@ -771,6 +791,8 @@ private fun ReportsHome(
     var basementReports by remember { mutableStateOf(emptyList<BasementReportRow>()) }
     var tikTokLagReports by remember { mutableStateOf(emptyList<TikTokReportRowV1>()) }
     var tikTokUploadReports by remember { mutableStateOf(emptyList<TikTokReportRowV1>()) }
+    var manualLiveReports by remember { mutableStateOf(emptyList<ManualStallReportV130.Stored>()) }
+    var manualGameReports by remember { mutableStateOf(emptyList<ManualStallReportV130.Stored>()) }
     var deleteYouTubePath by remember { mutableStateOf<String?>(null) }
     var category by rememberSaveable { mutableStateOf<String?>(initialCategory) }
     var selectedPath by rememberSaveable { mutableStateOf<String?>(null) }
@@ -795,6 +817,8 @@ private fun ReportsHome(
             val tt = withContext(Dispatchers.IO) { loadTikTokReportsV1(context) }
             tikTokLagReports = tt.first
             tikTokUploadReports = tt.second
+            manualLiveReports = withContext(Dispatchers.IO) { ManualStallReportV130.history(context,ManualStallKindV130.LIVE) }
+            manualGameReports = withContext(Dispatchers.IO) { ManualStallReportV130.history(context,ManualStallKindV130.GAME) }
         }
     }
 
@@ -1508,8 +1532,31 @@ private fun ReportsHome(
         return
     }
 
+    if (category == "MANUAL_LIVE" || category == "MANUAL_GAME") {
+        val kind = if (category == "MANUAL_LIVE") ManualStallKindV130.LIVE else ManualStallKindV130.GAME
+        val files = if (kind == ManualStallKindV130.LIVE) manualLiveReports else manualGameReports
+        SoftPageRevealV130(revealKey = "manual-report-${kind.name}", modifier = Modifier.fillMaxSize()) {
+            Column(modifier.fillMaxSize().background(bunnyScreenBrush())) {
+                TopAppBar(title = { Text("${kind.label} Reports") }, navigationIcon = { TextButton(onClick = { category = null }) { Text("‹ Back") } },
+                    actions = { TextButton(onClick = { reloadReports() }) { Text("Refresh") } })
+                LazyColumn(Modifier.fillMaxSize().padding(16.dp),verticalArrangement=Arrangement.spacedBy(9.dp)) {
+                    item { Text("${files.size} completed tests · XLSX summaries and events saved under Downloads/CellTracker.") }
+                    items(files,key={it.uri.toString()}) { file ->
+                        ReportListCard(file.name, SimpleDateFormat("yyyy-MM-dd HH:mm",Locale.US).format(Date(file.timestamp))) {
+                            val i=Intent(Intent.ACTION_VIEW).apply {setDataAndType(file.uri,"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)}
+                            runCatching { context.startActivity(i) }.onFailure { Toast.makeText(context,"No XLSX viewer installed",Toast.LENGTH_SHORT).show() }
+                        }
+                    }
+                }
+            }
+        }
+        return
+    }
+
     if (category == "ANALYSIS") {
-        ExperienceAnalysisScreenV130(onBack = { category = null })
+        SoftPageRevealV130(revealKey="experience-analysis",modifier=Modifier.fillMaxSize()) {
+            ExperienceAnalysisScreenV130(onBack = { category = null })
+        }
         return
     }
 
@@ -1538,6 +1585,7 @@ private fun ReportsHome(
             else -> "Reports"
         }
 
+        SoftPageRevealV130(revealKey = "reports-list-$cat", modifier = Modifier.fillMaxSize()) {
         Column(modifier.fillMaxSize()) {
             TopAppBar(
                 title = { Text("$title Reports", maxLines = 1) },
@@ -1643,9 +1691,11 @@ private fun ReportsHome(
                 }
             }
         }
+        } // page reveal for report categories
         return
     }
 
+    SoftPageRevealV130(revealKey = "reports-home", modifier = Modifier.fillMaxSize()) {
     LazyColumn(
         modifier = modifier.padding(horizontal = 16.dp),
         contentPadding = PaddingValues(top = 8.dp, bottom = 16.dp),
@@ -1670,6 +1720,9 @@ private fun ReportsHome(
         item { ReportCategoryCard("Network Recording", state.recordings.size) { category = "RECORDING" } }
         item { ReportCategoryCard("TikTok Video Lag", tikTokLagReports.size) { category = "TIKTOK_LAG" } }
         item { ReportCategoryCard("TikTok Upload", tikTokUploadReports.size) { category = "TIKTOK_UPLOAD" } }
+        item { ReportCategoryCard("Tamasha Live Streaming", manualLiveReports.size) { category = "MANUAL_LIVE" } }
+        item { ReportCategoryCard("PUBG Gaming", manualGameReports.size) { category = "MANUAL_GAME" } }
+    }
     }
 }
 
@@ -1721,8 +1774,12 @@ private fun ReportListCard(
     onClick: () -> Unit,
     trailingActions: @Composable RowScope.() -> Unit = {}
 ) {
+    val press = remember { MutableInteractionSource() }
+    val isPressed by press.collectIsPressedAsState()
+    val scale by animateFloatAsState(if(isPressed)0.985f else 1f, tween(155, easing=FastOutSlowInEasing), label="reportRowPress")
     Surface(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        modifier = Modifier.fillMaxWidth().graphicsLayer {scaleX=scale;scaleY=scale}
+            .clickable(interactionSource=press, indication=null, onClick = onClick),
         shape = RoundedCornerShape(18.dp),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.48f),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
@@ -1830,6 +1887,7 @@ private sealed interface RootDestination {
     data object CallSetup : RootDestination
     data object DeviceLogs : RootDestination
     data object Throughput : RootDestination
+    data object ManualStall : RootDestination
     data class Detail(val path: String) : RootDestination
 }
 
@@ -1861,6 +1919,7 @@ private fun MainScreen(
     onCallSetup: () -> Unit,
     onDeviceLogs: () -> Unit,
     onThroughputTest: () -> Unit,
+    onManualStallTest: (ManualStallKindV130) -> Unit,
     onDismissMessage: () -> Unit
 ) {
     var neighborsExpanded by remember { mutableStateOf(false) }
@@ -1960,6 +2019,7 @@ private fun MainScreen(
                     .fillMaxSize()
                     .padding(bottom = if (homeAllTestsVisible || mainTab == "CELL" || mainTab == "SETTINGS" || homeTikTokTool != null || (mainTab == "REPORTS" && reportsSubpageVisible)) 0.dp else 73.dp)
             ) { tab ->
+                SoftPageRevealV130(revealKey = "main-$tab", modifier = Modifier.fillMaxSize()) {
                 if (tab == "ALL_TESTS") {
                     Column(
                         Modifier.fillMaxSize()
@@ -2017,7 +2077,8 @@ private fun MainScreen(
                     onBasementTest = onBasementTest,
                     onTikTokUpload = { homeTikTokTool = "UPLOAD" },
                     onDeviceLogs = onDeviceLogs,
-                    onThroughputTest = onThroughputTest
+                    onThroughputTest = onThroughputTest,
+                    onManualStallTest = onManualStallTest
                 )
                 return@mainContent
             }
@@ -2322,6 +2383,7 @@ private fun MainScreen(
                 }
             }
                 }
+                } // SoftPageRevealV130: only animate the incoming tab once
             }
 
             if (!homeAllTestsVisible && mainTab != "CELL" && homeTikTokTool == null && !((mainTab == "SETTINGS" && settingsSubpageVisible) || (mainTab == "REPORTS" && reportsSubpageVisible))) {
@@ -3923,7 +3985,8 @@ private fun SettingsScreen(
                         }
                     )
                 }
-                Box(Modifier.weight(1f).fillMaxWidth()) {
+                SoftPageRevealV130(revealKey = "settings-$currentPage", modifier = Modifier.weight(1f).fillMaxWidth()) {
+                    Box(Modifier.fillMaxSize()) {
                     when (currentPage) {
                 "sampling" -> Column(Modifier.padding(16.dp).fillMaxSize().clip(RoundedCornerShape(22.dp)).background(MaterialTheme.colorScheme.surface).border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha=.12f), RoundedCornerShape(22.dp)).padding(16.dp).verticalScroll(rememberRetainedScrollState("settings.sampling")), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     IntervalPicker("UI refresh interval", draft.uiRefreshMs) { applySetting(draft.copy(uiRefreshMs = it)) }
@@ -4090,7 +4153,8 @@ private fun SettingsScreen(
                     Spacer(Modifier.height(if (embedded) 84.dp else 6.dp))
                 }
                     }
-                }
+                    } // settings page inner Box
+                } // one-shot fade on entry AND return; retain the proven horizontal slide
             }
         }
     }
@@ -4152,10 +4216,14 @@ private fun SettingsGroupDivider() {
 
 @Composable
 private fun SettingsMenuRow(icon: Int, title: String, subtitle: String, onClick: () -> Unit) {
+    val press = remember { MutableInteractionSource() }
+    val isPressed by press.collectIsPressedAsState()
+    val scale by animateFloatAsState(if(isPressed)0.985f else 1f, tween(155, easing=FastOutSlowInEasing), label="settingsRowPress")
     Row(
         Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .graphicsLayer { scaleX=scale; scaleY=scale }
+            .clickable(interactionSource=press, indication=null, onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 15.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -6890,7 +6958,8 @@ private fun HomeScreenV121(
     onBasementTest: () -> Unit,
     onTikTokUpload: () -> Unit,
     onDeviceLogs: () -> Unit,
-    onThroughputTest: () -> Unit
+    onThroughputTest: () -> Unit,
+    onManualStallTest: (ManualStallKindV130) -> Unit
 ) {
     val context = LocalContext.current
     // These PackageManager probes are relatively costly on some OEM builds.
@@ -6993,8 +7062,17 @@ private fun HomeScreenV121(
                 modifier = Modifier.weight(1f), onClick = onDeviceLogs)
         }
             }
+        HomeRevealV130(order = 6) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                HomeQuickCardV121("Live", "Tamasha", "LIVE", Color(0xFF7B6AC7),
+                    ManualStallKindV130.LIVE.packages, Modifier.weight(1f), installIfMissing = false, onClick = { onManualStallTest(ManualStallKindV130.LIVE) })
+                HomeQuickCardV121("Gaming", "PUBG", "GAME", Color(0xFF328D86),
+                    ManualStallKindV130.GAME.packages, Modifier.weight(1f), installIfMissing = false, onClick = { onManualStallTest(ManualStallKindV130.GAME) })
+                Spacer(Modifier.weight(1f))
+            }
+        }
         if (mtkLoggerPackage != null || qtiLoggerPackage != null) {
-            HomeRevealV130(order = 6) {
+            HomeRevealV130(order = 7) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (mtkLoggerPackage != null) {
                     HomeQuickCardV121("MTK Logger", "Vendor Log", "LOG", Color(0xFF64748B),
@@ -7092,7 +7170,7 @@ private fun HomeQuickCardV121(title: String, subtitle: String, symbol: String, i
                 Text(title, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, maxLines = 1)
                 Text(subtitle, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                 if (appPackages.isNotEmpty()) {
-                    Text(if (!installIfMissing) "On device" else if (version != null) "v$version" else "Not installed · Play Store", style = MaterialTheme.typography.labelSmall, color = if (version != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error, maxLines = 1)
+                    Text(if (!installIfMissing && title !in setOf("Live","Gaming")) "On device" else if (version != null) "v$version" else "Not installed · Install in Setup", style = MaterialTheme.typography.labelSmall, color = if (version != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error, maxLines = 1)
                 }
             }
         }

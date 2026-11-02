@@ -9,6 +9,8 @@ data class ExperienceTestItemV130(val id: String, val label: String, val metrics
 
 object ExperienceTestCatalogV130 {
     val all = listOf(
+        ExperienceTestItemV130("TAMASHA", "Tamasha Live Streaming", setOf("TAMASHA_STALLS","TAMASHA_STALL_SEC")),
+        ExperienceTestItemV130("PUBG", "PUBG Gaming", setOf("PUBG_STALLS","PUBG_STALL_SEC")),
         ExperienceTestItemV130("MFT_PING", "MFT Ping Test", setOf("MFT_PING_AVG_MS", "MFT_PING_SUCCESS")),
         ExperienceTestItemV130("MFT_VIDEO", "MFT Short Video Loading", setOf("MFT_SHORT_VIDEO_AVG_MS")),
         ExperienceTestItemV130("SPEEDTEST", "Speedtest DL / UL", setOf("SPEEDTEST_DL_MBPS", "SPEEDTEST_UL_MBPS")),

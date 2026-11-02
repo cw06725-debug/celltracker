@@ -1,3 +1,10 @@
+## v1.3.0 Preview 14 · versionCode 265 (2026-11-02)
+
+- Apply Home-like one-shot eased entrance/re-entry to main tabs, Settings subpage content, Reports/Experience Analysis and existing test screens, while preserving Preview 12 stable bottom navigation and Settings horizontal slide.
+- Add shared manual-stall test for Tamasha Live Streaming and PUBG Gaming, with draggable lilac/mint foreground overlay, explicit start/end taps, repeated events, monotonic duration timing, per-session operator/radio start snapshot, automatic CSV + 2-sheet XLSX export and report history.
+- Integrate four new separate LIVE/GAME metric IDs into Experience Analysis test catalog/rules, local report scanner, per-run report selection and existing LAN synchronization.
+- Keep all previous Wi-Fi Direct/Shizuku/Speedtest/Bluetooth/recording functionality unchanged. Android Gradle build and real-device overlay/animation validation pending; no claim of automatic stall detection.
+
 ## v1.3.0 Preview 13 · Home Motion Polish (versionCode 264)
 - Add short, one-shot Home entrance animations: header, signal hero and test-card rows fade in with a subtle upward drift and stagger. Animation starts only when Home is composed (not on periodic cellular samples); reusable `HomeRevealV130` uses draw-only graphics-layer updates to avoid re-composing heavy icons every frame.
 - Add restrained press feedback to the Home signal summary and test cards; keep card sizes/layout unchanged and preserve existing click actions.

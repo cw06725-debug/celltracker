@@ -1,3 +1,36 @@
+# CellTracker v1.3.0 Preview 14 — Soft Page Motion + Manual Stall Tests
+
+**Test preview** · `versionCode=265` · `versionName=1.3.0` · based on Preview 13 Home Motion. Full Android Gradle compilation and real-device testing are **not verified in this environment**.
+
+## Animation polish
+
+- Extend Home's 320 ms eased fade/9 dp upward entrance to Home return, Reports, Cell Info, Settings body, report categories, Experience Analysis, and the Ping/Call/YouTube/WhatsApp/Speedtest test screens. Entering **and returning** to a page triggers one entry reveal.
+- Keep Preview 12's flicker-free static bottom navigation icons and instant tab replacement (no simultaneous full-screen heavy tab crossfade). Keep Settings' **working horizontal slide** for subpages, with a subtle content reveal within the slide.
+- Settings menu items and report rows get subtle 0.985 pressed-scale feedback. RF readings continue at their original sampling cadence; no infinite gradient animation runs in the background.
+
+## Two new tests using ONE manual-stall implementation
+
+- **Tamasha Live Streaming** — official Android package `com.spbtv.mobilinktv` (Pakistani Tamasha streaming service).
+- **PUBG Gaming** — main PUBG MOBILE package `com.tencent.ig`, with extra known market variants for detection.
+- Home displays both test tiles. Tap to configure **Task name** and **DUT1/DUT2/REF1/REF2** and see the installed application/version. If missing, use the install link. Select **START TEST** to show a draggable, lilac/mint floating panel; open the target app separately. The floating controls are **START STALL → END STALL** for each observed buffering/freeze event, then **FINISH TEST**.
+- System overlay permission is explicitly requested. Android may block or hide overlays on certain protected/fullscreen apps and devices; validate on actual PUBG/Tamasha. The user must tap event boundaries; this is **not automatic FPS, video-buffer, ping or frame-freeze detection**.
+- The shared stopwatch uses monotonic time for each completed event. A stall left open when finishing is **excluded**, not invented. Counts, total stall duration (seconds), elapsed test time, stall-time ratio, per-event starts/ends, task, device role, app version and a **test-start-only** operator/RAT/band/PCI/RSRP/SINR snapshot are retained.
+- Export creates a raw summary+event **CSV** and a two-sheet **XLSX** (Summary and Stall Events) at `Downloads/CellTracker/YYYY-MM-DD/ManualStall/`. Source files are not rewritten during analysis. Export runs on an IO coroutine.
+- Reports → Tamasha Live Streaming / PUBG Gaming shows XLSX history. Experience Analysis → Data → Load Local Reports can import `TAMASHA_STALLS`, `TAMASHA_STALL_SEC`, `PUBG_STALLS`, `PUBG_STALL_SEC`; these are distinct selectable test items in Data and distinct configurable entries in Rules. For a single role+metric with multiple report runs, the existing conflict warning prevents silent merging; choose the exact run before comparison. Wi-Fi post-test bundles reuse the existing Experience Analysis report transfer, including attachments when accessible.
+- The captured radio metadata is a **start snapshot**, not proof of the network state throughout the entire stall; manual mark timing is subject to human reaction latency. No simulated results.
+
+## Known limits / validation required
+
+1. GitHub Actions: `./gradlew :app:assembleDebug` with Android SDK 34, then install on same-signature device; this environment only performed Kotlin PSI syntax and pure timing/CSV tests.
+2. Test active overlay on PUBG full-screen and Tamasha, drag, repeated START/END, FINISH while no stall and with an unfinished stall, and rotate/background/return cases. Check foreground-service notification and output `CSV`/`XLSX` against manual timestamps.
+3. Test both new categories in Reports, scan local metrics in Experience Analysis, multi-select by date/test, and 4-device Wi-Fi report collection. Do not claim existing Wi-Fi Direct multi-client stability is solved by this change.
+4. Regression: Home/Reports/Settings rapid tab switching (no nav icon flicker), Settings subpage enter/return slide, test setup and report detail enter/return, and jank/frame times.
+5. If Android kills the capture service mid-test, incomplete in-memory events cannot be finalized as a normal report; the app displays an interrupted status. Further crash-resume persistence and always-on network snapshots are not part of Preview 14.
+
+Only README.md and CHANGELOG.md are intentionally retained as root Markdown documentation. All other test/communication modules and the approved gradient launcher icon are preserved.
+
+---
+
 **Current test build: v1.3.0 Preview 13 (versionCode 264).** Home-only one-shot staggered entrance and card press feedback; bottom navigation and Settings transitions retained from Preview 12. Requires GitHub Actions Android build and device verification.
 
 **Preview 12 (Gradient Icon Approved)** — versionCode 262. Replaces the legacy, circular and adaptive launcher icons with the approved lavender–blue–mint gradient artwork. No functional, Wi-Fi, animation, overlay, logging or report changes. Requires GitHub Actions Android Gradle build and launcher verification on real devices.
