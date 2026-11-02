@@ -1,3 +1,13 @@
+## Preview 20 (versionCode 271) — Reports-first review and smooth video clock
+
+From Reports → PUBG Gaming / Tamasha Live Streaming, select an exported report to view its **in-app Summary** and per-stall times before choosing REVIEW RECORDING (for its associated latest video) or OPEN EXCEL REPORT. Pending latest video without exported results appears as **Latest recording · Review pending** under its test category. The generic **Reports → Screen Recordings · Timeline** route also starts with a summary instead of immediately playing the video. The test setup page no longer contains a recording-review launcher or a direct-XLSX saved-report list.
+
+Video playback shows smoothly interpolated milliseconds (40 ms UI tick, monotonic time) and can still be paused/seeked. This interpolation is for display only; the actual video/video-log mapping remains **ESTIMATED**, not frame-accurate. Original files, event markers and exports are preserved.
+
+**PREVIEW only:** local syntax checks and isolated position tests are not a full Android Gradle build; verify via GitHub Actions and real-device playback/navigation.
+
+---
+
 # CellTracker v1.3.0 Preview 19 — CompileFix (Player, Report Actions & Video Diagnostics)
 
 **PREVIEW only · versionCode 270 · based on Preview 19.** Screenshot-reported `:app:compileDebugKotlin` errors in the player ScrollView setup have been addressed; full Android Gradle compilation and real-device verification are still required.

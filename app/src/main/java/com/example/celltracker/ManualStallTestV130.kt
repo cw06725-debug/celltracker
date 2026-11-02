@@ -416,7 +416,6 @@ fun ManualStallScreenV130(kind: ManualStallKindV130, liveState: AppState, onBack
                             videoConsent.launch(mgr.createScreenCaptureIntent())
                         },Modifier.fillMaxWidth(),enabled=!active && task.isNotBlank())
                     }
-                    if(lastVideoAvailable) GradientActionV130("REVIEW RECORDING", { RecordingTimelinePlayerV130.open(context) }, Modifier.fillMaxWidth(), primary=false)
                     HorizontalDivider()
                     Text("System / OEM screen recorder", style=MaterialTheme.typography.titleMedium)
                     Text("Use this if the phone cannot record through CellTracker. Record the test window, then select its MP4 and confirm the video start time.",style=MaterialTheme.typography.bodySmall)
@@ -477,7 +476,7 @@ fun ManualStallScreenV130(kind: ManualStallKindV130, liveState: AppState, onBack
                         },Modifier.fillMaxWidth(),primary=true)
                     }
                     if(externalStatus.isNotBlank()) Text(externalStatus,style=MaterialTheme.typography.bodySmall)
-                    Text("After recording, open Review to mark stalls on the video timeline. Export creates a manual-reviewed CSV + XLSX without displaying an overlay during gameplay. CSV and SRT remain alongside the MP4.",style=MaterialTheme.typography.bodySmall)
+                    Text("After recording, open Reports → ${kind.label} → Latest recording to review the video and mark stalls. The original MP4, CSV and SRT remain unchanged.",style=MaterialTheme.typography.bodySmall)
                 } else {
                     if(!permissionReady) Text("Overlay permission required to mark stalls while using ${kind.application}.",color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)
                     GradientActionV130(if(permissionReady)"START MANUAL STALL TEST" else "GRANT OVERLAY PERMISSION", {start()},Modifier.fillMaxWidth(),enabled=!active && task.isNotBlank() && !videoActive && !ManualStallStatusV130.state.value.running)
@@ -495,15 +494,9 @@ fun ManualStallScreenV130(kind: ManualStallKindV130, liveState: AppState, onBack
             }}
             Text(progress.message,style=MaterialTheme.typography.bodySmall)
             if(progress.lastReport.isNotBlank() && progress.kind==kind) Text("Saved to Downloads/CellTracker · CSV + XLSX",style=MaterialTheme.typography.bodySmall)
-            Row(verticalAlignment=Alignment.CenterVertically,modifier=Modifier.fillMaxWidth()) {
-                Text("Saved reports",style=MaterialTheme.typography.titleMedium,modifier=Modifier.weight(1f))
-                TextButton(onClick={history=ManualStallReportV130.history(context,kind)}){Text("Refresh")}
-            }
-            history.take(20).forEach { row ->
-                OutlinedButton(onClick={val intent=Intent(Intent.ACTION_VIEW).apply{setDataAndType(row.uri,"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)};runCatching{context.startActivity(intent)}.onFailure{Toast.makeText(context,"No XLSX viewer installed",Toast.LENGTH_SHORT).show()}},modifier=Modifier.fillMaxWidth()){
-                    Text(row.name,maxLines=2)
-                }
-            }
+            Text("Saved test summaries and recording review are available under Reports → ${kind.label}.",
+                style=MaterialTheme.typography.bodySmall)
+
         }
     }
 }

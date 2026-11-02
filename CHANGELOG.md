@@ -1,3 +1,13 @@
+# CellTracker v1.3.0 Preview 20 — Report-first Video Review & Smooth Clock (versionCode 271)
+
+- PUBG/Tamasha test setup is for starting tests and importing external recordings. Removed the misleading immediate Review button and direct-XLSX Saved reports list; review now lives under Reports.
+- Reports → PUBG Gaming / Tamasha Live Streaming → choose a report opens an in-app Summary with actual exported stall count, duration, ratio, task, role, operator, source and individual event times, then buttons to REVIEW the correctly associated recording (if available) or OPEN the original Excel. XLSX parser runs off the UI thread, with explicit fallback if source data is inaccessible.
+- Unreviewed latest recording appears as a separate pending item under the appropriate scenario in Reports, even before the first stall XLSX has been generated. Reports → Screen Recordings · Timeline opens a recording Summary before playback. Reports refreshes after video review resumes.
+- Video clock / seekbar display: approximately 40 ms UI refresh, millisecond display, monotonic-time interpolation between potentially coarse VideoView position samples, protection against delayed seek completion and pause/seek resets. This smooths displayed text but **does not improve the precision** of recorded timestamps; MP4 and TimeMap.csv remain unchanged and marked ESTIMATED.
+- Existing manual overlay, Bluetooth Call Setup, Wi-Fi Direct, Shizuku, Speedtest, Experience Analysis and gradient UI retained. Android SDK Gradle build and real-device validation not available here; run GitHub Actions and verify video timing and report navigation.
+
+---
+
 # v1.3.0 Preview 19 CompileFix — Android View layout interoperability
 
 - Fix `RecordingTimelinePlayerV130.kt` GitHub Actions compile errors: `fillViewport` unresolved / val cannot be reassigned and `ScrollView.LayoutParams` unresolved.

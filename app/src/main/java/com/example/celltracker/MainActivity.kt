@@ -871,6 +871,18 @@ private fun ReportsHome(
     }
 
     LaunchedEffect(Unit) { reloadReports() }
+    // Returning from the separate video-review Activity must refresh newly exported reports.
+    val reportsLifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(reportsLifecycleOwner, category) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME &&
+                (category == "MANUAL_LIVE" || category == "MANUAL_GAME" || category == "VIDEO_TIMELINE")) {
+                reloadReports()
+            }
+        }
+        reportsLifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { reportsLifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     // One-shot restoration after returning from the root RecordingDetailScreen.
     // Keep the user in Network Recording Reports; a second Back then returns to
     // Reports by Type, matching the normal one-level navigation model.
@@ -1098,6 +1110,33 @@ private fun ReportsHome(
                 onDeleteRecording(target)
                 selectedPath = null
             }
+        )
+        return
+    }
+
+    // Manual-stall reports have an in-app Summary, not a direct XLSX launcher.
+    // Keep the selection under Reports so Back returns to the corresponding test history.
+    if (selectedPath != null && (category == "MANUAL_LIVE" || category == "MANUAL_GAME")) {
+        val kind = if(category == "MANUAL_LIVE") ManualStallKindV130.LIVE else ManualStallKindV130.GAME
+        val reports = if(kind == ManualStallKindV130.LIVE) manualLiveReports else manualGameReports
+        val chosen = reports.firstOrNull { it.uri.toString() == selectedPath }
+        val preferences = context.getSharedPreferences("ct_recording_timeline", Context.MODE_PRIVATE)
+        val latest = RecordingTimelineV130.last(context)
+        val matchesKind = preferences.getString("reviewKind", "") == kind.name &&
+            latest != null && preferences.getString("reviewVideoUri", "") == latest.first.toString()
+        val latestVideoStart = latest?.second?.wallAt(0L) ?: -1L
+        val isLatestRecording = selectedPath == "__PENDING_VIDEO__"
+        // A reviewed XLSX is linked only if its filename run time matches the latest video;
+        // never open an unrelated latest recording for an older report.
+        val reportTime = chosen?.name?.let { Regex("_(\\d{8}_\\d{6})\\.xlsx$", RegexOption.IGNORE_CASE).find(it)?.groupValues?.getOrNull(1) }
+            ?.let { runCatching { SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).parse(it)?.time }.getOrNull() }
+        val associated = matchesKind && (isLatestRecording || (reportTime != null && latestVideoStart > 0L &&
+            kotlin.math.abs(reportTime - latestVideoStart) < 4_000L))
+        ManualStallReportDetailScreenV130(
+            kind = kind, report = chosen,
+            pendingRecording = if (associated) latest else null,
+            canReviewVideo = associated,
+            onBack = { selectedPath = null; reloadReports() }
         )
         return
     }
@@ -1544,21 +1583,36 @@ private fun ReportsHome(
     if (category == "MANUAL_LIVE" || category == "MANUAL_GAME") {
         val kind = if (category == "MANUAL_LIVE") ManualStallKindV130.LIVE else ManualStallKindV130.GAME
         val files = if (kind == ManualStallKindV130.LIVE) manualLiveReports else manualGameReports
+        val prefs = context.getSharedPreferences("ct_recording_timeline", Context.MODE_PRIVATE)
+        val latest = RecordingTimelineV130.last(context)
+        val pendingForKind = prefs.getString("reviewKind", "") == kind.name && latest != null &&
+            prefs.getString("reviewVideoUri", "") == latest.first.toString()
         SoftPageRevealV130(revealKey = "manual-report-${kind.name}", modifier = Modifier.fillMaxSize()) {
             Column(modifier.fillMaxSize().background(bunnyScreenBrush())) {
                 TopAppBar(title = { Text("${kind.label} Reports") }, navigationIcon = { TextButton(onClick = { category = null }) { Text("‹ Back") } },
                     actions = { TextButton(onClick = { reloadReports() }) { Text("Refresh") } })
                 LazyColumn(Modifier.fillMaxSize().padding(16.dp),verticalArrangement=Arrangement.spacedBy(9.dp)) {
-                    item { Text("${files.size} completed tests · XLSX summaries and events saved under Downloads/CellTracker.") }
+                    item { Text("Select a test to view its Summary, then Review recording or open Excel.") }
+                    if(pendingForKind && latest != null) {
+                        item("pending_${kind.name}") {
+                            val label=SimpleDateFormat("yyyy-MM-dd HH:mm",Locale.getDefault()).format(Date(latest.second.wallAt(0L)))
+                            ReportListCard("Latest recording · Review pending", "$label · ${latest.second.videoDurationMs/1000}s · ESTIMATED",
+                                onClick = { selectedPath = "__PENDING_VIDEO__" })
+                        }
+                    }
                     items(files,key={it.uri.toString()}) { file ->
-                        ReportListCard(file.name, SimpleDateFormat("yyyy-MM-dd HH:mm",Locale.US).format(Date(file.timestamp)), onClick = {
-                            val i=Intent(Intent.ACTION_VIEW).apply {setDataAndType(file.uri,"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)}
-                            runCatching { context.startActivity(i) }.onFailure { Toast.makeText(context,"No XLSX viewer installed",Toast.LENGTH_SHORT).show() }
-                        })
+                        ReportListCard(file.name.substringBeforeLast(".xlsx"),
+                            SimpleDateFormat("yyyy-MM-dd HH:mm",Locale.US).format(Date(file.timestamp)),
+                            onClick = { selectedPath = file.uri.toString() })
                     }
                 }
             }
         }
+        return
+    }
+
+    if (category == "VIDEO_TIMELINE") {
+        RecordingTimelineSummaryScreenV130(onBack = { category = null })
         return
     }
 
@@ -1719,12 +1773,9 @@ private fun ReportsHome(
         }
         item {
             ReportListCard(
-                title = "Screen Recording · Real-Time Playback",
-                subtitle = "Replay last CellTracker MP4 with a real-clock overlay; export a 1-second CSV and SRT",
-                onClick = {
-                    if (RecordingTimelineV130.last(context) != null) RecordingTimelinePlayerV130.open(context)
-                    else Toast.makeText(context, "No timestamped recording yet. Start a video-only PUBG/Tamasha test first.", Toast.LENGTH_LONG).show()
-                }
+                title = "Screen Recordings · Timeline",
+                subtitle = "View the latest recording summary, real-time mapping and playback review",
+                onClick = { category = "VIDEO_TIMELINE" }
             )
         }
         item {

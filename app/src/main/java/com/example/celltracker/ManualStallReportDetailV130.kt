@@ -1,0 +1,189 @@
+package com.example.celltracker
+
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.widget.Toast
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import org.w3c.dom.Element
+import org.xml.sax.InputSource
+import java.io.ByteArrayInputStream
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.zip.ZipInputStream
+import javax.xml.parsers.DocumentBuilderFactory
+
+/** Read the actual exported XLSX, rather than inventing a summary from a filename. */
+internal object ManualStallSummaryReaderV130 {
+    data class Detail(val fields: Map<String, String>, val events: List<List<String>>)
+
+    fun read(context: Context, uri: Uri): Detail {
+        val documents = mutableMapOf<String, ByteArray>()
+        val stream = context.contentResolver.openInputStream(uri) ?: error("Cannot open saved report")
+        stream.use { input ->
+            ZipInputStream(input).use { zip ->
+                while (true) {
+                    val entry = zip.nextEntry ?: break
+                    if (entry.name == "xl/worksheets/sheet1.xml" || entry.name == "xl/worksheets/sheet2.xml") {
+                        val bytes = zip.readBytes()
+                        require(bytes.size <= 2_000_000) { "Report worksheet is too large" }
+                        documents[entry.name] = bytes
+                    }
+                    zip.closeEntry()
+                }
+            }
+        }
+        fun rows(bytes: ByteArray?): List<List<String>> {
+            if (bytes == null) return emptyList()
+            val factory = DocumentBuilderFactory.newInstance().apply {
+                isNamespaceAware = false
+                runCatching { setXIncludeAware(false) }
+                setExpandEntityReferences(false)
+                runCatching { setFeature("http://apache.org/xml/features/disallow-doctype-decl", true) }
+                runCatching { setFeature("http://xml.org/sax/features/external-general-entities", false) }
+                runCatching { setFeature("http://xml.org/sax/features/external-parameter-entities", false) }
+            }
+            val document = factory.newDocumentBuilder().parse(InputSource(ByteArrayInputStream(bytes)))
+            val found = mutableListOf<List<String>>()
+            val rowNodes = document.getElementsByTagName("row")
+            for (i in 0 until rowNodes.length) {
+                val row = rowNodes.item(i) as? Element ?: continue
+                val cells = row.getElementsByTagName("c")
+                val values = mutableListOf<String>()
+                for (j in 0 until cells.length) {
+                    val cell = cells.item(j) as? Element ?: continue
+                    val text = cell.getElementsByTagName("t").item(0)?.textContent
+                        ?: cell.getElementsByTagName("v").item(0)?.textContent ?: ""
+                    values.add(text)
+                }
+                found.add(values)
+            }
+            return found
+        }
+        val summary = rows(documents["xl/worksheets/sheet1.xml"])
+        require(summary.size > 1 && summary.first().take(2) == listOf("Field", "Value")) { "Unknown report summary format" }
+        return Detail(summary.drop(1).filter { it.size >= 2 }.associate { it[0] to it[1] },
+            rows(documents["xl/worksheets/sheet2.xml"]).drop(1))
+    }
+}
+
+/** A pending recording is shown in Reports before any XLSX exists. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun ManualStallReportDetailScreenV130(
+    kind: ManualStallKindV130,
+    report: ManualStallReportV130.Stored?,
+    pendingRecording: Pair<Uri, RecordingTimelineV130.Session>?,
+    canReviewVideo: Boolean,
+    onBack: () -> Unit
+) {
+    val context = LocalContext.current
+    val uri = report?.uri
+    val result by produceState<Result<ManualStallSummaryReaderV130.Detail>?>(initialValue = null, key1 = uri) {
+        value = if(uri == null) null else withContext(Dispatchers.IO) {
+            runCatching { ManualStallSummaryReaderV130.read(context, uri) }
+        }
+    }
+    val fields = result?.getOrNull()?.fields.orEmpty()
+    val isPending = report == null
+    val prefs = remember(context) { context.getSharedPreferences("ct_recording_timeline", Context.MODE_PRIVATE) }
+    val recordedStart = pendingRecording?.second?.wallAt(0L) ?: 0L
+    val recordingDuration = pendingRecording?.second?.videoDurationMs ?: 0L
+    val startText = if (isPending && recordedStart > 0L) {
+        SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(recordedStart))
+    } else fields["Test Start (ms)"]?.toLongOrNull()?.let {
+        SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(it))
+    }.orEmpty()
+    val duration = if(isPending) "%.2f".format(Locale.US,recordingDuration/1000.0)
+        else fields["Test Duration (s)"].orEmpty()
+    fun viewXlsx() {
+        val selected = uri ?: return
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(selected, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        runCatching { context.startActivity(intent) }.onFailure {
+            Toast.makeText(context,"No Excel viewer installed",Toast.LENGTH_SHORT).show()
+        }
+    }
+    Column(Modifier.fillMaxSize().background(bunnyScreenBrush())) {
+        TopAppBar(
+            title = { Text(if(isPending) "${kind.label} · Recording" else "${kind.label} · Summary", maxLines = 1) },
+            navigationIcon = { TextButton(onClick=onBack) { Text("‹ Back") } }
+        )
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+            verticalArrangement=Arrangement.spacedBy(14.dp)) {
+            Card(shape=RoundedCornerShape(25.dp), colors=CardDefaults.cardColors(containerColor=androidx.compose.ui.graphics.Color.Transparent)) {
+                Column(Modifier.fillMaxWidth().background(gradientCardBrushV130()).padding(18.dp),
+                    verticalArrangement=Arrangement.spacedBy(9.dp)) {
+                    Text(if(isPending) "Recording ready for review" else "Test Summary",style=MaterialTheme.typography.titleLarge)
+                    if(isPending) {
+                        Text("The recording has not been reviewed/exported as a stall report. Review it, mark START/END and then export CSV + XLSX.",style=MaterialTheme.typography.bodySmall)
+                    } else if (result == null) {
+                        CircularProgressIndicator()
+                    } else if (result?.isFailure == true) {
+                        Text("Summary unavailable: ${result?.exceptionOrNull()?.message.orEmpty()}",color=MaterialTheme.colorScheme.error)
+                        Text("The original XLSX is preserved; open it with an Excel viewer.",style=MaterialTheme.typography.bodySmall)
+                    }
+                    val overview = listOf(
+                        "Task" to (if(isPending) prefs.getString("reviewTask",kind.label).orEmpty() else fields["Task"].orEmpty()),
+                        "Device Role" to (if(isPending) prefs.getString("reviewRole","").orEmpty() else fields["Device Role"].orEmpty()),
+                        "Start Time" to startText,
+                        "Duration" to duration.takeIf { it.isNotBlank() }?.let { "$it s" }.orEmpty(),
+                        "Stall Count" to (if(isPending) "Not reviewed" else fields["Stall Count"].orEmpty()),
+                        "Total Stall Duration" to (if(isPending) "—" else fields["Total Stall Duration (s)"]?.let { "$it s" }.orEmpty()),
+                        "Stall Ratio" to (if(isPending) "—" else fields["Stall Ratio (%)"]?.let { "$it%" }.orEmpty()),
+                        "Operator" to (if(isPending) prefs.getString("reviewOperator","").orEmpty() else fields["Operator"].orEmpty()),
+                        "RAT / Band" to (if(isPending) listOf(prefs.getString("reviewRat","").orEmpty(),prefs.getString("reviewBand","").orEmpty()).joinToString(" / ") else listOf(fields["RAT"].orEmpty(),fields["Band"].orEmpty()).joinToString(" / ")),
+                        "Source" to (if(isPending) "VIDEO_REVIEW_PENDING · ESTIMATED" else fields["Source"].orEmpty())
+                    )
+                    overview.filter { it.second.isNotBlank() }.forEach { (key,value) ->
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement=Arrangement.SpaceBetween) {
+                            Text(key,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.weight(.42f))
+                            Text(value,style=MaterialTheme.typography.bodyMedium,modifier=Modifier.weight(.58f))
+                        }
+                    }
+                }
+            }
+            if (!isPending && result?.isSuccess == true) {
+                Card(shape=RoundedCornerShape(25.dp),colors=CardDefaults.cardColors(containerColor=androidx.compose.ui.graphics.Color.Transparent)) {
+                    Column(Modifier.fillMaxWidth().background(gradientCardBrushV130()).padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                        Text("Stall Events",style=MaterialTheme.typography.titleMedium)
+                        val events=result?.getOrNull()?.events.orEmpty()
+                        if(events.isEmpty()) Text("No completed stall events",style=MaterialTheme.typography.bodySmall)
+                        events.take(100).forEachIndexed { index,event ->
+                            val from=event.getOrNull(1)?.toLongOrNull()
+                            val to=event.getOrNull(2)?.toLongOrNull()
+                            val eventDuration=event.getOrNull(3)?.toDoubleOrNull()?.div(1000.0)
+                            val format=SimpleDateFormat("HH:mm:ss.SSS",Locale.getDefault())
+                            val interval=if(from!=null && to!=null) "${format.format(Date(from))} – ${format.format(Date(to))}" else "Time unavailable"
+                            Text("#${index+1} · $interval · ${if(eventDuration==null) "—" else "%.3f s".format(Locale.US,eventDuration)}",
+                                style=MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            }
+            if (canReviewVideo) {
+                GradientActionV130("REVIEW RECORDING",{RecordingTimelinePlayerV130.open(context)},Modifier.fillMaxWidth())
+                Text("Review the associated video and mark stalls. Real-time clock alignment remains ESTIMATED.",style=MaterialTheme.typography.bodySmall)
+            } else if(isPending) {
+                Text("Recording data is no longer available. Original files are not deleted.",style=MaterialTheme.typography.bodySmall)
+            }
+            if (report != null) {
+                GradientActionV130("OPEN EXCEL REPORT",{viewXlsx()},Modifier.fillMaxWidth(),primary=false)
+            }
+        }
+    }
+}

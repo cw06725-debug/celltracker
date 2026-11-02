@@ -9,6 +9,7 @@ import android.text.TextUtils
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.Gravity
 import android.view.ViewGroup
 import android.widget.Button
@@ -132,17 +133,34 @@ class RecordingTimelinePlayerV130 : Activity() {
         val transport=LinearLayout(this).apply {
             orientation=LinearLayout.VERTICAL;setPadding(d(12),d(12),d(12),d(10));background=roundedGradient()
         }
-        val timeText=smallText("00:00 / ${RecordingTimelineV130.subtitleTime(session.videoDurationMs).replace(',', '.').substring(0,8)}",13f)
+        fun displayTime(ms:Long): String {
+            val safe=ms.coerceAtLeast(0L)
+            return String.format(Locale.US,"%02d:%02d.%03d",safe/60000L,(safe/1000L)%60L,safe%1000L)
+        }
+        val timeText=smallText("${displayTime(0L)} / ${displayTime(session.videoDurationMs)}",13f)
         timeText.setTextColor(darkText)
         transport.addView(timeText)
+        val smoother=PlaybackClockSmootherV130()
+        var seekProtectionUntil=0L
+        var requestedPosition=0L
         val seekBar=SeekBar(this).apply {max=session.videoDurationMs.coerceIn(1L,Int.MAX_VALUE.toLong()).toInt()}
         transport.addView(seekBar,LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,d(36)))
         val transportRow=LinearLayout(this).apply {orientation=LinearLayout.HORIZONTAL;gravity=Gravity.CENTER_VERTICAL}
-        val back5=button("−5s",tint=3){videoView.seekTo((videoView.currentPosition-5000).coerceAtLeast(0))}
+        fun seekTo(target: Int) {
+            val bounded=target.coerceIn(0,seekBar.max)
+            requestedPosition=bounded.toLong()
+            seekProtectionUntil=SystemClock.uptimeMillis()+280L
+            smoother.reset(bounded.toLong(),SystemClock.uptimeMillis())
+            videoView.seekTo(bounded)
+            seekBar.progress=bounded
+            timeText.text="${displayTime(bounded.toLong())} / ${displayTime(session.videoDurationMs)}"
+            clock.text="${RecordingTimelineV130.clockFormat(session.wallAt(bounded.toLong()))} · estimated"
+        }
+        val back5=button("−5s",tint=3){seekTo((videoView.currentPosition-5000).coerceAtLeast(0))}
         val playButton=button("▶  Play",primary=true){
             if(videoView.isPlaying)videoView.pause() else videoView.start()
         }
-        val forward5=button("+5s",tint=3){videoView.seekTo((videoView.currentPosition+5000).coerceAtMost(seekBar.max))}
+        val forward5=button("+5s",tint=3){seekTo((videoView.currentPosition+5000).coerceAtMost(seekBar.max))}
         fun addTransportButton(view:Button,weight:Float) {
             transportRow.addView(view,LinearLayout.LayoutParams(0,d(45),weight).apply{marginStart=d(3);marginEnd=d(3)})
         }
@@ -251,13 +269,13 @@ class RecordingTimelinePlayerV130 : Activity() {
         seekBar.setOnSeekBarChangeListener(object:SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(bar:SeekBar?,progress:Int,fromUser:Boolean) {
                 if(fromUser){
-                    timeText.text="${RecordingTimelineV130.subtitleTime(progress.toLong()).replace(',', '.').substring(0,8)} / ${RecordingTimelineV130.subtitleTime(session.videoDurationMs).replace(',', '.').substring(0,8)}"
+                    timeText.text="${displayTime(progress.toLong())} / ${displayTime(session.videoDurationMs)}"
                     clock.text="${RecordingTimelineV130.clockFormat(session.wallAt(progress.toLong()))} · estimated"
                 }
             }
             override fun onStartTrackingTouch(bar:SeekBar?) {isSeeking=true}
             override fun onStopTrackingTouch(bar:SeekBar?) {
-                videoView.seekTo(seekBar.progress)
+                seekTo(seekBar.progress)
                 isSeeking=false
                 VideoDiagnosticLogV130.event(this@RecordingTimelinePlayerV130,"Seek to ${seekBar.progress}ms")
             }
@@ -284,12 +302,25 @@ class RecordingTimelinePlayerV130 : Activity() {
         videoView.setVideoURI(uri)
         val update=object:Runnable{
             override fun run() {
-                val ms=currentMs()
-                if(!isSeeking)seekBar.progress=ms.toInt().coerceAtMost(seekBar.max)
-                if(!isSeeking)timeText.text="${RecordingTimelineV130.subtitleTime(ms).replace(',', '.').substring(0,8)} / ${RecordingTimelineV130.subtitleTime(session.videoDurationMs).replace(',', '.').substring(0,8)}"
-                clock.text="${RecordingTimelineV130.clockFormat(session.wallAt(ms))} · estimated"
-                if(videoView.isPlaying)playButton.text="Ⅱ  Pause" else if(ms<session.videoDurationMs-500L)playButton.text="▶  Play"
-                handler.postDelayed(this,250L)
+                val playing=videoView.isPlaying
+                val now=SystemClock.uptimeMillis()
+                val ms=when {
+                    isSeeking -> seekBar.progress.toLong()
+                    now < seekProtectionUntil -> requestedPosition
+                    else -> smoother.tick(currentMs(),now,playing,session.videoDurationMs)
+                }
+                if(!isSeeking) {
+                    // Do not seek the player while updating the display; video position is the source.
+                    seekBar.progress=ms.toInt().coerceAtMost(seekBar.max)
+                    val nextTime="${displayTime(ms)} / ${displayTime(session.videoDurationMs)}"
+                    if(timeText.text.toString()!=nextTime)timeText.text=nextTime
+                    val nextClock="${RecordingTimelineV130.clockFormat(session.wallAt(ms))} · estimated"
+                    if(clock.text.toString()!=nextClock)clock.text=nextClock
+                }
+                val nextLabel=if(playing)"Ⅱ  Pause" else if(ms<session.videoDurationMs-500L)"▶  Play" else "↻  Replay"
+                if(playButton.text.toString()!=nextLabel)playButton.text=nextLabel
+                // Smooth UI-only interpolation; recording mapping itself is unchanged/ESTIMATED.
+                handler.postDelayed(this,40L)
             }
         }
         ticker=update
