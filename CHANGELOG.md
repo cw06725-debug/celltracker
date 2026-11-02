@@ -1643,3 +1643,9 @@ Build note: local assembleDebug could not run because this environment cannot re
 - ADB Tools: check, set D, verify and restore `persist.log.tag` through authorized local ADB, preserving prior session value; do not equate logcat level with modem logging.
 - Existing `/data/debuglogger/` ADB Sync export retained; Android app sandbox remains enforced.
 - Multi-Agent report synchronization / 6-sheet report generation remains outstanding pending the multi-peer Device Link architecture; NOT represented as implemented in this preview.
+
+
+## Preview 21 (versionCode 272)
+- Summary: explicit MP4 selection, user-confirmed recording start, review access; no automatic linking to unrelated latest video.
+- Soft page reveal increased from 320ms to 390ms; existing Home test-card gradients retained.
+- Preview only; full Gradle build and device verification pending.

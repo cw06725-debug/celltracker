@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -96,6 +98,22 @@ internal fun ManualStallReportDetailScreenV130(
             runCatching { ManualStallSummaryReaderV130.read(context, uri) }
         }
     }
+    var linkedVideo by remember(uri) { mutableStateOf(canReviewVideo) }
+    var pickedVideo by remember(uri) { mutableStateOf<ExternalRecordingV130.Candidate?>(null) }
+    var confirmedStart by remember(uri) { mutableStateOf("") }
+    var videoMessage by remember(uri) { mutableStateOf("") }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { selected ->
+        if (selected != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(selected, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                ExternalRecordingV130.read(context, selected)
+            }.onSuccess { candidate ->
+                pickedVideo = candidate
+                confirmedStart = candidate.suggestedStartMs?.let(ExternalRecordingV130::formatLocalTime).orEmpty()
+                videoMessage = "Confirm the actual recording start time before linking."
+            }.onFailure { videoMessage = "Unable to read video: ${it.message}" }
+        }
+    }
     val fields = result?.getOrNull()?.fields.orEmpty()
     val isPending = report == null
     val prefs = remember(context) { context.getSharedPreferences("ct_recording_timeline", Context.MODE_PRIVATE) }
@@ -175,11 +193,42 @@ internal fun ManualStallReportDetailScreenV130(
                     }
                 }
             }
-            if (canReviewVideo) {
-                GradientActionV130("REVIEW RECORDING",{RecordingTimelinePlayerV130.open(context)},Modifier.fillMaxWidth())
-                Text("Review the associated video and mark stalls. Real-time clock alignment remains ESTIMATED.",style=MaterialTheme.typography.bodySmall)
-            } else if(isPending) {
-                Text("Recording data is no longer available. Original files are not deleted.",style=MaterialTheme.typography.bodySmall)
+            Card(shape=RoundedCornerShape(25.dp), colors=CardDefaults.cardColors(containerColor=androidx.compose.ui.graphics.Color.Transparent)) {
+                Column(Modifier.fillMaxWidth().background(gradientCardBrushV130()).padding(16.dp),
+                    verticalArrangement=Arrangement.spacedBy(10.dp)) {
+                    Text("Recording",style=MaterialTheme.typography.titleMedium)
+                    if(linkedVideo) {
+                        GradientActionV130("PLAY / REVIEW RECORDING",{RecordingTimelinePlayerV130.open(context)},Modifier.fillMaxWidth())
+                        Text("Review stalls and export an updated report. Video time remains ESTIMATED.",style=MaterialTheme.typography.bodySmall)
+                    } else {
+                        Text("No verified recording linked to this report. Select the correct MP4 to review it; existing reports are not automatically linked to the latest recording.",style=MaterialTheme.typography.bodySmall)
+                    }
+                    GradientActionV130(if(linkedVideo) "CHANGE LINKED VIDEO" else "SELECT RECORDING",
+                        {picker.launch(arrayOf("video/mp4","video/*"))},Modifier.fillMaxWidth(),primary=false)
+                    if(pickedVideo!=null) {
+                        Text("Selected video: ${pickedVideo!!.durationMs/1000.0} s · ${pickedVideo!!.source}",style=MaterialTheme.typography.bodySmall)
+                        OutlinedTextField(value=confirmedStart,onValueChange={confirmedStart=it},
+                            label={Text("Recording start · yyyy-MM-dd HH:mm:ss")},singleLine=true,modifier=Modifier.fillMaxWidth())
+                        GradientActionV130("CONFIRM & LINK VIDEO",{
+                            val candidate=pickedVideo
+                            val startMs=ExternalRecordingV130.parseLocalTime(confirmedStart)
+                            if(candidate==null || startMs==null) {
+                                videoMessage="Enter a valid start time."
+                            } else {
+                                runCatching {
+                                    ExternalRecordingV130.save(context,candidate,startMs,kind,
+                                        fields["Device Role"].orEmpty(),fields["Task"].orEmpty(),"",
+                                        fields["Operator"].orEmpty(),fields["RAT"].orEmpty(),
+                                        fields["Band"].orEmpty(),"","","")
+                                }.onSuccess {
+                                    linkedVideo=true; pickedVideo=null
+                                    videoMessage="Recording linked for review. Original XLSX remains unchanged until you export."
+                                }.onFailure { videoMessage="Unable to link recording: ${it.message}" }
+                            }
+                        },Modifier.fillMaxWidth())
+                    }
+                    if(videoMessage.isNotBlank()) Text(videoMessage,style=MaterialTheme.typography.bodySmall)
+                }
             }
             if (report != null) {
                 GradientActionV130("OPEN EXCEL REPORT",{viewXlsx()},Modifier.fillMaxWidth(),primary=false)

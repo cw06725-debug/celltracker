@@ -68,7 +68,7 @@ internal fun SoftPageRevealV130(
 ) {
     val progress = remember(revealKey) { Animatable(0f) }
     LaunchedEffect(revealKey) {
-        progress.animateTo(1f, animationSpec = tween(320, easing = FastOutSlowInEasing))
+        progress.animateTo(1f, animationSpec = tween(390, easing = FastOutSlowInEasing))
     }
     Box(modifier.graphicsLayer {
         alpha = progress.value
