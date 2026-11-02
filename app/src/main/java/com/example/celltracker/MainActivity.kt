@@ -392,8 +392,8 @@ MainScreen(
                                 EnterTransition.None.togetherWith(ExitTransition.None)
                             // Lightweight bunnylock-style soft fade instead of moving two
                             // expensive screen trees horizontally during the transition.
-                            else -> fadeIn(animationSpec = tween(260, delayMillis = 85, easing = FastOutSlowInEasing))
-                                .togetherWith(fadeOut(animationSpec = tween(150, easing = FastOutSlowInEasing)))
+                            else -> fadeIn(animationSpec = tween(580, easing = FastOutSlowInEasing))
+                                .togetherWith(fadeOut(animationSpec = tween(580, easing = FastOutSlowInEasing)))
                         }
                     },
                     label = "rootNavigation"

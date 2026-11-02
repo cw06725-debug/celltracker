@@ -1,3 +1,8 @@
+## Preview 22 (versionCode 273)
+- Home / Cell Info root page fade-in and fade-out transitions: 580 ms.
+- Recording Review retains a single EXPORT REPORT action; Summary retains OPEN EXCEL REPORT as a viewer action, not a second export.
+- No changes to report generation or video timeline.
+
 # CellTracker v1.3.0 Preview 20 — Report-first Video Review & Smooth Clock (versionCode 271)
 
 - PUBG/Tamasha test setup is for starting tests and importing external recordings. Removed the misleading immediate Review button and direct-XLSX Saved reports list; review now lives under Reports.
