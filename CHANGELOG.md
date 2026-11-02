@@ -1,3 +1,10 @@
+## v1.3.0 Preview 19 (versionCode 270) — Recording Player / Report Button Consistency / Diagnostics Toggle
+
+- Redesigned native RecordingTimelinePlayerV130 into a video-player layout with aspect-aware video, transport buttons (play/pause, ±5s), seek bar, seek-time display, estimated local clock, and visually separate marker/export panels with soft gradients.
+- Consolidated prominent Reports detail actions around ReportActionV130 / ReportOutlineActionV130 shared gradient buttons, retaining original callbacks and irreversible-delete confirmation behavior.
+- Added persisted Settings toggle **Video diagnostic logs**, default OFF. Gated per-recording diagnostics file creation, AVC codec enumeration, TXT export and verbose messages without affecting MP4, TimeMap, SRT or reports. Opt-in generates engineering logs for subsequent recordings only.
+- Preview 18 features retained. Kotlin PSI syntax and static gate checks passed; Gradle assembleDebug / device validation remain pending.
+
 ## v1.3.0 Preview 18 — iOS-style Live Home Rearrangement (versionCode 269)
 - Replaced the old drop-only Home sort with a continuous live-insertion layout. The dragged test stays on a floating layer; when hovering over a slot, adjacent cards shift exactly one slot and leave a placeholder.
 - Drag release animates only the floating tile into its destination; avoids competing `LazyVerticalGrid` placement and local drag-offset animations that caused flying/jumping. Uses stable tile IDs and position callbacks updated without resetting active pointer detection.

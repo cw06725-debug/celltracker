@@ -1,3 +1,14 @@
+# CellTracker v1.3.0 Preview 19 — Player, Report Actions & Video Diagnostics
+
+**PREVIEW only · versionCode 270 · based on Preview 18.** Full Android Gradle compilation and real-device verification are still required.
+
+- **Recording Review** rebuilt as a proper in-app player: compact adaptive-aspect video area (no giant unused black screen), back/title header, play/pause, ±5 seconds, draggable seek bar with elapsed/duration, estimated local-clock overlay, and separated stall annotation section (START / END / UNDO / EXPORT). All cards and controls use the existing soft lavender/blue/mint gradient family. Playing and seeking use the original MP4, which is never modified.
+- **Report detail actions** now use a shared primary/secondary gradient action component in the Reports TikTok/YouTube/Ping/Call/WhatsApp and other main report-detail paths, including preview, export, confirm, play, and delete. Existing callback logic and report contents are retained. Top app-bar navigation and confirmation-dialog controls are intentionally not bulk-replaced.
+- **Settings → Video & Diagnostics → Video diagnostic logs** is a persisted switch **OFF by default** on new/existing installs. When OFF, a NEW CellTracker screen-recording session does not create or publish `screen_recording_diagnostics/*.txt`, does not enumerate AVC encoders for diagnostics, and suppresses that optional verbose diagnostic logging. When ON, the previous engineering TXT capture/export behavior is retained. Each recording snapshots the switch state at START. Old diagnostic files are not deleted by switching it off.
+- **Never gated:** MP4 recording, TimeMap.csv, SRT, test metadata, core recording errors/status, timestamp correlation, manual stall reviews, and XLSX/CSV reports operate regardless of diagnostic switch. Optional playback/seek/error engineering Logcat entries are also guarded by the same switch.
+- Previous Preview 18 Home live reorder, soft gradient theme, external video matching, Wi-Fi Direct, Shizuku, Speedtest, Bluetooth Call Setup and all tests remain unchanged.
+- Validation performed: Kotlin PSI syntax for all 5 touched/new Kotlin sources, preference/diagnostics static branch assertions, Android XML parsing and archive CRC. **Not a Gradle build or on-device playback verification.**
+
 # CellTracker v1.3.0 Preview 18 — Live Launcher Reordering
 
 **PREVIEW only · versionCode 269**. GitHub Actions Gradle build and real-device behavior are not verified in this environment.

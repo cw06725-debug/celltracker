@@ -34,7 +34,7 @@ import java.util.Locale
 /**
  * Screen recording uses one fresh MediaProjection consent result per session and
  * creates exactly one VirtualDisplay for the MediaRecorder surface.
- * Diagnostics remain enabled without creating any extra capture display.
+ * Optional engineering diagnostics are OFF by default; timestamp mapping remains ON.
  */
 class TestScreenRecordingService : Service() {
     private var projection: MediaProjection? = null
@@ -67,6 +67,7 @@ class TestScreenRecordingService : Service() {
     }
     @Volatile private var stopping = false
 
+    private var diagnosticsEnabled = false
     private var diagnosticFile: File? = null
     private var diagnosticStartedAt = 0L
     private val diagnosticLock = Any()
@@ -118,7 +119,13 @@ class TestScreenRecordingService : Service() {
         val now = System.currentTimeMillis()
         val name = safe(intent.getStringExtra(NAME).orEmpty().ifBlank { "CellTracker_Test" }) +
             "_" + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date(now)) + ".mp4"
-        startDiagnostics(name, now, resultCode, true)
+        diagnosticsEnabled = VideoDiagnosticLogV130.enabled(this)
+        diagnosticFile = null
+        diagnosticStartedAt = 0L
+        lastDiagnosticUri = ""
+        lastDiagnosticName = ""
+        lastDiagnosticPathHint = ""
+        if (diagnosticsEnabled) startDiagnostics(name, now, resultCode, true)
         diag("START requested; v1.2.21 MediaRecorder path")
 
         try {
@@ -365,6 +372,7 @@ class TestScreenRecordingService : Service() {
     }
 
     private fun startDiagnostics(recordingName: String, startedAt: Long, resultCode: Int, dataPresent: Boolean) {
+        if (!diagnosticsEnabled) return
         diagnosticStartedAt = startedAt
         val dir = File(getExternalFilesDir(null), "screen_recording_diagnostics").apply { mkdirs() }
         val stem = recordingName.removeSuffix(".mp4")
@@ -398,6 +406,7 @@ class TestScreenRecordingService : Service() {
     }
 
     private fun diag(message: String) {
+        if (!diagnosticsEnabled) return
         val elapsed = if (diagnosticStartedAt > 0L) System.currentTimeMillis() - diagnosticStartedAt else -1L
         val line = String.format(Locale.US, "%+07dms [%s] %s", elapsed, Thread.currentThread().name, message)
         Log.i("CTScreenRec", line)
@@ -405,11 +414,13 @@ class TestScreenRecordingService : Service() {
     }
 
     private fun diagThrowable(prefix: String, t: Throwable) {
+        if (!diagnosticsEnabled) return
         diag("$prefix: ${t.javaClass.name}: ${t.message}")
         synchronized(diagnosticLock) { runCatching { diagnosticFile?.appendText(t.stackTraceToString() + "\n") } }
     }
 
     private fun publishDiagnostics() {
+        if (!diagnosticsEnabled) return
         val file = diagnosticFile ?: return
         if (!file.exists()) return
         val startedAt = diagnosticStartedAt.takeIf { it > 0L } ?: System.currentTimeMillis()

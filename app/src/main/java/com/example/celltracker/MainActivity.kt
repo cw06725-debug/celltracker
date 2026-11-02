@@ -995,13 +995,13 @@ private fun ReportsHome(
                     Text("Position  ${String.format(Locale.US,"%02d:%02d.%03d",positionMs/60000,(positionMs/1000)%60,positionMs%1000)}",
                         style=MaterialTheme.typography.bodyMedium,fontWeight=FontWeight.SemiBold)
                     Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp)){
-                        OutlinedButton(onClick={videoView?.seekTo((positionMs-5000).coerceAtLeast(0L).toInt())},modifier=Modifier.weight(1f)){Text("−5s")}
-                        Button(onClick={videoView?.let{if(it.isPlaying)it.pause() else it.start()}},modifier=Modifier.weight(1.4f)){Text(if(playing)"PAUSE" else "PLAY")}
-                        OutlinedButton(onClick={videoView?.seekTo((positionMs+5000).toInt())},modifier=Modifier.weight(1f)){Text("+5s")}
+                        ReportOutlineActionV130(onClick={videoView?.seekTo((positionMs-5000).coerceAtLeast(0L).toInt())},modifier=Modifier.weight(1f)){Text("−5s")}
+                        ReportActionV130(onClick={videoView?.let{if(it.isPlaying)it.pause() else it.start()}},modifier=Modifier.weight(1.4f)){Text(if(playing)"PAUSE" else "PLAY")}
+                        ReportOutlineActionV130(onClick={videoView?.seekTo((positionMs+5000).toInt())},modifier=Modifier.weight(1f)){Text("+5s")}
                     }
                     Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp)){
-                        OutlinedButton(onClick={markedT0=videoView?.currentPosition?.toLong()?:positionMs},modifier=Modifier.weight(1f)){Text("SET T0")}
-                        OutlinedButton(onClick={markedT1=videoView?.currentPosition?.toLong()?:positionMs},modifier=Modifier.weight(1f)){Text("SET T1")}
+                        ReportOutlineActionV130(onClick={markedT0=videoView?.currentPosition?.toLong()?:positionMs},modifier=Modifier.weight(1f)){Text("SET T0")}
+                        ReportOutlineActionV130(onClick={markedT1=videoView?.currentPosition?.toLong()?:positionMs},modifier=Modifier.weight(1f)){Text("SET T1")}
                     }
                     val base=req.recordingStartMs
                     Text("T0  "+(markedT0?.let{clockFmt.format(Date(base+it))}?:"—")+"    T1  "+(markedT1?.let{clockFmt.format(Date(base+it))}?:"—"),
@@ -1011,7 +1011,7 @@ private fun ReportsHome(
                 }
             },
             confirmButton={
-                Button(
+                ReportActionV130(
                     enabled=markedT0!=null&&markedT1!=null,
                     onClick={
                         if(markedT0!=null&&markedT1!=null){
@@ -1177,7 +1177,7 @@ private fun ReportsHome(
                                 Field("Review",if(rev.valid)"Valid" else "Invalid / Mis-touch")
                                 if(rev.note.isNotBlank()) Field("Note",rev.note)
                                 Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){
-                                    Button(onClick={
+                                    ReportActionV130(onClick={
                                         val uri=r.screenRecordingUri.orEmpty()
                                         val base=r.screenRecordingStartMs
                                         if(uri.isBlank()||base<=0L){
@@ -1187,7 +1187,7 @@ private fun ReportsHome(
                                             reviewPlayer=ReviewPlayerRequest(r.path,i,uri,base,offset,"YouTube #${i+1}","YOUTUBE")
                                         }
                                     },modifier=Modifier.weight(1f)){Text("REVIEW VIDEO")}
-                                    Button(onClick={reviewEdit=ReviewEditRequestV1("YOUTUBE",r.path,i,rev)},modifier=Modifier.weight(1f)){Text("EDIT T0/T1")}
+                                    ReportActionV130(onClick={reviewEdit=ReviewEditRequestV1("YOUTUBE",r.path,i,rev)},modifier=Modifier.weight(1f)){Text("EDIT T0/T1")}
                                 }
                                 TextButton(onClick={
                                     val current=ReportReviewV1.loadYouTube(context,r.path,r.samples)
@@ -1203,7 +1203,7 @@ private fun ReportsHome(
                             if(screenUri.isNullOrBlank()) Text("Older reports may not contain a screen-recording link. Run a new YouTube test with system screen recording enabled to use frame calibration.",style=MaterialTheme.typography.bodySmall)
                             else {
                                 Text("Use the Actions card below to play the full recording or calibrate an individual attempt.",style=MaterialTheme.typography.bodySmall)
-                                OutlinedButton(onClick={renameLinkedRecording(r.path,desiredRecordingName)},modifier=Modifier.fillMaxWidth()){Text("RENAME TO TEST NAME")}
+                                ReportOutlineActionV130(onClick={renameLinkedRecording(r.path,desiredRecordingName)},modifier=Modifier.fillMaxWidth()){Text("RENAME TO TEST NAME")}
                                 Text(desiredRecordingName,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
@@ -1265,7 +1265,7 @@ private fun ReportsHome(
                                 Field("Review",if (rev.valid) "Valid" else "Invalid / Mis-touch")
                                 if(rev.note.isNotBlank())Field("Note",rev.note)
                                 Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){
-                                    OutlinedButton(onClick={
+                                    ReportOutlineActionV130(onClick={
                                         val videoUri=r.fields["Screen Recording URI"].orEmpty()
                                         if(videoUri.isBlank()){
                                             Toast.makeText(context,"Screen recording unavailable",Toast.LENGTH_SHORT).show()
@@ -1281,7 +1281,7 @@ private fun ReportsHome(
                                             reviewPlayer=ReviewPlayerRequest(r.uri,i,videoUri,recordedAt,(offset-5000L).coerceAtLeast(0L),"Lag #${i+1}")
                                         }
                                     },modifier=Modifier.weight(1f)){Text("REVIEW VIDEO")}
-                                    OutlinedButton(onClick={reviewEdit=ReviewEditRequestV1(cat,r.uri,i,rev)},modifier=Modifier.weight(1f)){Text("EDIT T0/T1")}
+                                    ReportOutlineActionV130(onClick={reviewEdit=ReviewEditRequestV1(cat,r.uri,i,rev)},modifier=Modifier.weight(1f)){Text("EDIT T0/T1")}
                                 }
                                 TextButton(onClick={
                                     val s=ReportReviewV1.load(context,r.uri,parsed.events)
@@ -1296,8 +1296,8 @@ private fun ReportsHome(
                         GlassSection("Screen Recording") {
                             Field("File",screenName.ifBlank{"--"})
                             if(screenUri.isNotBlank()) {
-                                OutlinedButton(onClick={renameLinkedRecording(r.uri,r.name.substringBeforeLast('.',r.name)+"_Screen.mp4")},modifier=Modifier.fillMaxWidth()){Text("RENAME TO TEST NAME")}
-                                Button(onClick={
+                                ReportOutlineActionV130(onClick={renameLinkedRecording(r.uri,r.name.substringBeforeLast('.',r.name)+"_Screen.mp4")},modifier=Modifier.fillMaxWidth()){Text("RENAME TO TEST NAME")}
+                                ReportActionV130(onClick={
                                 val first=parsed?.events?.firstOrNull()
                                 val rev=reviewState?.events?.firstOrNull()
                                 if(first!=null&&rev!=null){
@@ -1363,7 +1363,7 @@ private fun ReportsHome(
                                 Field("Review",if (rev.valid) "Valid" else "Invalid / Mis-touch")
                                 if(rev.note.isNotBlank())Field("Note",rev.note)
                                 Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){
-                                    OutlinedButton(onClick={
+                                    ReportOutlineActionV130(onClick={
                                         val videoUri=r.fields["Screen Recording URI"].orEmpty()
                                         if(videoUri.isBlank()){
                                             Toast.makeText(context,"Screen recording unavailable",Toast.LENGTH_SHORT).show()
@@ -1379,7 +1379,7 @@ private fun ReportsHome(
                                             reviewPlayer=ReviewPlayerRequest(r.uri,i,videoUri,recordedAt,(offset-5000L).coerceAtLeast(0L),"Upload #${i+1}")
                                         }
                                     },modifier=Modifier.weight(1f)){Text("REVIEW VIDEO")}
-                                    OutlinedButton(onClick={reviewEdit=ReviewEditRequestV1(cat,r.uri,i,rev)},modifier=Modifier.weight(1f)){Text("EDIT T0/T1")}
+                                    ReportOutlineActionV130(onClick={reviewEdit=ReviewEditRequestV1(cat,r.uri,i,rev)},modifier=Modifier.weight(1f)){Text("EDIT T0/T1")}
                                 }
                                 TextButton(onClick={
                                     val s=ReportReviewV1.load(context,r.uri,parsed.events)
@@ -1393,8 +1393,8 @@ private fun ReportsHome(
                         GlassSection("Screen Recording") {
                             Field("File",screenName.ifBlank{"--"})
                             if(screenUri.isNotBlank()) {
-                                OutlinedButton(onClick={renameLinkedRecording(r.uri,r.name.substringBeforeLast('.',r.name)+"_Screen.mp4")},modifier=Modifier.fillMaxWidth()){Text("RENAME TO TEST NAME")}
-                                Button(onClick={
+                                ReportOutlineActionV130(onClick={renameLinkedRecording(r.uri,r.name.substringBeforeLast('.',r.name)+"_Screen.mp4")},modifier=Modifier.fillMaxWidth()){Text("RENAME TO TEST NAME")}
+                                ReportActionV130(onClick={
                                 val first=parsed?.events?.firstOrNull()
                                 val rev=reviewState?.events?.firstOrNull()
                                 if(first!=null&&rev!=null){
@@ -1426,10 +1426,10 @@ private fun ReportsHome(
                 }
                 if (cat == "TIKTOK_LAG" || cat == "TIKTOK_UPLOAD") {
                     Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){
-                        OutlinedButton(onClick={exportPath(cat,path,true)},enabled=!busy,modifier=Modifier.weight(1f)){Text("PREVIEW HTML")}
-                        Button(onClick={exportPath(cat,path,false)},enabled=!busy,modifier=Modifier.weight(1f)){Text(if (busy) "EXPORTING…" else "EXPORT REPORT")}
+                        ReportOutlineActionV130(onClick={exportPath(cat,path,true)},enabled=!busy,modifier=Modifier.weight(1f)){Text("PREVIEW HTML")}
+                        ReportActionV130(onClick={exportPath(cat,path,false)},enabled=!busy,modifier=Modifier.weight(1f)){Text(if (busy) "EXPORTING…" else "EXPORT REPORT")}
                     }
-                    Button(
+                    ReportActionV130(
                         onClick = {
                             val rows=if(cat=="TIKTOK_LAG")tikTokLagReports else tikTokUploadReports
                             val rr=rows.firstOrNull{it.uri==path}
@@ -1443,14 +1443,14 @@ private fun ReportsHome(
                         enabled=!busy,
                         modifier=Modifier.fillMaxWidth()
                     ){Text("CONFIRM REVIEW")}
-                    OutlinedButton(
+                    ReportOutlineActionV130(
                         onClick = { deleteTarget = cat to path },
                         enabled = !busy,
                         modifier = Modifier.fillMaxWidth()
                     ) { Text("DELETE REPORT") }
                     Text("Export package: HTML Summary · Excel · Cell Info · Track KML. Excel contains Summary, Events/Attempts, full Cell Info, plus one T0–T1 Cell Info sheet per lag/upload event.",style=MaterialTheme.typography.bodySmall)
                 } else if (cat == "WEAK") {
-                    Button(
+                    ReportActionV130(
                         onClick = {
                             basementReports.firstOrNull { it.uri.toString() == path }?.let { r ->
                                 val view = Intent(Intent.ACTION_VIEW).apply {
@@ -1463,7 +1463,7 @@ private fun ReportsHome(
                         },
                         modifier = Modifier.fillMaxWidth()
                     ) { Text("PREVIEW SUMMARY") }
-                    Button(
+                    ReportActionV130(
                         onClick = {
                             basementReports.firstOrNull { it.uri.toString() == path }?.let { r ->
                                 shareUris(context, weakCoverageReportUris(context, r.relativePath), "Share Weak Coverage report")
@@ -1475,22 +1475,22 @@ private fun ReportsHome(
                     val detail = videoReports.firstOrNull { it.path == path }
                     GlassSection("Actions") {
                         val screenUri = detail?.screenRecordingUri.orEmpty()
-                        Button(
+                        ReportActionV130(
                             onClick = { if(screenUri.isNotBlank()) playScreenRecording(screenUri) },
                             modifier = Modifier.fillMaxWidth(),
                             enabled = screenUri.isNotBlank() && !busy
                         ) { Text("PLAY / REVIEW RECORDING") }
-                        Button(
+                        ReportActionV130(
                             onClick = { exportPath(cat, path, true) },
                             modifier = Modifier.fillMaxWidth(),
                             enabled = !busy
                         ) { Text(if (busy) "PREPARING…" else "PREVIEW SUMMARY") }
-                        Button(
+                        ReportActionV130(
                             onClick = { exportPath(cat, path, false) },
                             modifier = Modifier.fillMaxWidth(),
                             enabled = !busy
                         ) { Text(if (busy) "PREPARING…" else "EXPORT / SHARE") }
-                        Button(
+                        ReportActionV130(
                             onClick = {
                                 if(detail!=null){
                                     val rs=ReportReviewV1.loadYouTube(context,path,detail.samples)
@@ -1501,19 +1501,19 @@ private fun ReportsHome(
                             },
                             modifier=Modifier.fillMaxWidth(),enabled=!busy
                         ){Text("CONFIRM REVIEW")}
-                        OutlinedButton(
+                        ReportOutlineActionV130(
                             onClick = { deleteYouTubePath = path },
                             modifier = Modifier.fillMaxWidth(),
                             enabled = !busy
                         ) { Text("DELETE REPORT") }
                     }
                 } else {
-                    Button(
+                    ReportActionV130(
                         onClick = { exportPath(cat, path, true) },
                         modifier = Modifier.fillMaxWidth(),
                         enabled = !busy
                     ) { Text(if (busy) "PREPARING…" else "PREVIEW SUMMARY") }
-                    Button(
+                    ReportActionV130(
                         onClick = { exportPath(cat, path, false) },
                         modifier = Modifier.fillMaxWidth(),
                         enabled = !busy
@@ -1527,7 +1527,7 @@ private fun ReportsHome(
                 title = { Text("Delete YouTube report?") },
                 text = { Text("This permanently deletes the saved YouTube Video Loading report. This action cannot be undone.") },
                 confirmButton = {
-                    Button(onClick = {
+                    ReportActionV130(onClick = {
                         VideoLoadingRepository(context).delete(target)
                         deleteYouTubePath = null
                         selectedPath = null
@@ -3919,6 +3919,7 @@ private fun SettingsScreen(
     var page by remember { mutableStateOf("root") }
     var newIssue by remember { mutableStateOf("") }
     var videoAccessGranted by remember { mutableStateOf(SystemScreenRecordingLinker.hasVideoAccess(context)) }
+    var videoDiagnosticsEnabled by remember { mutableStateOf(VideoDiagnosticLogV130.enabled(context)) }
     val videoAccessLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         videoAccessGranted = granted || SystemScreenRecordingLinker.hasVideoAccess(context)
     }
@@ -4170,6 +4171,19 @@ private fun SettingsScreen(
                         SettingsMenuRow(android.R.drawable.ic_menu_info_details, "Issue Types", "Manage built-in and custom issue choices") { navigateTo("issues") }
                         SettingsGroupDivider()
                         SettingsMenuRow(android.R.drawable.ic_menu_sort_by_size, "Test Metadata Options", "Customize Scenario, Operator, RAT and Task choices") { navigateTo("metadata") }
+                    }
+                    SettingsGroup(title = "VIDEO & DIAGNOSTICS") {
+                        Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                            SettingSwitch("Video diagnostic logs", videoDiagnosticsEnabled) { enabled ->
+                                videoDiagnosticsEnabled = enabled
+                                VideoDiagnosticLogV130.setEnabled(context, enabled)
+                            }
+                            Text(
+                                "Off by default. When enabled, creates a technical TXT log for NEW CellTracker recordings. MP4, TimeMap, SRT and test reports are always saved independently.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                     // Reserve room for the fixed bottom bar while on Settings root.
                     // The subpage itself still uses the whole height, so slide is level.

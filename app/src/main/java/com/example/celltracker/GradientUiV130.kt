@@ -3,6 +3,7 @@ package com.example.celltracker
 import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -64,4 +65,44 @@ internal fun GradientActionV130(
         border=if(primary) null else BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha=.12f)),
         contentPadding=PaddingValues(horizontal=12.dp,vertical=15.dp)
     ) { Text(title,maxLines=1,softWrap=false,overflow=TextOverflow.Ellipsis,fontWeight=FontWeight.SemiBold) }
+}
+
+/** Shared report actions: keep existing onClick/enabled logic, unify surfaces and text.
+ * Use the pale gradient for secondary/dangerous actions, high contrast for primary.
+ */
+@Composable
+internal fun ReportActionV130(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    content: @Composable RowScope.() -> Unit
+) {
+    val shape = RoundedCornerShape(20.dp)
+    val brush = if (enabled) gradientAccentBrushV130(true) else gradientAccentBrushV130(false)
+    Button(
+        onClick=onClick, enabled=enabled,
+        modifier=modifier.clip(shape).background(brush), shape=shape,
+        colors=ButtonDefaults.buttonColors(containerColor=Color.Transparent, contentColor=Color.White,
+            disabledContainerColor=Color.Transparent, disabledContentColor=MaterialTheme.colorScheme.onSurfaceVariant),
+        contentPadding=PaddingValues(horizontal=12.dp,vertical=13.dp), content=content
+    )
+}
+
+@Composable
+internal fun ReportOutlineActionV130(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    content: @Composable RowScope.() -> Unit
+) {
+    val shape=RoundedCornerShape(20.dp)
+    Button(
+        onClick=onClick, enabled=enabled,
+        modifier=modifier.clip(shape).background(gradientAccentBrushV130(false)), shape=shape,
+        colors=ButtonDefaults.buttonColors(containerColor=Color.Transparent,
+            contentColor=MaterialTheme.colorScheme.primary, disabledContainerColor=Color.Transparent,
+            disabledContentColor=MaterialTheme.colorScheme.onSurfaceVariant),
+        border=BorderStroke(1.dp,MaterialTheme.colorScheme.primary.copy(alpha=.14f)),
+        contentPadding=PaddingValues(horizontal=12.dp,vertical=13.dp), content=content
+    )
 }
