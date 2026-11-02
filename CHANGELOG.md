@@ -1,3 +1,9 @@
+## v1.3.0 Preview 9 — Soft Gradient UI & Performance Pass 2 (versionCode 260)
+- Restyled primary Material3 color scheme, shapes and primary dashboards to soft lilac/blush/mint, with dark-mode support. Added reusable, cached `BunnyVisualsV130.kt` gradient brushes. Home hero, test tiles, Cell Info summary, Reports category surfaces, Settings groups and shared info cards updated while retaining CellTracker content and workflows.
+- Replaced heavyweight root/bottom-tab slide transitions with short crossfades, and animated bottom-nav selected color with a 210 ms tween rather than a continuously animated gradient. Preserved the no-transition handling for active test pages.
+- Reduced main-thread and recomposition work: cached OEM Logger package lookup and compact-card app version lookup; avoid repeatedly reattaching unchanged Android app icons; keyed SIM-pager effect by subscription IDs rather than all RF measurements; Reports gets an RF-independent history snapshot; recording/ping history file reads moved to IO.
+- Retains Preview 8 CompileFix, Speedtest, Shizuku and earlier Wi-Fi features; no sampling cadence changes and no report format alterations. Kotlin PSI syntax checks passed; full Android Gradle build and device performance measurements still pending. PREVIEW only.
+
 ## v1.3.0 Preview 8 CompileFix (versionCode 259)
 - Fix four `:app:compileDebugKotlin` smart-cast errors in `MainActivity.kt` (lines near 1173, 1227, 1270, 1323). Compose `produceState` was accessed via `by`, producing a custom-getter delegated property that Kotlin cannot smart-cast inside `parsed != null` guards. Each TikTok Lag/Upload report detail now obtains a stable local `val parsed = parsedState.value` while retaining asynchronous IO parsing and state-driven recomposition.
 - No changes to Speedtest, Shizuku, Wi-Fi Direct, reports, test business logic, or Android versionCode/name. Full GitHub Actions Gradle build and real-device verification still required.

@@ -1,3 +1,33 @@
+# CellTracker v1.3.0 Preview 9 — Soft Gradient UI + Performance Pass 2
+
+**TEST PREVIEW ONLY** · `versionCode=260` · `versionName=1.3.0` · based on **Preview 8 CompileFix** (not the earlier unpatched Preview 8 archive).
+
+## Visual update (bunnylock-style reference, CellTracker identity)
+
+- A soft lilac / blush / mint palette replaces the heavy blue presentation. Main dashboard, test tiles, Cell Info summaries, Reports categories, settings groups and shared info cards use large rounded, lightly gradient-filled surfaces.
+- Home title retains **CellTracker** and differentiates “Tracker” with a calm teal accent; all test buttons, actual RAT/band/RSRP/SINR values and reports are preserved.
+- Tab selection now interpolates its background color; full-page slides for heavy composables are replaced by a short **crossfade**. Gradients themselves are cached/static rather than running an infinite animation that would compete with live radio monitoring.
+- Both system light and system dark appearances have coordinated palettes. OEM-specific log and throughput icons are unchanged.
+
+## Performance pass 2 (targeted, not a guarantee of zero jank)
+
+- The Home page **caches OEM Logger package detection** rather than repeatedly querying PackageManager at each telecom state refresh. Existing home app-version caches are retained, and the other compact test card now caches its version lookup.
+- Native app icons stop unnecessarily calling `ImageView.setImageDrawable` on each AndroidView update if their drawable is unchanged.
+- Reports receives a stable history-only snapshot (`recordings`, `pingHistory`, `callHistory`), instead of a new object carrying continuously changing signal trends and elapsed counters.
+- The SIM pager selection effect keys off SIM subscription identifiers instead of the entire modem result object, avoiding repeated effect cancellation/relaunch on every signal update.
+- Selected recording list and Ping history refreshes now do file IO on `Dispatchers.IO`. The Preview 8 work of sampling radio info on IO and loading TikTok details asynchronously remains intact.
+- Heavy two-page slides replaced by shorter fades (160/105 ms) to reduce transitional layout/draw workload. No continuous shimmer or infinite background gradient shader animation.
+
+## Compatibility and tests
+
+- Original Tests, Speedtest (DL/UL), Shizuku, Local ADB, Bluetooth Call Setup, Wi-Fi Direct and the existing DUT/REF report analysis and export APIs remain present.
+- These are **source changes**, not a verified performance result. Full Android SDK Gradle compilation and real-device frame-time / scrolling / test-function checks are required. This environment has no installed Android SDK; Kotlin PSI parser passed for all modified Kotlin files.
+- The post-test three-Agent Wi-Fi Direct reliability issue remains dependent on actual four-device testing and is not claimed resolved by a UI refresh.
+
+**Recommended GitHub build:** `./gradlew :app:assembleDebug` (using the project’s GitHub Actions setup).
+
+---
+
 > **Preview 8 CompileFix:** Corrects four Kotlin smart-cast compile errors in TikTok Lag/Upload report details. Based on Preview 8 (`versionCode=259`); all other features preserved. Please run GitHub Actions `./gradlew :app:assembleDebug` to verify the full Android build.
 
 # CellTracker v1.3.0 Preview 8 — Shizuku Export, Speedtest and Performance Pass 1

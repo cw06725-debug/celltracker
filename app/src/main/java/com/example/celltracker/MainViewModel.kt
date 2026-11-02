@@ -91,7 +91,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     if (wasRecording && !status.isRecording) {
                         delay(120)
                         _state.value = _state.value.copy(
-                            recordings = loadRecordings(),
+                            recordings = withContext(Dispatchers.IO) { loadRecordings() },
                             latestRecordingPath = latestPathFromPrefs()
                         )
                     }
@@ -106,7 +106,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     _state.value = _state.value.copy(pingTest = pingState)
                     if (wasRunning && !pingState.isRunning) {
                         delay(150L)
-                        _state.value = _state.value.copy(pingHistory = pingRepository.loadHistory())
+                        val history = withContext(Dispatchers.IO) { pingRepository.loadHistory() }
+                    _state.value = _state.value.copy(pingHistory = history)
                     }
                     wasRunning = pingState.isRunning
                 }
@@ -249,7 +250,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         app.stopService(Intent(app, RecordingService::class.java))
         viewModelScope.launch {
             delay(350)
-            _state.value = _state.value.copy(recordings = loadRecordings())
+            val recordings = withContext(Dispatchers.IO) { loadRecordings() }
+            _state.value = _state.value.copy(recordings = recordings)
             if (autoExport && !path.isNullOrBlank() && File(path).exists()) {
                 val result = withContext(Dispatchers.IO) {
                     runCatching { CsvExporter.exportLatest(app, path, CsvExportMode.COMBINED) }

@@ -33,6 +33,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.background
@@ -149,22 +150,38 @@ class MainActivity : ComponentActivity() {
             val darkTheme = isSystemInDarkTheme()
             MaterialTheme(
                 colorScheme = if (darkTheme) darkColorScheme(
-                    primary = Color(0xFF5B9CFF),
-                    secondary = Color(0xFF7FB2FF),
-                    primaryContainer = Color(0xFF173A68),
-                    background = Color(0xFF080F1E),
-                    surface = Color(0xFF101B2E),
-                    surfaceVariant = Color(0xFF17243A),
-                    outline = Color(0xFF2C4161)
+                    primary = Color(0xFFC4B4F3),
+                    onPrimary = Color(0xFF21183F),
+                    secondary = Color(0xFF95D7CB),
+                    primaryContainer = Color(0xFF34294F),
+                    onPrimaryContainer = Color(0xFFF4EAFF),
+                    secondaryContainer = Color(0xFF24433F),
+                    background = Color(0xFF16151D),
+                    surface = Color(0xFF22212B),
+                    surfaceVariant = Color(0xFF2B2935),
+                    onSurface = Color(0xFFF6F2FA),
+                    onSurfaceVariant = Color(0xFFC6BFD0),
+                    outline = Color(0xFF534A62)
                 ) else lightColorScheme(
-                    primary = Color(0xFF1473E6),
-                    secondary = Color(0xFF4B91F1),
-                    primaryContainer = Color(0xFFE8F2FF),
-                    secondaryContainer = Color(0xFFF1F6FD),
-                    background = Color(0xFFF5F8FC),
-                    surface = Color(0xFFFFFFFF),
-                    surfaceVariant = Color(0xFFF3F7FC),
-                    outline = Color(0xFFDCE5F0)
+                    primary = Color(0xFF6654A7),
+                    onPrimary = Color.White,
+                    secondary = Color(0xFF257C70),
+                    primaryContainer = Color(0xFFF0E9FC),
+                    onPrimaryContainer = Color(0xFF32294F),
+                    secondaryContainer = Color(0xFFE4F5F0),
+                    background = Color(0xFFFAF8FA),
+                    surface = Color(0xFFFFFDFE),
+                    surfaceVariant = Color(0xFFF4F0F6),
+                    onSurface = Color(0xFF252331),
+                    onSurfaceVariant = Color(0xFF6F697B),
+                    outline = Color(0xFFE5DDE9)
+                ),
+                shapes = Shapes(
+                    extraSmall = RoundedCornerShape(12.dp),
+                    small = RoundedCornerShape(16.dp),
+                    medium = RoundedCornerShape(20.dp),
+                    large = RoundedCornerShape(26.dp),
+                    extraLarge = RoundedCornerShape(30.dp)
                 )
             ) {
                 val vm: MainViewModel = viewModel()
@@ -356,13 +373,10 @@ MainScreen(
                                 initialState in listOf(RootDestination.CallSetup, RootDestination.PingTest,
                                     RootDestination.VideoLoading, RootDestination.WhatsAppSend, RootDestination.Throughput) ->
                                 EnterTransition.None.togetherWith(ExitTransition.None)
-                            targetState == RootDestination.Settings ->
-                                (slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(220)) + fadeIn(tween(180)))
-                                    .togetherWith(slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(220)) + fadeOut(tween(160)))
-                            initialState == RootDestination.Settings ->
-                                (slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Right, tween(220)) + fadeIn(tween(180)))
-                                    .togetherWith(slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Right, tween(220)) + fadeOut(tween(160)))
-                            else -> fadeIn(tween(120)).togetherWith(fadeOut(tween(100)))
+                            // Lightweight bunnylock-style soft fade instead of moving two
+                            // expensive screen trees horizontally during the transition.
+                            else -> fadeIn(animationSpec = tween(160))
+                                .togetherWith(fadeOut(animationSpec = tween(105)))
                         }
                     },
                     label = "rootNavigation"
@@ -488,13 +502,13 @@ private fun WeChatBottomBar(
         modifier = modifier.fillMaxWidth(),
         color = MaterialTheme.colorScheme.surface,
         tonalElevation = 0.dp,
-        shadowElevation = 10.dp,
-        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
+        shadowElevation = 3.dp,
+        shape = RoundedCornerShape(topStart = 30.dp, topEnd = 30.dp)
     ) {
         Column(Modifier.fillMaxWidth()) {
             HorizontalDivider(
                 thickness = 0.5.dp,
-                color = Color(0xFFE5E5E5)
+                color = MaterialTheme.colorScheme.outline.copy(alpha = .45f)
             )
             Row(
                 Modifier
@@ -522,9 +536,14 @@ private fun WeChatBottomBar(
                 items.forEach { (key, icon, label) ->
                     val isSelected = selected == key
                     val selectedScale by animateFloatAsState(
-                        targetValue = if (isSelected) 1.08f else 1f,
-                        animationSpec = tween(180),
+                        targetValue = if (isSelected) 1.04f else 1f,
+                        animationSpec = tween(165),
                         label = "bottomNavScale"
+                    )
+                    val selectedTint by animateColorAsState(
+                        targetValue = if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+                        animationSpec = tween(210),
+                        label = "bottomNavTint"
                     )
                     Column(
                         modifier = Modifier
@@ -535,8 +554,8 @@ private fun WeChatBottomBar(
                         verticalArrangement = Arrangement.Center
                     ) {
                         Surface(
-                            shape = RoundedCornerShape(16.dp),
-                            color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.11f) else Color.Transparent
+                            shape = RoundedCornerShape(18.dp),
+                            color = selectedTint
                         ) {
                             Icon(
                                 painter = painterResource(icon),
@@ -564,14 +583,15 @@ private fun GlassSection(
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit
 ) {
+    val tileBrush = bunnyTileBrush()
     Surface(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 1.dp,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.55f))
+        shape = RoundedCornerShape(25.dp),
+        color = Color.Transparent,
+        tonalElevation = 0.dp,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.45f))
     ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(Modifier.background(tileBrush).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(title, style = MaterialTheme.typography.titleMedium)
             content()
         }
@@ -1650,15 +1670,16 @@ private fun ReportsHome(
 
 @Composable
 private fun ReportCategoryCard(title: String, count: Int, onClick: () -> Unit) {
+    val tileBrush = bunnyTileBrush()
     Surface(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
-        shape = RoundedCornerShape(18.dp),
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 1.dp,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.55f))
+        shape = RoundedCornerShape(25.dp),
+        color = Color.Transparent,
+        tonalElevation = 0.dp,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.45f))
     ) {
         Row(
-            Modifier.fillMaxWidth().padding(18.dp),
+            Modifier.fillMaxWidth().background(tileBrush).padding(18.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             val (symbol, iconColor) = when {
@@ -1877,7 +1898,7 @@ private fun MainScreen(
             simPagerState.animateScrollToPage(selectedIndexForPager)
         }
     }
-    LaunchedEffect(simPagerState.currentPage, state.sims) {
+    LaunchedEffect(simPagerState.currentPage, state.sims.map { it.subscriptionId }) {
         state.sims.getOrNull(simPagerState.currentPage)?.let { sim ->
             if (sim.subscriptionId != state.selectedSubscriptionId) onSelectSim(sim.subscriptionId)
         }
@@ -1922,18 +1943,9 @@ private fun MainScreen(
                     // All Tests -> Home is Back and must slide right. ALL_TESTS is not a
                     // bottom-tab item, so handling it explicitly avoids indexOf(-1) reversing
                     // the animation direction.
-                    val direction = when {
-                        targetState == "ALL_TESTS" && initialState == "HOME" -> AnimatedContentTransitionScope.SlideDirection.Left
-                        targetState == "HOME" && initialState == "ALL_TESTS" -> AnimatedContentTransitionScope.SlideDirection.Right
-                        else -> {
-                            val order = listOf("HOME", "TEST", "CELL", "REPORTS", "SETTINGS")
-                            val from = order.indexOf(initialState).coerceAtLeast(0)
-                            val to = order.indexOf(targetState).coerceAtLeast(0)
-                            if (to > from) AnimatedContentTransitionScope.SlideDirection.Left else AnimatedContentTransitionScope.SlideDirection.Right
-                        }
-                    }
-                    (slideIntoContainer(direction, tween(300)) + fadeIn(tween(220)))
-                        .togetherWith(slideOutOfContainer(direction, tween(300)) + fadeOut(tween(180)))
+                    // Cross-fade avoids translating full Reports/Cell Info trees at once.
+                    // Draw a soft fade instead of a two-screen slide during navigation.
+                    fadeIn(tween(155)).togetherWith(fadeOut(tween(100)))
                 },
                 label = "mainTabs",
                 modifier = Modifier
@@ -1943,7 +1955,7 @@ private fun MainScreen(
                 if (tab == "ALL_TESTS") {
                     Column(
                         Modifier.fillMaxSize()
-                            .background(Brush.verticalGradient(listOf(MaterialTheme.colorScheme.primary.copy(alpha = 0.055f), MaterialTheme.colorScheme.background)))
+                            .background(bunnyScreenBrush())
                             .verticalScroll(rememberRetainedScrollState("home.alltests"))
                             .padding(horizontal = 16.dp),
                         verticalArrangement = Arrangement.spacedBy(14.dp)
@@ -2054,8 +2066,18 @@ private fun MainScreen(
             }
 
             if (tab == "REPORTS") {
+                // Keep report-only data referentially stable while RF telemetry,
+                // elapsed seconds and signal trends update every sampling tick.
+                // ReportsHome never needs the high-frequency network fields.
+                val reportsSnapshot = remember(state.recordings, state.pingHistory, state.callHistory) {
+                    AppState(
+                        recordings = state.recordings,
+                        pingHistory = state.pingHistory,
+                        callHistory = state.callHistory
+                    )
+                }
                 ReportsHome(
-                    state = state,
+                    state = reportsSnapshot,
                     onOpenRecording = onOpenRecording,
                     onExportRecording = onExportRecording,
                     onDeleteRecording = onDeleteRecording,
@@ -4088,6 +4110,7 @@ private fun Modifier.horizontalSwipe(
 
 @Composable
 private fun SettingsGroup(title: String, content: @Composable ColumnScope.() -> Unit) {
+    val tileBrush = bunnyTileBrush()
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
             title,
@@ -4098,12 +4121,12 @@ private fun SettingsGroup(title: String, content: @Composable ColumnScope.() -> 
         )
         Surface(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(22.dp),
-            color = MaterialTheme.colorScheme.surface,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .10f)),
-            tonalElevation = 1.dp
+            shape = RoundedCornerShape(26.dp),
+            color = Color.Transparent,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .45f)),
+            tonalElevation = 0.dp
         ) {
-            Column(content = content)
+            Column(Modifier.background(tileBrush), content = content)
         }
     }
 }
@@ -4228,43 +4251,43 @@ private fun CellInfoSummaryCardV128(c: CellData, simLabel: String) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(26.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary),
+        colors = CardDefaults.cardColors(containerColor = Color.Transparent),
         elevation = CardDefaults.cardElevation(defaultElevation = 5.dp)
     ) {
         Column(
-            Modifier.padding(18.dp),
+            Modifier.background(bunnyHeroBrush()).padding(18.dp),
             verticalArrangement = Arrangement.spacedBy(13.dp)
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                OperatorIconTileV1(operator, MaterialTheme.colorScheme.onPrimary)
+                OperatorIconTileV1(operator, MaterialTheme.colorScheme.onSurface)
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text(
                         rat,
-                        color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.78f),
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.78f),
                         style = MaterialTheme.typography.labelLarge
                     )
                     Text(
                         operator,
-                        color = MaterialTheme.colorScheme.onPrimary,
+                        color = MaterialTheme.colorScheme.onSurface,
                         style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.Bold,
                         maxLines = 1
                     )
                     Text(
                         simLabel,
-                        color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.76f),
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.76f),
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
                 Surface(
                     shape = RoundedCornerShape(50),
-                    color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.12f)
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
                 ) {
                     Text(
                         if (c.registered) "● Connected" else "● Not registered",
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                        color = MaterialTheme.colorScheme.onPrimary,
+                        color = MaterialTheme.colorScheme.onSurface,
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.SemiBold
                     )
@@ -4316,14 +4339,15 @@ private fun CellInfoCardV128(
 
 @Composable
 private fun InfoCard(title: String, content: @Composable ColumnScope.() -> Unit) {
+    val tileBrush = bunnyTileBrush()
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.20f)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        shape = RoundedCornerShape(25.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.Transparent),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(modifier = Modifier.background(tileBrush).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.16f))
             content()
@@ -6829,8 +6853,10 @@ private fun HomeScreenV121(
     onThroughputTest: () -> Unit
 ) {
     val context = LocalContext.current
-    val mtkLoggerPackage = CellTrackerAdbEngine.mtkLoggerPackageLocal(context)
-    val qtiLoggerPackage = CellTrackerAdbEngine.qualcommLoggerPackageLocal(context)
+    // These PackageManager probes are relatively costly on some OEM builds.
+    // They must not run each time the serving-cell values refresh.
+    val mtkLoggerPackage = remember(context) { CellTrackerAdbEngine.mtkLoggerPackageLocal(context) }
+    val qtiLoggerPackage = remember(context) { CellTrackerAdbEngine.qualcommLoggerPackageLocal(context) }
     val c = selected?.servingCell
     val operator = c?.operator?.takeIf { it.isNotBlank() && it != "--" } ?: "Waiting for network"
     val rat = c?.displayRat?.takeIf { it.isNotBlank() && it != "--" } ?: "Network unavailable"
@@ -6838,7 +6864,7 @@ private fun HomeScreenV121(
 
     Column(
         modifier = Modifier.fillMaxSize()
-            .background(Brush.verticalGradient(listOf(MaterialTheme.colorScheme.primary.copy(alpha = 0.055f), MaterialTheme.colorScheme.background, MaterialTheme.colorScheme.background)))
+            .background(bunnyScreenBrush())
             .verticalScroll(rememberRetainedScrollState("main.home"))
             .padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
@@ -6846,25 +6872,29 @@ private fun HomeScreenV121(
         Spacer(Modifier.height(12.dp))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text("CellTracker", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-                Text("Stay connected. Test smarter.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Cell", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                    Text("Tracker", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.secondary)
+                }
+                Text("Measure • Compare • Improve", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Surface(shape = RoundedCornerShape(999.dp), color = if (state.isRecording) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.22f))) {
                 Text(if (state.isRecording) "● Recording" else "● Ready", modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp), style = MaterialTheme.typography.labelMedium, color = if (state.isRecording) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.SemiBold)
             }
         }
 
-        Card(onClick = onCellInfo, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(26.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary), elevation = CardDefaults.cardElevation(defaultElevation = 5.dp, pressedElevation = 1.dp)) {
-            Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(13.dp)) {
+        val heroBrush = bunnyHeroBrush()
+        Card(onClick = onCellInfo, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(30.dp), colors = CardDefaults.cardColors(containerColor = Color.Transparent), elevation = CardDefaults.cardElevation(defaultElevation = 0.dp, pressedElevation = 0.dp)) {
+            Column(Modifier.background(heroBrush).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    OperatorIconTileV1(operator, MaterialTheme.colorScheme.onPrimary)
+                    OperatorIconTileV1(operator, MaterialTheme.colorScheme.onSurface)
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
-                        Text(rat, color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.82f), style = MaterialTheme.typography.labelLarge)
-                        Text(operator, color = MaterialTheme.colorScheme.onPrimary, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, maxLines = 1)
-                        Text(sim, color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.78f), style = MaterialTheme.typography.bodySmall)
+                        Text(rat, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f), style = MaterialTheme.typography.labelLarge)
+                        Text(operator, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, maxLines = 1)
+                        Text(sim, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.78f), style = MaterialTheme.typography.bodySmall)
                     }
-                    Text("›", color = MaterialTheme.colorScheme.onPrimary, style = MaterialTheme.typography.headlineMedium)
+                    Text("›", color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.headlineMedium)
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     V12MetricChip("RSRP", c?.rsrp ?: "--", Modifier.weight(1f))
@@ -6976,15 +7006,16 @@ private fun HomeQuickCardV121(title: String, subtitle: String, symbol: String, i
     val version = remember(context, appPackages) {
         if (appPackages.isNotEmpty()) installedAppVersionV1(context, appPackages) else null
     }
+    val tileBrush = bunnyTileBrush()
     Card(
         onClick = { if (installIfMissing) runAppTestOrInstallV1(context, appPackages, onClick) else onClick() },
         modifier = modifier.height(124.dp),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp, pressedElevation = 0.dp)
+        shape = RoundedCornerShape(25.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.Transparent),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp, pressedElevation = 0.dp)
     ) {
-        Column(modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 10.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.SpaceBetween) {
+        Column(modifier = Modifier.fillMaxSize().background(tileBrush).padding(horizontal = 8.dp, vertical = 10.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.SpaceBetween) {
             if (appPackages.isNotEmpty()) InstalledAppIconV1(appPackages, symbol, iconColor, artworkSize = iconArtworkSize) else AppIconTileV1(symbol, iconColor)
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(title, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, maxLines = 1)
@@ -7002,11 +7033,11 @@ private fun V12MetricChip(label: String, value: String, modifier: Modifier = Mod
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.10f)
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.55f)
     ) {
         Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
-            Text(label, color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.72f), style = MaterialTheme.typography.labelSmall)
-            Text(value, color = MaterialTheme.colorScheme.onPrimary, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, maxLines = 1)
+            Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
+            Text(value, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, maxLines = 1)
         }
     }
 }
@@ -7023,7 +7054,9 @@ private fun QuickTestCompactCardV12(
     onClick: () -> Unit
 ) {
     val context = LocalContext.current
-    val version = if (appPackages.isNotEmpty()) installedAppVersionV1(context, appPackages) else null
+    val version = remember(context, appPackages) {
+        if (appPackages.isNotEmpty()) installedAppVersionV1(context, appPackages) else null
+    }
     Card(
         onClick = { if (installIfMissing) runAppTestOrInstallV1(context, appPackages, onClick) else onClick() },
         modifier = modifier.height(if (appPackages.isNotEmpty()) 148.dp else 132.dp),
@@ -7121,7 +7154,9 @@ private fun InstalledAppIconV1(packageNames: List<String>, fallbackSymbol: Strin
                     factory = { ctx -> android.widget.ImageView(ctx).apply {
                         scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
                     } },
-                    update = { it.setImageDrawable(drawable) },
+                    update = { imageView ->
+                        if (imageView.drawable !== drawable) imageView.setImageDrawable(drawable)
+                    },
                     modifier = Modifier.size(artworkSize).clip(RoundedCornerShape(11.dp))
                 )
             }
