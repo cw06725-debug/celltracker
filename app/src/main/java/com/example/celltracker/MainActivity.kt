@@ -44,6 +44,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -86,6 +87,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -1750,22 +1752,17 @@ private fun ReportCategoryCard(title: String, count: Int, onClick: () -> Unit) {
             Modifier.fillMaxWidth().background(tileBrush).padding(18.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            val (symbol, iconColor) = when {
-                title.contains("Ping", true) -> "PING" to Color(0xFF1473E6)
-                title.contains("Call", true) -> "CALL" to Color(0xFF16A34A)
-                title.contains("Recording", true) -> "REC" to Color(0xFF7456E8)
-                title.contains("YouTube", true) -> "▶" to Color(0xFFE91D43)
-                title.contains("WhatsApp", true) -> "CALL" to Color(0xFF1AAA67)
-                title.contains("TikTok", true) -> "♪" to Color(0xFF303B51)
-                else -> "⌖" to Color(0xFF0891B2)
+            val (symbol, iconColor, installedPackages) = when {
+                title.contains("YouTube", true) -> Triple("▶", Color(0xFFFF0033), listOf("com.google.android.youtube"))
+                title.contains("WhatsApp", true) -> Triple("☎", Color(0xFF25D366), listOf("com.whatsapp", "com.whatsapp.w4b"))
+                title.contains("TikTok", true) -> Triple("♪", Color(0xFF111111), listOf("com.zhiliaoapp.musically", "com.ss.android.ugc.trill"))
+                title.contains("Tamasha", true) -> Triple("LIVE", Color(0xFF7B6AC7), ManualStallKindV130.LIVE.packages)
+                title.contains("PUBG", true) -> Triple("GAME", Color(0xFF328D86), ManualStallKindV130.GAME.packages)
+                title.contains("Ping", true) -> Triple("PING", MaterialTheme.colorScheme.primary, emptyList())
+                title.contains("Call", true) -> Triple("CALL", Color(0xFF16A34A), emptyList())
+                else -> Triple("REC", Color(0xFF6D4AFF), emptyList())
             }
-            val installedPackages = when {
-                title.contains("TikTok", ignoreCase = true) -> listOf("com.zhiliaoapp.musically", "com.ss.android.ugc.trill")
-                title.contains("YouTube", ignoreCase = true) -> listOf("com.google.android.youtube")
-                title.contains("WhatsApp", ignoreCase = true) -> listOf("com.whatsapp", "com.whatsapp.w4b")
-                else -> emptyList()
-            }
-            if (installedPackages.isNotEmpty()) InstalledAppIconV1(installedPackages, symbol, iconColor)
+            if (installedPackages.isNotEmpty()) InstalledAppIconV1(installedPackages, symbol, iconColor, artworkSize = 46.dp)
             else AppIconTileV1(symbol, iconColor)
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
@@ -7041,72 +7038,59 @@ private fun HomeScreenV121(
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
+        val tiles = buildList {
+            add(HomeTestTileV130("tiktok_upload", "TikTok", "Upload", "♪", Color(0xFF111111), listOf("com.zhiliaoapp.musically", "com.ss.android.ugc.trill"), onClick = onTikTokUpload))
+            add(HomeTestTileV130("tiktok_lag", "TikTok", "Video Lag", "♪", Color(0xFF111111), listOf("com.zhiliaoapp.musically", "com.ss.android.ugc.trill"), onClick = onTikTokLag))
+            add(HomeTestTileV130("youtube", "YouTube", "Loading", "▶", Color(0xFFFF0033), listOf("com.google.android.youtube"), onClick = onVideoLoading))
+            add(HomeTestTileV130("whatsapp", "WhatsApp", "Image Send", "☎", Color(0xFF25D366), listOf("com.whatsapp", "com.whatsapp.w4b"), onClick = onWhatsAppSend))
+            add(HomeTestTileV130("ping", "Ping", "Latency Test", "PING", MaterialTheme.colorScheme.primary, onClick = onPingTest))
+            add(HomeTestTileV130("call", "Call", "Call Setup", "CALL", Color(0xFF16A34A), onClick = onCallSetup))
+            add(HomeTestTileV130("network", "Network", if(state.isRecording)"Stop Recording" else "Recording", "REC", Color(0xFF6D4AFF), onClick = onNetworkRecording))
+            add(HomeTestTileV130("speedtest", "Speedtest", "DL / UL", "⇅", Color(0xFF0891B2), listOf("org.zwanoo.android.speedtest", "org.zwanoo.android.speedtest.gworld"), onClick = onThroughputTest))
+            add(HomeTestTileV130("device_logs", "Device Logs", "ADB Tools", "ADB", Color(0xFF64748B), onClick = onDeviceLogs))
+            add(HomeTestTileV130("live", "Live", "Tamasha", "LIVE", Color(0xFF7B6AC7), ManualStallKindV130.LIVE.packages, installIfMissing = false, onClick = {onManualStallTest(ManualStallKindV130.LIVE)}))
+            add(HomeTestTileV130("gaming", "Gaming", "PUBG", "GAME", Color(0xFF328D86), ManualStallKindV130.GAME.packages, installIfMissing = false, onClick = {onManualStallTest(ManualStallKindV130.GAME)}))
+            if (mtkLoggerPackage != null) add(HomeTestTileV130("mtk_logger", "MTK Logger", "Vendor Log", "LOG", Color(0xFF64748B), listOf(mtkLoggerPackage), installIfMissing = false, onClick = {
+                CellTrackerAdbEngine.openMtkLoggerLocal(context).onFailure { Toast.makeText(context,it.message ?: "Unable to open MTK Logger",Toast.LENGTH_LONG).show() }
+            }))
+            if (qtiLoggerPackage != null) add(HomeTestTileV130("qti_logger", if(qtiLoggerPackage=="com.transsion.TranLogManager")"TranLog" else "QTI LogKit", "Vendor Log", "LOG", Color(0xFF64748B), listOf(qtiLoggerPackage), installIfMissing = false, onClick = {
+                CellTrackerAdbEngine.openQualcommLoggerLocal(context).onFailure {Toast.makeText(context,it.message ?: "Unable to open vendor Logger",Toast.LENGTH_LONG).show()}
+            }))
+        }
+        val orderIds = remember(context) { mutableStateListOf<String>().apply { addAll(HomeTestOrderV130.load(context)) } }
+        var homeEdit by rememberSaveable { mutableStateOf(false) }
+        val orderedTiles = HomeTestOrderV130.normalized(orderIds.toList(), tiles.map { it.id }).mapNotNull { id -> tiles.firstOrNull { it.id == id } }
         HomeRevealV130(order = 3) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            HomeQuickCardV121("TikTok", "Upload", "♪", Color(0xFF111111),
-                listOf("com.zhiliaoapp.musically", "com.ss.android.ugc.trill"), Modifier.weight(1f), onClick = onTikTokUpload)
-            HomeQuickCardV121("TikTok", "Video Lag", "♪", Color(0xFF111111),
-                listOf("com.zhiliaoapp.musically", "com.ss.android.ugc.trill"), Modifier.weight(1f), onClick = onTikTokLag)
-            HomeQuickCardV121("YouTube", "Loading", "▶", Color(0xFFFF0033),
-                listOf("com.google.android.youtube"), Modifier.weight(1f), onClick = onVideoLoading)
-        }
-            }
-        HomeRevealV130(order = 4) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            HomeQuickCardV121("WhatsApp", "Image Send", "☎", Color(0xFF25D366),
-                listOf("com.whatsapp", "com.whatsapp.w4b"), Modifier.weight(1f), onClick = onWhatsAppSend)
-            HomeQuickCardV121("Ping", "Latency Test", "PING", MaterialTheme.colorScheme.primary,
-                modifier = Modifier.weight(1f), onClick = onPingTest)
-            HomeQuickCardV121("Call", "Call Setup", "CALL", Color(0xFF16A34A),
-                modifier = Modifier.weight(1f), onClick = onCallSetup)
-        }
-            }
-        HomeRevealV130(order = 5) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            HomeQuickCardV121("Network", if(state.isRecording) "Stop Recording" else "Recording", "REC",
-                Color(0xFF6D4AFF), modifier = Modifier.weight(1f), onClick = onNetworkRecording)
-            HomeQuickCardV121("Speedtest", "DL / UL", "⇅", Color(0xFF0891B2),
-                listOf("org.zwanoo.android.speedtest", "org.zwanoo.android.speedtest.gworld"),
-                modifier = Modifier.weight(1f), onClick = onThroughputTest)
-            HomeQuickCardV121("Device Logs", "ADB Tools", "ADB", Color(0xFF64748B),
-                modifier = Modifier.weight(1f), onClick = onDeviceLogs)
-        }
-            }
-        HomeRevealV130(order = 6) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                HomeQuickCardV121("Live", "Tamasha", "LIVE", Color(0xFF7B6AC7),
-                    ManualStallKindV130.LIVE.packages, Modifier.weight(1f), installIfMissing = false, onClick = { onManualStallTest(ManualStallKindV130.LIVE) })
-                HomeQuickCardV121("Gaming", "PUBG", "GAME", Color(0xFF328D86),
-                    ManualStallKindV130.GAME.packages, Modifier.weight(1f), installIfMissing = false, onClick = { onManualStallTest(ManualStallKindV130.GAME) })
-                Spacer(Modifier.weight(1f))
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(if(homeEdit)"Rearrange tests" else "", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                if(homeEdit) TextButton(onClick={homeEdit=false}) { Text("DONE") }
+                else Text("Long-press any test to rearrange", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        if (mtkLoggerPackage != null || qtiLoggerPackage != null) {
-            HomeRevealV130(order = 7) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (mtkLoggerPackage != null) {
-                    HomeQuickCardV121("MTK Logger", "Vendor Log", "LOG", Color(0xFF64748B),
-                        listOf(mtkLoggerPackage), Modifier.weight(1f), installIfMissing = false, onClick = {
-                            CellTrackerAdbEngine.openMtkLoggerLocal(context).onFailure {
-                                Toast.makeText(context, it.message ?: "Unable to open MTK Logger", Toast.LENGTH_LONG).show()
+        var gridWidth by remember { mutableIntStateOf(0) }
+        Column(Modifier.fillMaxWidth().onSizeChanged { gridWidth=it.width }, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            orderedTiles.chunked(3).forEachIndexed { rowIndex, rowTiles ->
+                HomeRevealV130(order = rowIndex + 4) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        rowTiles.forEach { tile ->
+                            key(tile.id) {
+                                val pos = orderedTiles.indexOfFirst { it.id == tile.id }
+                                SortableHomeTileV130(tile, homeEdit, Modifier.weight(1f), onEdit = {homeEdit=true},
+                                    onDrop = { dx,dy ->
+                                        val slotW = (gridWidth - 20.dp.value * context.resources.displayMetrics.density) / 3f
+                                        val slotH = (124.dp.value + 10.dp.value) * context.resources.displayMetrics.density
+                                        val colDelta = kotlin.math.round(dx / slotW.coerceAtLeast(1f)).toInt()
+                                        val rowDelta = kotlin.math.round(dy / slotH.coerceAtLeast(1f)).toInt()
+                                        val target = (pos + rowDelta * 3 + colDelta).coerceIn(0,orderedTiles.lastIndex)
+                                        val updated = HomeTestOrderV130.moved(orderedTiles.map {it.id}, pos, target)
+                                        orderIds.clear();orderIds.addAll(updated)
+                                        HomeTestOrderV130.persist(context,updated)
+                                    })
                             }
-                        })
+                        }
+                        repeat(3 - rowTiles.size) { Spacer(Modifier.weight(1f)) }
+                    }
                 }
-                if (qtiLoggerPackage != null) {
-                    HomeQuickCardV121(if (qtiLoggerPackage == "com.transsion.TranLogManager") "TranLog" else "QTI LogKit",
-                        "Vendor Log", "LOG", Color(0xFF64748B), listOf(qtiLoggerPackage),
-                        Modifier.weight(1f), installIfMissing = false, iconArtworkSize = 40.dp, onClick = {
-                            CellTrackerAdbEngine.openQualcommLoggerLocal(context).onFailure {
-                                Toast.makeText(context, it.message ?: "Unable to open vendor Logger", Toast.LENGTH_LONG).show()
-                            }
-                        })
-                }
-                // Each Home row has exactly three equally weighted slots. A lone
-                // vendor logger must occupy ONE slot, not a half-width (double) card.
-                repeat(3 - listOf(mtkLoggerPackage, qtiLoggerPackage).count { it != null }) {
-                    Spacer(Modifier.weight(1f))
-                }
-            }
             }
         }
 
@@ -7150,8 +7134,54 @@ private fun runAppTestOrInstallV1(context: Context, packageNames: List<String>, 
     else openPlayStoreV1(context, packageNames.first())
 }
 
+private data class HomeTestTileV130(
+    val id: String, val title: String, val subtitle: String, val symbol: String, val color: Color,
+    val packages: List<String> = emptyList(), val installIfMissing: Boolean = true,
+    val onClick: () -> Unit
+)
+
+/** Long hold enters edit mode, then drag to a new grid slot. The active tile is lifted; edit-only wiggle. */
 @Composable
-private fun HomeQuickCardV121(title: String, subtitle: String, symbol: String, iconColor: Color, appPackages: List<String> = emptyList(), modifier: Modifier = Modifier, installIfMissing: Boolean = true, iconArtworkSize: Dp = 40.dp, onClick: () -> Unit) {
+private fun SortableHomeTileV130(
+    tile: HomeTestTileV130, editing: Boolean, modifier: Modifier = Modifier,
+    onEdit: () -> Unit, onDrop: (Float,Float) -> Unit
+) {
+    val dx = remember { Animatable(0f) }
+    val dy = remember { Animatable(0f) }
+    val wiggle = remember { Animatable(0f) }
+    LaunchedEffect(editing) {
+        if(editing) {
+            while(true) {
+                wiggle.animateTo(0.7f, tween(170))
+                wiggle.animateTo(-0.7f, tween(340))
+                wiggle.animateTo(0f, tween(170))
+            }
+        } else wiggle.snapTo(0f)
+    }
+    val scope = rememberCoroutineScope()
+    var trackingX by remember { mutableFloatStateOf(0f) }
+    var trackingY by remember { mutableFloatStateOf(0f) }
+    val gestures = Modifier.pointerInput(tile.id) {
+        detectDragGesturesAfterLongPress(
+            onDragStart = {onEdit();trackingX=0f;trackingY=0f},
+            onDragEnd = {onDrop(trackingX,trackingY);scope.launch{dx.snapTo(0f);dy.snapTo(0f)}},
+            onDragCancel = {scope.launch{dx.snapTo(0f);dy.snapTo(0f)}}
+        ) { change, amount ->
+            change.consume();trackingX+=amount.x;trackingY+=amount.y
+            scope.launch{dx.snapTo(trackingX);dy.snapTo(trackingY)}
+        }
+    }
+    Box(modifier.then(gestures).graphicsLayer {
+        translationX=dx.value;translationY=dy.value
+        rotationZ=wiggle.value
+    }.zIndex(if(dx.value != 0f || dy.value != 0f) 2f else 0f)) {
+        HomeQuickCardV121(tile.title,tile.subtitle,tile.symbol,tile.color,tile.packages,
+            modifier=Modifier.fillMaxWidth(),installIfMissing=tile.installIfMissing,editing=editing,onClick=tile.onClick)
+    }
+}
+
+@Composable
+private fun HomeQuickCardV121(title: String, subtitle: String, symbol: String, iconColor: Color, appPackages: List<String> = emptyList(), modifier: Modifier = Modifier, installIfMissing: Boolean = true, iconArtworkSize: Dp = 46.dp, editing: Boolean = false, onClick: () -> Unit) {
     val context = LocalContext.current
     // Avoid repeated PackageManager calls when the Home dialog is opened/recomposed.
     val version = remember(context, appPackages) {
@@ -7166,7 +7196,8 @@ private fun HomeQuickCardV121(title: String, subtitle: String, symbol: String, i
         label = "homeTestCardPress"
     )
     Card(
-        onClick = { if (installIfMissing) runAppTestOrInstallV1(context, appPackages, onClick) else onClick() },
+        onClick = { if (!editing) { if (installIfMissing) runAppTestOrInstallV1(context, appPackages, onClick) else onClick() } },
+        enabled = !editing,
         interactionSource = interaction,
         modifier = modifier.height(124.dp).graphicsLayer { scaleX = pressScale; scaleY = pressScale },
         shape = RoundedCornerShape(25.dp),
@@ -7251,25 +7282,17 @@ private fun AppIconTileV1(symbol: String, color: Color) {
                     fun point(x: Float, y: Float) = Offset(x * scale, y * scale)
                     when (symbol) {
                         "PING" -> {
-                            drawArc(color, 200f, 140f, false, topLeft = point(12f, 15f),
-                                size = Size(76f*scale, 76f*scale), style = Stroke(8f*scale, cap = StrokeCap.Round))
-                            drawLine(color, point(50f, 68f), point(79f, 30f), 8f*scale, StrokeCap.Round)
-                            drawCircle(color, 8f*scale, point(50f, 68f))
-                            for (i in 0..4) {
-                                val a = (205 + i * 32) * Math.PI / 180
-                                val x = (50 + 32 * kotlin.math.cos(a)).toFloat()
-                                val y = (55 + 32 * kotlin.math.sin(a)).toFloat()
-                                drawCircle(color, 3f*scale, point(x,y))
-                            }
+                            // Complete gauge outline so it never looks like a damaged icon.
+                            drawCircle(color, 32f*scale, point(50f, 50f), style = Stroke(6f*scale,cap=StrokeCap.Round))
+                            drawLine(color, point(50f, 50f), point(72f, 29f), 7f*scale, StrokeCap.Round)
+                            drawCircle(color, 6f*scale, point(50f, 50f))
                         }
                         "REC" -> {
                             drawRoundRect(color, topLeft = point(13f, 18f),
                                 size = Size(74f*scale, 64f*scale), cornerRadius = androidx.compose.ui.geometry.CornerRadius(10f*scale),
                                 style = Stroke(6f*scale))
-                            drawArc(color, 205f, 125f, false, topLeft = point(25f, 30f),
-                                size = Size(50f*scale, 42f*scale), style = Stroke(6f*scale, cap = StrokeCap.Round))
-                            drawCircle(color, 7f*scale, point(50f, 55f))
-                            drawCircle(Color(0xFFE5484D), 6f*scale, point(76f, 28f))
+                            drawCircle(color, 18f*scale, point(50f, 53f), style = Stroke(6f*scale))
+                            drawCircle(Color(0xFFE5484D), 6f*scale, point(76f, 27f))
                         }
                         else -> {
                             val phonePath = Path().apply {
@@ -7311,7 +7334,7 @@ private fun InstalledAppIconV1(packageNames: List<String>, fallbackSymbol: Strin
             Box(contentAlignment = Alignment.Center) {
                 AndroidView(
                     factory = { ctx -> android.widget.ImageView(ctx).apply {
-                        scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
+                        scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
                     } },
                     update = { imageView ->
                         if (imageView.drawable !== drawable) imageView.setImageDrawable(drawable)

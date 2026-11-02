@@ -44,6 +44,16 @@ class TestScreenRecordingService : Service() {
     private var outputPfd: ParcelFileDescriptor? = null
     private var recorderStarted = false
     private var recordedVideoName = ""
+    private var reviewKind = ""
+    private var reviewRole = "DUT1"
+    private var reviewTask = ""
+    private var reviewVersion = ""
+    private var reviewOperator = ""
+    private var reviewRat = ""
+    private var reviewBand = ""
+    private var reviewPci = ""
+    private var reviewRsrp = ""
+    private var reviewSinr = ""
     private var recordingDirectory = ""
     private var recordingStart: RecordingTimelineV130.Anchor? = null
     private val clockSamples = mutableListOf<RecordingTimelineV130.Anchor>()
@@ -95,6 +105,16 @@ class TestScreenRecordingService : Service() {
             return
         }
 
+        reviewKind = intent.getStringExtra(REVIEW_KIND).orEmpty()
+        reviewRole = intent.getStringExtra(REVIEW_ROLE).orEmpty().ifBlank { "DUT1" }
+        reviewTask = intent.getStringExtra(REVIEW_TASK).orEmpty()
+        reviewVersion = intent.getStringExtra(REVIEW_VERSION).orEmpty()
+        reviewOperator = intent.getStringExtra(REVIEW_OPERATOR).orEmpty()
+        reviewRat = intent.getStringExtra(REVIEW_RAT).orEmpty()
+        reviewBand = intent.getStringExtra(REVIEW_BAND).orEmpty()
+        reviewPci = intent.getStringExtra(REVIEW_PCI).orEmpty()
+        reviewRsrp = intent.getStringExtra(REVIEW_RSRP).orEmpty()
+        reviewSinr = intent.getStringExtra(REVIEW_SINR).orEmpty()
         val now = System.currentTimeMillis()
         val name = safe(intent.getStringExtra(NAME).orEmpty().ifBlank { "CellTracker_Test" }) +
             "_" + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date(now)) + ".mp4"
@@ -247,6 +267,21 @@ class TestScreenRecordingService : Service() {
             }.onSuccess { (csv, subtitle) ->
                 lastTimelineCsv = csv.toString()
                 lastTimelineSrt = subtitle.toString()
+                getSharedPreferences("ct_recording_timeline", MODE_PRIVATE).edit()
+                    .putString("reviewKind", reviewKind)
+                    .putString("reviewRole", reviewRole)
+                    .putString("reviewTask", reviewTask)
+                    .putString("reviewAppVersion", reviewVersion)
+                    .putString("reviewOperator", reviewOperator)
+                    .putString("reviewRat", reviewRat)
+                    .putString("reviewBand", reviewBand)
+                    .putString("reviewPci", reviewPci)
+                    .putString("reviewRsrp", reviewRsrp)
+                    .putString("reviewSinr", reviewSinr)
+                    .putString("reviewVideoUri", uri.toString())
+                    .remove("reviewedEvents")
+                    .remove("lastReviewExportSignature")
+                    .apply()
                 diag("Time-map CSV and SRT saved, confidence=estimated")
             }.onFailure { e ->
                 lastError = "Video saved, but timeline export failed: ${e.message}"
@@ -423,6 +458,16 @@ class TestScreenRecordingService : Service() {
         const val CODE = "code"
         const val DATA = "data"
         const val NAME = "name"
+        const val REVIEW_KIND = "review_kind"
+        const val REVIEW_ROLE = "review_role"
+        const val REVIEW_TASK = "review_task"
+        const val REVIEW_VERSION = "review_version"
+        const val REVIEW_OPERATOR = "review_operator"
+        const val REVIEW_RAT = "review_rat"
+        const val REVIEW_BAND = "review_band"
+        const val REVIEW_PCI = "review_pci"
+        const val REVIEW_RSRP = "review_rsrp"
+        const val REVIEW_SINR = "review_sinr"
         const val CH = "celltracker_test_record"
         const val NID = 1011
         @Volatile var isRecording = false

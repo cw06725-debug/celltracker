@@ -1,3 +1,13 @@
+## v1.3.0 Preview 16 — Home Layout & Post-Video Stall Review (versionCode 267)
+
+- Reports classification uses the same icon-rendering pipeline as Home. PUBG/Tamasha show the installed app icon; fallback Ping/Call/Network tiles share the same vector symbols as Home. Installed icons use FIT_CENTER, avoiding clipping.
+- Home supports long-press edit mode, subtle edit-only wiggle, drag-to-reorder (hold then drag any tile), DONE, and persistent order on the current phone. Test IDs and report paths remain unchanged. Hidden vendor loggers keep stable IDs.
+- PUBG/Tamasha manual overlays have short single-line START / END / FINISH buttons, without changing event timing.
+- Video-only (no overlay) recordings can be reviewed after capture. In Reports → Screen Recording · Real-Time Playback or the test's Review button, pause/seek then MARK START / MARK END, repeat for multiple stalls, UNDO, and export reviewed stall CSV + XLSX. Review events persist for the last recording; original MP4, SRT and TimeMap.csv are never modified. Export is marked VIDEO_REVIEW_ESTIMATED and duplicate exports of the same markers are blocked. Use the saved device/role/task/starting network snapshot for provenance.
+- Time alignment is estimated from MediaRecorder clock anchors; no exact first-frame PTS calibration. Video-only mode does not automatically detect visual stalls. Reports are manually reviewed observations, not automatic frame detection.
+- Retains Preview 12/13 navigation stability, Settings slide, gradient icon, Wi-Fi Direct, Shizuku, Speedtest and other test features.
+- Static Kotlin PSI parsing and a dedicated 4-case Home ordering test passed; full Android Gradle assembleDebug and real-device validation have NOT been performed in this environment.
+
 ## Preview 15 — Compile Fix + Recording Time Map (versionCode 266)
 
 - Fixes Kotlin compile errors in `MainActivity.kt` (`ReportListCard` click parameter) and `ManualStallTestV130.kt` (`Button.text` assignment shadowing).

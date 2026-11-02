@@ -115,7 +115,7 @@ object ManualStallReportV130 {
     }
     fun save(context: Context, kind: ManualStallKindV130, task: String, role: String, startMs: Long,
              endMs: Long, events: List<ManualStallEventV130>, operator: String, rat: String, band: String,
-             pci: String, rsrp: String, sinr: String, appVersion: String): List<Uri> {
+             pci: String, rsrp: String, sinr: String, appVersion: String, origin: String = "MANUAL_STALL_TAP"): List<Uri> {
         val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date(startMs))
         val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(startMs))
         val cleanTask = task.replace(Regex("[^A-Za-z0-9_-]"), "_").take(48).ifBlank { "Test" }
@@ -123,7 +123,6 @@ object ManualStallReportV130 {
         val totalMs = events.sumOf { it.durationMs }
         val durationMs = (endMs-startMs).coerceAtLeast(1L)
         val device = "${Build.MANUFACTURER} ${Build.MODEL}".trim()
-        val origin = "MANUAL_STALL_TAP"
         // One summary line and individual event lines in the same immutable CSV.
         val headers = listOf("RecordType", "TestType", "Task", "Role", "StartMs", "EndMs", "DurationMs", "StallCount", "TotalStallMs", "StallRatioPct", "Operator", "RAT", "Band", "PCI", "RSRP", "SINR", "DeviceModel", "AppVersion", "Origin")
         fun row(type: String, eventStart: Long, eventEnd: Long, interval: Long, count: Int, total: Long) = listOf(type,kind.name,task,role,eventStart.toString(),eventEnd.toString(),interval.toString(),count.toString(),total.toString(),
@@ -248,7 +247,7 @@ class ManualStallServiceV130 : Service() {
         val elapsed=(SystemClock.elapsedRealtime()-startedElapsed).coerceAtLeast(0L)/1000L
         val sum=events.sumOf{it.durationMs} + if(openElapsed!=null)(SystemClock.elapsedRealtime()-openElapsed!!).coerceAtLeast(0L) else 0L
         statusText?.text="${kind.application}  ${elapsed/60}:${(elapsed%60).toString().padStart(2,'0')}\nStalls ${events.size} · ${String.format(Locale.US,"%.1f",sum/1000.0)}s"
-        toggleButton?.text=if(openAtMs!=null)"END STALL" else "START STALL"
+        toggleButton?.text=if(openAtMs!=null)"END" else "START"
     }
     private fun addOverlay() {
         wm=getSystemService(WINDOW_SERVICE) as WindowManager
@@ -257,8 +256,8 @@ class ManualStallServiceV130 : Service() {
         val root=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL;setPadding(px(10),px(8),px(10),px(8));background=OverlayStyleV130.card(this@ManualStallServiceV130,.94f) }
         val header=TextView(this).apply {text="⋮⋮  CellTracker · Move";textSize=12f;setTextColor(OverlayStyleV130.secondaryTextColor(this@ManualStallServiceV130));setPadding(px(3),0,px(3),px(5))}
         val text=TextView(this).apply {textSize=13f;setTextColor(OverlayStyleV130.textColor(this@ManualStallServiceV130));setPadding(px(3),0,px(3),px(7))};statusText=text
-        val toggle=Button(this).apply {this.text="START STALL";OverlayStyleV130.button(this@ManualStallServiceV130,this);setOnClickListener { command(this@ManualStallServiceV130,ACTION_TOGGLE) }};toggleButton=toggle
-        val finish=Button(this).apply{this.text="FINISH TEST";OverlayStyleV130.button(this@ManualStallServiceV130,this,true);setOnClickListener{command(this@ManualStallServiceV130,ACTION_FINISH)}}
+        val toggle=Button(this).apply {this.text="START";this.isAllCaps=false;this.textSize=12f;this.setSingleLine(true);OverlayStyleV130.button(this@ManualStallServiceV130,this);setOnClickListener { command(this@ManualStallServiceV130,ACTION_TOGGLE) }};toggleButton=toggle
+        val finish=Button(this).apply{this.text="FINISH";this.isAllCaps=false;this.textSize=12f;this.setSingleLine(true);OverlayStyleV130.button(this@ManualStallServiceV130,this,true);setOnClickListener{command(this@ManualStallServiceV130,ACTION_FINISH)}}
         val buttons=LinearLayout(this).apply {orientation=LinearLayout.HORIZONTAL;addView(toggle,LinearLayout.LayoutParams(0,px(44),1f));addView(finish,LinearLayout.LayoutParams(0,px(44),1f))}
         root.addView(header);root.addView(text);root.addView(buttons)
         val lp=WindowManager.LayoutParams(px(285),WindowManager.LayoutParams.WRAP_CONTENT,
@@ -312,11 +311,23 @@ fun ManualStallScreenV130(kind: ManualStallKindV130, liveState: AppState, onBack
     val videoConsent = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val data = result.data
         if (result.resultCode == Activity.RESULT_OK && data != null) {
+            val captureCell=liveState.sims.firstOrNull { it.subscriptionId==liveState.selectedSubscriptionId }?.servingCell
+                ?: liveState.sims.firstOrNull()?.servingCell
             ContextCompat.startForegroundService(context, Intent(context,TestScreenRecordingService::class.java).apply {
                 action=TestScreenRecordingService.START
                 putExtra(TestScreenRecordingService.CODE,result.resultCode)
                 putExtra(TestScreenRecordingService.DATA,data)
                 putExtra(TestScreenRecordingService.NAME,"${kind.name}_${role}_${task.trim()}")
+                putExtra(TestScreenRecordingService.REVIEW_KIND,kind.name)
+                putExtra(TestScreenRecordingService.REVIEW_ROLE,role)
+                putExtra(TestScreenRecordingService.REVIEW_TASK,task.trim())
+                putExtra(TestScreenRecordingService.REVIEW_VERSION,version.orEmpty())
+                putExtra(TestScreenRecordingService.REVIEW_OPERATOR,captureCell?.operator.orEmpty())
+                putExtra(TestScreenRecordingService.REVIEW_RAT,captureCell?.displayRat.orEmpty())
+                putExtra(TestScreenRecordingService.REVIEW_BAND,captureCell?.band.orEmpty())
+                putExtra(TestScreenRecordingService.REVIEW_PCI,captureCell?.pci.orEmpty())
+                putExtra(TestScreenRecordingService.REVIEW_RSRP,captureCell?.rsrp.orEmpty())
+                putExtra(TestScreenRecordingService.REVIEW_SINR,captureCell?.sinr.orEmpty())
             })
             android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
                 ManualStallReportV130.openOrInstall(context, kind)
@@ -365,7 +376,7 @@ fun ManualStallScreenV130(kind: ManualStallKindV130, liveState: AppState, onBack
                         },enabled=!active && task.isNotBlank(),modifier=Modifier.fillMaxWidth()) { Text("START VIDEO RECORDING (NO OVERLAY)") }
                     }
                     if(lastVideoAvailable) OutlinedButton(onClick={RecordingTimelinePlayerV130.open(context)},modifier=Modifier.fillMaxWidth()) {Text("REVIEW LAST VIDEO WITH REAL-TIME CLOCK")}
-                    Text("CSV and SRT are saved alongside the MP4 in Downloads/CellTracker/Screen Recordings.",style=MaterialTheme.typography.bodySmall)
+                    Text("After recording, open Review to mark stalls on the video timeline. Export creates a manual-reviewed CSV + XLSX without displaying an overlay during gameplay. CSV and SRT remain alongside the MP4.",style=MaterialTheme.typography.bodySmall)
                 } else {
                     if(!permissionReady) Text("Overlay permission required to mark stalls while using ${kind.application}.",color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)
                     Button(onClick={start()},enabled=!active && task.isNotBlank() && !videoActive && !ManualStallStatusV130.state.value.running,modifier=Modifier.fillMaxWidth()) {Text(if(permissionReady)"START TEST & SHOW FLOATING CONTROLS" else "GRANT OVERLAY PERMISSION")}
