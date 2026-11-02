@@ -1,6 +1,9 @@
-# CellTracker v1.3.0 Preview 19 — Player, Report Actions & Video Diagnostics
+# CellTracker v1.3.0 Preview 19 — CompileFix (Player, Report Actions & Video Diagnostics)
 
-**PREVIEW only · versionCode 270 · based on Preview 18.** Full Android Gradle compilation and real-device verification are still required.
+**PREVIEW only · versionCode 270 · based on Preview 19.** Screenshot-reported `:app:compileDebugKotlin` errors in the player ScrollView setup have been addressed; full Android Gradle compilation and real-device verification are still required.
+
+- **CompileFix:** `RecordingTimelinePlayerV130.kt` uses `ScrollView.setFillViewport(true)` and `setVerticalScrollBarEnabled(false)`, plus `FrameLayout.LayoutParams(...)` for its child. Also names the gradient `rootBackground` explicitly to avoid ambiguous property references. No player transport/annotations or export logic changed.
+- Validation: full project Kotlin PSI syntax check; focused Kotlin/Java type smoke test for the changed Android View call pattern; XML/ZIP integrity. **Not an Android Gradle build.**
 
 - **Recording Review** rebuilt as a proper in-app player: compact adaptive-aspect video area (no giant unused black screen), back/title header, play/pause, ±5 seconds, draggable seek bar with elapsed/duration, estimated local-clock overlay, and separated stall annotation section (START / END / UNDO / EXPORT). All cards and controls use the existing soft lavender/blue/mint gradient family. Playing and seeking use the original MP4, which is never modified.
 - **Report detail actions** now use a shared primary/secondary gradient action component in the Reports TikTok/YouTube/Ping/Call/WhatsApp and other main report-detail paths, including preview, export, confirm, play, and delete. Existing callback logic and report contents are retained. Top app-bar navigation and confirmation-dialog controls are intentionally not bulk-replaced.

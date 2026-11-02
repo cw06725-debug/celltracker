@@ -86,14 +86,21 @@ class RecordingTimelinePlayerV130 : Activity() {
             setPadding(d(8),0,d(8),0)
             setOnClickListener{click()}
         }
-        val background=GradientDrawable(GradientDrawable.Orientation.TL_BR,
+        val rootBackground = GradientDrawable(GradientDrawable.Orientation.TL_BR,
             intArrayOf(0xFFF8F2FB.toInt(),0xFFF9F6FC.toInt(),0xFFF1F9F7.toInt()))
-        val scroll=ScrollView(this).apply {fillViewport=true;isVerticalScrollBarEnabled=false;background=background}
+        val scroll = ScrollView(this).apply {
+            setFillViewport(true)
+            setVerticalScrollBarEnabled(false)
+            setBackground(rootBackground)
+        }
         val base=LinearLayout(this).apply {
             orientation=LinearLayout.VERTICAL
             setPadding(d(16),d(12),d(16),d(24))
         }
-        scroll.addView(base,ScrollView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT))
+        scroll.addView(base, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ))
         val toolbar=LinearLayout(this).apply {orientation=LinearLayout.HORIZONTAL;gravity=Gravity.CENTER_VERTICAL}
         toolbar.addView(button("‹ Back",tint=3){finish()},LinearLayout.LayoutParams(d(84),d(42)))
         toolbar.addView(TextView(this).apply {

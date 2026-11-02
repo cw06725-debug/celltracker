@@ -1,3 +1,10 @@
+# v1.3.0 Preview 19 CompileFix — Android View layout interoperability
+
+- Fix `RecordingTimelinePlayerV130.kt` GitHub Actions compile errors: `fillViewport` unresolved / val cannot be reassigned and `ScrollView.LayoutParams` unresolved.
+- Replace synthetic View properties with explicit `setFillViewport(true)` and `setVerticalScrollBarEnabled(false)`, and use inherited `FrameLayout.LayoutParams` for the ScrollView child. Make the root background name explicit.
+- Keep `versionCode=270` and `versionName=1.3.0`; no other functional change from Preview 19.
+- Kotlin PSI and focused Java/Kotlin API type test passed; full Android Gradle assembleDebug and on-device testing still required.
+
 ## v1.3.0 Preview 19 (versionCode 270) — Recording Player / Report Button Consistency / Diagnostics Toggle
 
 - Redesigned native RecordingTimelinePlayerV130 into a video-player layout with aspect-aware video, transport buttons (play/pause, ±5s), seek bar, seek-time display, estimated local clock, and visually separate marker/export panels with soft gradients.
