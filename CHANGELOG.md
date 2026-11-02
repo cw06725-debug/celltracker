@@ -1,3 +1,13 @@
+## v1.3.0 Preview 12 · Navigation & Settings Motion (versionCode 263)
+- Replace system Home eye (`ic_menu_view`) with an app-owned home-outline vector. Reports and Settings also get app-owned vector icons for consistent navigation.
+- Remove animated bottom-navigation tint that looked like a glyph flash; selection has static, stable background and glyph tint; click ripple remains disabled.
+- Stabilize the bottom-navigation click callback across 1-second telemetry updates so unrelated updates do not invalidate the bar.
+- Remove dual-heavy-screen crossfade for main bottom tab switching, so old and new tabs are not rendered together during high-frequency RF telemetry updates.
+- Keep the parent Scaffold top inset constant across Home / Reports / Settings; Reports title renders within the Reports tab instead of changing the outer top bar.
+- Settings child navigation uses a pure horizontal push/pop, no fade or size morph; the animated viewport is clipped and full-height, and root bottom-bar space is inside its scroll content.
+- Preserve Preview 11 approved gradient launcher icons, Wi-Fi Direct, Shizuku, Speedtest, reports, overlays, testing logic and sampling interval.
+- Static Kotlin and XML checks complete; Android Gradle build and device animation verification outstanding.
+
 ## v1.3.0 Preview 11 — Approved Gradient Launcher Icon (versionCode 262)
 - Replaced all density launcher icons and circular variants with the user-approved lilac/blue/mint radio-analytics design. Removed black corner pixels from the generated artwork for correct transparency on varied launcher backgrounds.
 - Updated Android 8+ adaptive launcher foreground/background with a centered glass signal motif and a full-bleed soft-gradient background. Original image retained in `design/` for future edits.

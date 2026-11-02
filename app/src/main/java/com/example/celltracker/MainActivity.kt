@@ -491,10 +491,12 @@ private fun WeChatBottomBar(
     onSelect: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    // App-owned vector drawables prevent framework theme/state changes from reloading
+    // platform menu art; in particular, android.R.drawable.ic_menu_view is an EYE.
     val items = remember { listOf(
-        Triple("HOME", android.R.drawable.ic_menu_view, "Home"),
-        Triple("REPORTS", android.R.drawable.ic_menu_agenda, "Reports"),
-        Triple("SETTINGS", android.R.drawable.ic_menu_manage, "Settings")
+        Triple("HOME", R.drawable.ct_nav_home, "Home"),
+        Triple("REPORTS", R.drawable.ct_nav_reports, "Reports"),
+        Triple("SETTINGS", R.drawable.ct_nav_settings, "Settings")
     ) }
     val selectedIndex = items.indexOfFirst { it.first == selected }.coerceAtLeast(0)
     var dragX by remember { mutableFloatStateOf(0f) }
@@ -537,14 +539,12 @@ private fun WeChatBottomBar(
             ) {
                 items.forEach { (key, icon, label) ->
                     val isSelected = selected == key
-                    // Never scale/rebuild nav icons on selection; only the selection pill fades.
-                    // This avoids the visual flash observed while rapidly changing tabs.
+                    // Keep the glyph and its surrounding surface completely stable. The
+                    // previous animated selection tint looked like the icon was blinking
+                    // when the heavy destination recomposed during a tab change.
                     val interactionSource = remember(key) { MutableInteractionSource() }
-                    val selectedTint by animateColorAsState(
-                        targetValue = if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
-                        animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing),
-                        label = "bottomNavPillTint"
-                    )
+                    val selectedTint = if (isSelected) MaterialTheme.colorScheme.primaryContainer
+                        else Color.Transparent
                     Column(
                         modifier = Modifier
                             .weight(1f)
@@ -563,7 +563,8 @@ private fun WeChatBottomBar(
                                 painter = painterResource(icon),
                                 contentDescription = label,
                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp).size(22.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                tint = if (isSelected) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                         Spacer(Modifier.height(2.dp))
@@ -1871,6 +1872,12 @@ private fun MainScreen(
     var reportsSubpageVisible by remember { mutableStateOf(false) }
     var homeTikTokTool by remember { mutableStateOf<String?>(null) }
     var homeAllTestsVisible by remember { mutableStateOf(false) }
+    // The root AppState updates every telemetry tick; keep the bottom navigation
+    // callback identity stable so an unrelated RF sample does not invalidate it.
+    val latestTabHandler = rememberUpdatedState(onMainTabChange)
+    val stableBottomTabHandler: (String) -> Unit = remember {
+        { tab -> latestTabHandler.value(tab) }
+    }
 
     val selected = state.sims.firstOrNull { it.subscriptionId == state.selectedSubscriptionId } ?: state.sims.firstOrNull()
     val context = LocalContext.current
@@ -1912,7 +1919,7 @@ private fun MainScreen(
             // header moves together with the page, matching the Quick Start / All Tests
             // push-pop animation. Keeping an outer TopAppBar here changes Scaffold insets
             // before the content animation and creates the visible vertical jump.
-            if ((mainTab == "MAP" || mainTab == "REPORTS") && !(mainTab == "REPORTS" && reportsSubpageVisible)) {
+            if (mainTab == "MAP") {
                 TopAppBar(
                     title = {
                         Text(
@@ -1941,19 +1948,15 @@ private fun MainScreen(
             AnimatedContent(
                 targetState = if (homeAllTestsVisible) "ALL_TESTS" else mainTab,
                 transitionSpec = {
-                    // Home -> All Tests is a forward navigation and must slide left;
-                    // All Tests -> Home is Back and must slide right. ALL_TESTS is not a
-                    // bottom-tab item, so handling it explicitly avoids indexOf(-1) reversing
-                    // the animation direction.
-                    // Cross-fade avoids translating full Reports/Cell Info trees at once.
-                    // Draw a soft fade instead of a two-screen slide during navigation.
-                    fadeIn(tween(durationMillis = 260, delayMillis = 85, easing = FastOutSlowInEasing))
-                        .togetherWith(fadeOut(tween(durationMillis = 150, easing = FastOutSlowInEasing)))
+                    // Tab switching is selection, not stack navigation: don't render
+                    // outgoing and incoming heavy tabs at the same time. Dual composition
+                    // plus the RF state ticking every second caused visible flash/jank.
+                    EnterTransition.None.togetherWith(ExitTransition.None)
                 },
                 label = "mainTabs",
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(bottom = if (homeAllTestsVisible || mainTab == "CELL" || homeTikTokTool != null || (mainTab == "SETTINGS" && settingsSubpageVisible) || (mainTab == "REPORTS" && reportsSubpageVisible)) 0.dp else 73.dp)
+                    .padding(bottom = if (homeAllTestsVisible || mainTab == "CELL" || mainTab == "SETTINGS" || homeTikTokTool != null || (mainTab == "REPORTS" && reportsSubpageVisible)) 0.dp else 73.dp)
             ) { tab ->
                 if (tab == "ALL_TESTS") {
                     Column(
@@ -2069,6 +2072,9 @@ private fun MainScreen(
             }
 
             if (tab == "REPORTS") {
+                if (!reportsSubpageVisible) {
+                    TopAppBar(title = { Text("Reports", fontWeight = FontWeight.SemiBold) })
+                }
                 // Keep report-only data referentially stable while RF telemetry,
                 // elapsed seconds and signal trends update every sampling tick.
                 // ReportsHome never needs the high-frequency network fields.
@@ -2319,7 +2325,7 @@ private fun MainScreen(
             if (!homeAllTestsVisible && mainTab != "CELL" && homeTikTokTool == null && !((mainTab == "SETTINGS" && settingsSubpageVisible) || (mainTab == "REPORTS" && reportsSubpageVisible))) {
                 WeChatBottomBar(
                     selected = if (mainTab == "CELL") "HOME" else mainTab,
-                    onSelect = onMainTabChange,
+                    onSelect = stableBottomTabHandler,
                     modifier = Modifier.align(Alignment.BottomCenter)
                 )
             }
@@ -3887,22 +3893,20 @@ private fun SettingsScreen(
         AnimatedContent(
             targetState = page,
             transitionSpec = {
-                when {
-                    initialState == "root" && targetState != "root" ->
-                        (slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(340, easing = FastOutSlowInEasing)) + fadeIn(tween(275, easing = FastOutSlowInEasing)))
-                            .togetherWith(slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(340, easing = FastOutSlowInEasing)) + fadeOut(tween(215, easing = FastOutSlowInEasing)))
-                    initialState != "root" && targetState == "root" ->
-                        (slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Right, tween(340, easing = FastOutSlowInEasing)) + fadeIn(tween(275, easing = FastOutSlowInEasing)))
-                            .togetherWith(slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Right, tween(340, easing = FastOutSlowInEasing)) + fadeOut(tween(215, easing = FastOutSlowInEasing)))
-                    else ->
-                        (slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(340, easing = FastOutSlowInEasing)) + fadeIn(tween(275, easing = FastOutSlowInEasing)))
-                            .togetherWith(slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(340, easing = FastOutSlowInEasing)) + fadeOut(tween(215, easing = FastOutSlowInEasing)))
-                }
+                // Do not combine horizontal movement with fading or container-size
+                // animation. Both caused an odd diagonal/ghosting effect when the bottom
+                // navigation disappeared at the same time as a Settings child opened.
+                val direction = if (targetState == "root")
+                    AnimatedContentTransitionScope.SlideDirection.Right
+                else AnimatedContentTransitionScope.SlideDirection.Left
+                slideIntoContainer(direction, tween(320, easing = FastOutSlowInEasing))
+                    .togetherWith(slideOutOfContainer(direction, tween(320, easing = FastOutSlowInEasing)))
+                    .using(null)
             },
             label = "settingsNavigation",
-            modifier = Modifier.padding(padding).fillMaxSize()
+            modifier = Modifier.padding(padding).fillMaxSize().clipToBounds()
         ) { currentPage ->
-            Column(Modifier.fillMaxSize()) {
+            Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
                 if (embedded) {
                     // The root Settings header and child headers live inside the same
                     // AnimatedContent page. This prevents Scaffold inset changes and makes
@@ -4079,7 +4083,9 @@ private fun SettingsScreen(
                         SettingsGroupDivider()
                         SettingsMenuRow(android.R.drawable.ic_menu_sort_by_size, "Test Metadata Options", "Customize Scenario, Operator, RAT and Task choices") { navigateTo("metadata") }
                     }
-                    Spacer(Modifier.height(6.dp))
+                    // Reserve room for the fixed bottom bar while on Settings root.
+                    // The subpage itself still uses the whole height, so slide is level.
+                    Spacer(Modifier.height(if (embedded) 84.dp else 6.dp))
                 }
                     }
                 }

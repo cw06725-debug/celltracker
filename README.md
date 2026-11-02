@@ -1,4 +1,4 @@
-**Preview 11 (Gradient Icon Approved)** — versionCode 262. Replaces the legacy, circular and adaptive launcher icons with the approved lavender–blue–mint gradient artwork. No functional, Wi-Fi, animation, overlay, logging or report changes. Requires GitHub Actions Android Gradle build and launcher verification on real devices.
+**Preview 12 (Gradient Icon Approved)** — versionCode 262. Replaces the legacy, circular and adaptive launcher icons with the approved lavender–blue–mint gradient artwork. No functional, Wi-Fi, animation, overlay, logging or report changes. Requires GitHub Actions Android Gradle build and launcher verification on real devices.
 
 **Preview 10** — soft-gradient motion and icon update (versionCode 261). Gradual 260ms eased fades with 85ms offset, non-flashing static bottom icons, themed floating overlays and launcher assets. Existing Tests, Wi-Fi Direct, Shizuku, Speedtest, Reports and Bluetooth Call Setup remain unchanged. Needs full Android Gradle build and device verification.
 
@@ -118,3 +118,6 @@ Only README.md and CHANGELOG.md are retained as root Markdown files. Temporary v
 Use Android Studio or GitHub Actions with `./gradlew :app:assembleDebug`. Keep the same internal-test signing certificate (bundled test keystore or your own `celltracker-signing.properties`) for in-place upgrades without losing saved reports. Do not use the bundled development keystore for production distribution.
 
 Only `README.md` and `CHANGELOG.md` are intentionally included as root Markdown documentation. External verification logs/scripts are not packaged.
+
+
+Preview 12: stable app-owned bottom navigation icons and Settings horizontal slide fixes. Verify on a device with fast Home/Reports/Settings switching and Settings subpage back/forward; full Gradle build required.
