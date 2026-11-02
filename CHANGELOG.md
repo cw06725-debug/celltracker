@@ -1,3 +1,12 @@
+## v1.3.0 Preview 17 — Home Reorder Motion, Gradients, External Video Timeline (versionCode 268)
+
+- Home: stable-key lazy grid; staggered item placement tween, drop spring and Back-to-save edit exit. Retain fixed test IDs and persisted order.
+- Visual: pastel gradient test tiles with static icon/category accents, Reports categories/list cards, Cell Info section cards; shared primary/secondary gradient button component; updated Tamasha/PUBG setup buttons and Android native Review buttons (START/END/UNDO/EXPORT).
+- External system recordings: user-marked test window, search nearby media videos (READ_MEDIA_VIDEO permission; Android 12/earlier READ_EXTERNAL_STORAGE), SAF manual selection fallback, read duration and creation metadata, require editable confirmed start time; export estimated TimeMap.csv/SRT, open existing Review player, distinguish external reviewed results in Origin.
+- Never treat file added/modified time as frame-accurate video start. User consent is required for media permissions and explicit time confirmation. No auto-detected stalls.
+- Preserve all existing test engines, Wi-Fi Direct, Shizuku, Speedtest and nav. Further all-app UI style coverage and actual drag/recording UX need real-device review.
+- Source PSI/XML static checks only. Gradle assembleDebug not performed due to no SDK and missing Gradle Wrapper JAR.
+
 ## v1.3.0 Preview 16 — Home Layout & Post-Video Stall Review (versionCode 267)
 
 - Reports classification uses the same icon-rendering pipeline as Home. PUBG/Tamasha show the installed app icon; fallback Ping/Call/Network tiles share the same vector symbols as Home. Installed icons use FIT_CENTER, avoiding clipping.

@@ -4,6 +4,8 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
+import android.text.TextUtils
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -40,6 +42,7 @@ class RecordingTimelinePlayerV130 : Activity() {
         val prefs = getSharedPreferences("ct_recording_timeline", MODE_PRIVATE)
         val reviewEnabled = prefs.getString("reviewVideoUri", "") == uri.toString() &&
             prefs.getString("reviewKind", "") in setOf("LIVE", "GAME")
+        val isExternalVideo = prefs.getString("mappingProvenance", "").orEmpty().startsWith("EXTERNAL_VIDEO_")
         val events = mutableListOf<Pair<Long,Long>>()
         if (reviewEnabled) {
             runCatching {
@@ -69,9 +72,20 @@ class RecordingTimelinePlayerV130 : Activity() {
         frame.addView(clock, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.END))
         base.addView(frame,LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,0,1f))
 
-        val controls = LinearLayout(this).apply {orientation=LinearLayout.VERTICAL;setPadding(14,8,14,20);setBackgroundColor(0xFF24222D.toInt())}
-        val reviewTitle = TextView(this).apply {text="Recording review · no in-game overlay";textSize=15f;setTextColor(Color.WHITE)}
-        val status = TextView(this).apply {textSize=12f;setTextColor(0xFFCEEAD7.toInt());setPadding(0,7,0,7)}
+        val scale=resources.displayMetrics.density
+        fun d(value:Int)=(value*scale).toInt()
+        fun cardGradient(primary:Boolean): GradientDrawable = GradientDrawable(
+            GradientDrawable.Orientation.LEFT_RIGHT,
+            if(primary) intArrayOf(0xFFAA70CE.toInt(),0xFF7280DD.toInt(),0xFF5ACFC3.toInt())
+            else intArrayOf(0xFFF1E4FA.toInt(),0xFFE9ECFA.toInt(),0xFFDFF4ED.toInt())
+        ).apply {cornerRadius=d(18).toFloat();setStroke(d(1),0x22AA79C9)}
+        val controls = LinearLayout(this).apply {
+            orientation=LinearLayout.VERTICAL;setPadding(d(16),d(14),d(16),d(23));
+            background=GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                intArrayOf(0xFFF3EAF8.toInt(),0xFFF9F5FB.toInt(),0xFFE7F5F0.toInt()))
+        }
+        val reviewTitle = TextView(this).apply {text="Recording review";textSize=17f;setTextColor(0xFF302640.toInt());typeface=android.graphics.Typeface.DEFAULT_BOLD}
+        val status = TextView(this).apply {textSize=12f;setTextColor(0xFF615A74.toInt());setPadding(0,d(9),0,d(12))}
         controls.addView(reviewTitle)
         controls.addView(status)
         fun persist() {
@@ -85,16 +99,24 @@ class RecordingTimelinePlayerV130 : Activity() {
             status.text=if(note.isEmpty())prefix else "$prefix\n$note"
         }
         val row = LinearLayout(this).apply {orientation=LinearLayout.HORIZONTAL}
-        fun btn(text:String, action:()->Unit) = Button(this).apply {
-            this.text=text;this.textSize=11f;this.isAllCaps=false;this.setSingleLine(true)
+        fun btn(title:String, primary:Boolean=false, action:()->Unit) = Button(this).apply {
+            this.text=title;this.textSize=12f;this.isAllCaps=false;this.setSingleLine(true)
+            this.ellipsize=TextUtils.TruncateAt.END
+            this.setTextColor(if(primary)Color.WHITE else 0xFF504177.toInt())
+            this.background=cardGradient(primary)
+            this.minHeight=d(52)
             setOnClickListener{action()}
         }
-        row.addView(btn("MARK START") {
+        fun addAction(title:String, weight:Float, action:()->Unit) {
+            val lp=LinearLayout.LayoutParams(0,d(52),weight).apply {marginStart=d(3);marginEnd=d(3)}
+            row.addView(btn(title,false,action),lp)
+        }
+        addAction("START",1f) {
             videoView.pause()
             markedStart=currentMs()
             refresh("Start ${RecordingTimelineV130.clockFormat(session.wallAt(markedStart!!))} · estimated")
-        },LinearLayout.LayoutParams(0,(48f*resources.displayMetrics.density).toInt(),1f))
-        row.addView(btn("MARK END") {
+        }
+        addAction("END",1f) {
             videoView.pause()
             val a=markedStart
             val b=currentMs()
@@ -105,15 +127,15 @@ class RecordingTimelinePlayerV130 : Activity() {
                 persist()
                 refresh("Saved event #${events.size}: %.2fs · ESTIMATED".format(Locale.US,(b-a)/1000.0))
             }
-        },LinearLayout.LayoutParams(0,(48f*resources.displayMetrics.density).toInt(),1f))
-        row.addView(btn("UNDO") {
+        }
+        addAction("UNDO",.85f) {
             if(markedStart!=null)markedStart=null
             else if(events.isNotEmpty()){events.removeAt(events.lastIndex);persist()}
             refresh()
-        },LinearLayout.LayoutParams(0,(48f*resources.displayMetrics.density).toInt(),0.7f))
-        controls.addView(row)
+        }
+        controls.addView(row,LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,d(52)).apply {bottomMargin=d(12)})
         lateinit var exportButton: Button
-        exportButton=btn("EXPORT REVIEWED STALL REPORT · CSV + XLSX") {
+        exportButton=btn("EXPORT REPORT",true) {
             if(saving || events.isEmpty()) {
                 if(events.isEmpty())Toast.makeText(this,"Mark at least one complete stall first",Toast.LENGTH_SHORT).show()
             } else if (!reviewEnabled) {
@@ -142,7 +164,8 @@ class RecordingTimelinePlayerV130 : Activity() {
                                 prefs.getString("reviewPci", "").orEmpty(),
                                 prefs.getString("reviewRsrp", "").orEmpty(),
                                 prefs.getString("reviewSinr", "").orEmpty(),
-                                prefs.getString("reviewAppVersion","").orEmpty(),"VIDEO_REVIEW_ESTIMATED")
+                                prefs.getString("reviewAppVersion","").orEmpty(),
+                                if(isExternalVideo)"EXTERNAL_VIDEO_REVIEW_ESTIMATED" else "VIDEO_REVIEW_ESTIMATED")
                         }
                         runOnUiThread {
                             saving=false;exportButton.isEnabled=true
@@ -154,10 +177,10 @@ class RecordingTimelinePlayerV130 : Activity() {
                 }
             }
         }
-        controls.addView(exportButton,LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT))
+        controls.addView(exportButton,LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,d(54)))
         base.addView(controls,LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT))
         setContentView(base)
-        refresh(if(reviewEnabled)"Seek/pause, mark start and end. Review-time marks are stored separately from the original MP4." else "Timestamp playback only; no test metadata for reviewed export")
+        refresh(if(reviewEnabled) "Seek, pause, then mark START / END. Original MP4 remains unchanged. Time ${if(isExternalVideo)"EXTERNAL ESTIMATED" else "ESTIMATED"}." else "Timestamp playback only; no test metadata for reviewed export")
         val mediaControls = MediaController(this)
         mediaControls.setAnchorView(videoView)
         videoView.setMediaController(mediaControls)

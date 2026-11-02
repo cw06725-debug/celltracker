@@ -1,3 +1,16 @@
+# CellTracker v1.3.0 Preview 17 — Gradient UI & External Video Timeline
+
+**PREVIEW only · versionCode 268**. GitHub Actions Gradle build and real-device behavior are not verified in this environment.
+
+- Home: keyed LazyVerticalGrid with staggered placement animation and spring-back on drag release; Android Back and DONE both exit edit mode and save order. Existing test IDs and local history remain unchanged.
+- Shared low-saturation lavender/pink/mint visual style: category-accented Home and Reports cards, Cell Info detail cards, PUBG/Tamasha setup actions and native post-recording review panel. Primary gradient buttons use violet→blue→mint; secondary use soft pastel fill. Third-party installed app icons stay unchanged. Accent tint is static per test category to avoid expensive icon pixel extraction during 1-second telephony updates.
+- External/system screen recording: start/end a test-window timer independently of CellTracker MediaProjection; use "FIND MATCHING RECORDINGS" (requires media permission) or "SELECT SYSTEM VIDEO" (Android file picker) to pick video. Read MP4 duration and available timestamp metadata, show estimated start time to edit/confirm. On confirmation, save separate per-second TimeMap.csv and .srt under Downloads/CellTracker/.../ExternalTimeline, keep the original MP4 URI and open existing video review/manual stall markers.
+- All externally inferred timestamps are **ESTIMATED**, never frame-exact. DATE_TAKEN can be metadata-derived and DATE_ADDED/DATE_MODIFIED are not reliable capture start times. All candidate matches require human verification; visible event synchronization is advised for modem-log analysis. Origin is marked EXTERNAL_VIDEO_ESTIMATED / EXTERNAL_VIDEO_REVIEW_ESTIMATED. Recording through CellTracker continues to use its own elapsedRealtime/wall-time anchors.
+- Existing Wi-Fi Direct, Shizuku, Speedtest, Bluetooth Call Setup, data collection, reports and gradient launcher icon retained. All-screen button replacement is **not complete**; this preview standardizes the prominent flows shown in feedback rather than changing 200+ UI controls indiscriminately.
+- Static Kotlin PSI and Android XML checks, ZIP CRC pass. Full Gradle build unavailable because this source bundle has no usable Gradle Wrapper JAR, and Android SDK is absent from the local environment.
+
+---
+
 ## v1.3.0 Preview 16 — Home Layout & Post-Video Stall Review (versionCode 267)
 
 - Reports classification uses the same icon-rendering pipeline as Home. PUBG/Tamasha show the installed app icon; fallback Ping/Call/Network tiles share the same vector symbols as Home. Installed icons use FIT_CENTER, avoiding clipping.

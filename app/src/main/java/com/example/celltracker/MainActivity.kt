@@ -33,6 +33,8 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.animateColorAsState
@@ -52,6 +54,9 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -610,7 +615,7 @@ private fun GlassSection(
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    val tileBrush = bunnyTileBrush()
+    val tileBrush = gradientCardBrushV130()
     Surface(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(25.dp),
@@ -1740,7 +1745,16 @@ private fun ReportsHome(
 
 @Composable
 private fun ReportCategoryCard(title: String, count: Int, onClick: () -> Unit) {
-    val tileBrush = bunnyTileBrush()
+    val accent = when {
+        title.contains("WhatsApp",true) -> Color(0xFF25D366)
+        title.contains("TikTok",true) -> Color(0xFFE56BAD)
+        title.contains("YouTube",true) -> Color(0xFFF46C83)
+        title.contains("PUBG",true) -> Color(0xFF59ADB7)
+        title.contains("Tamasha",true) -> Color(0xFFAF80D9)
+        title.contains("Call",true) -> Color(0xFF5CBA89)
+        else -> Color(0xFF9C84D7)
+    }
+    val tileBrush = gradientCardBrushV130(accent)
     Surface(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
         shape = RoundedCornerShape(25.dp),
@@ -1788,11 +1802,11 @@ private fun ReportListCard(
         modifier = Modifier.fillMaxWidth().graphicsLayer {scaleX=scale;scaleY=scale}
             .clickable(interactionSource=press, indication=null, onClick = onClick),
         shape = RoundedCornerShape(18.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.48f),
+        color = Color.Transparent,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
     ) {
         Row(
-            Modifier.fillMaxWidth().padding(14.dp),
+            Modifier.fillMaxWidth().background(gradientCardBrushV130()).padding(14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(Modifier.weight(1f)) {
@@ -4192,7 +4206,7 @@ private fun Modifier.horizontalSwipe(
 
 @Composable
 private fun SettingsGroup(title: String, content: @Composable ColumnScope.() -> Unit) {
-    val tileBrush = bunnyTileBrush()
+    val tileBrush = gradientCardBrushV130()
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
             title,
@@ -4393,17 +4407,18 @@ private fun CellInfoCardV128(
     title: String,
     content: @Composable ColumnScope.() -> Unit
 ) {
+    val sectionBrush=gradientCardBrushV130()
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(24.dp),
-        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.055f),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.24f)),
+        color = Color.Transparent,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.17f)),
         tonalElevation = 0.dp
     ) {
-        Column {
+        Column(Modifier.background(sectionBrush)) {
             Row(
                 modifier = Modifier.fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f))
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.055f))
                     .padding(horizontal = 16.dp, vertical = 13.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -4425,7 +4440,7 @@ private fun CellInfoCardV128(
 
 @Composable
 private fun InfoCard(title: String, content: @Composable ColumnScope.() -> Unit) {
-    val tileBrush = bunnyTileBrush()
+    val tileBrush = gradientCardBrushV130()
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(25.dp),
@@ -6950,6 +6965,7 @@ private fun HomeRevealV130(
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 private fun HomeScreenV121(
     state: AppState,
     selected: SimCellState?,
@@ -7059,38 +7075,48 @@ private fun HomeScreenV121(
         }
         val orderIds = remember(context) { mutableStateListOf<String>().apply { addAll(HomeTestOrderV130.load(context)) } }
         var homeEdit by rememberSaveable { mutableStateOf(false) }
+        BackHandler(enabled = homeEdit) { HomeTestOrderV130.persist(context, orderIds.toList()); homeEdit = false }
         val orderedTiles = HomeTestOrderV130.normalized(orderIds.toList(), tiles.map { it.id }).mapNotNull { id -> tiles.firstOrNull { it.id == id } }
         HomeRevealV130(order = 3) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(if(homeEdit)"Rearrange tests" else "", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                if(homeEdit) TextButton(onClick={homeEdit=false}) { Text("DONE") }
+                if(homeEdit) TextButton(onClick={HomeTestOrderV130.persist(context, orderIds.toList()); homeEdit=false}) { Text("DONE") }
                 else Text("Long-press any test to rearrange", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
+        // Stable keys + lazy grid item placement animation: untouched tiles slide into their
+        // new slots like a launcher rather than teleporting when another tile is released.
         var gridWidth by remember { mutableIntStateOf(0) }
-        Column(Modifier.fillMaxWidth().onSizeChanged { gridWidth=it.width }, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            orderedTiles.chunked(3).forEachIndexed { rowIndex, rowTiles ->
-                HomeRevealV130(order = rowIndex + 4) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        rowTiles.forEach { tile ->
-                            key(tile.id) {
-                                val pos = orderedTiles.indexOfFirst { it.id == tile.id }
-                                SortableHomeTileV130(tile, homeEdit, Modifier.weight(1f), onEdit = {homeEdit=true},
-                                    onDrop = { dx,dy ->
-                                        val slotW = (gridWidth - 20.dp.value * context.resources.displayMetrics.density) / 3f
-                                        val slotH = (124.dp.value + 10.dp.value) * context.resources.displayMetrics.density
-                                        val colDelta = kotlin.math.round(dx / slotW.coerceAtLeast(1f)).toInt()
-                                        val rowDelta = kotlin.math.round(dy / slotH.coerceAtLeast(1f)).toInt()
-                                        val target = (pos + rowDelta * 3 + colDelta).coerceIn(0,orderedTiles.lastIndex)
-                                        val updated = HomeTestOrderV130.moved(orderedTiles.map {it.id}, pos, target)
-                                        orderIds.clear();orderIds.addAll(updated)
-                                        HomeTestOrderV130.persist(context,updated)
-                                    })
-                            }
-                        }
-                        repeat(3 - rowTiles.size) { Spacer(Modifier.weight(1f)) }
-                    }
-                }
+        val rowCount = (orderedTiles.size + 2) / 3
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(3),
+            modifier = Modifier.fillMaxWidth().height((rowCount * 134 - 10).coerceAtLeast(124).dp)
+                .onSizeChanged { gridWidth = it.width },
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            userScrollEnabled = false
+        ) {
+            gridItems(orderedTiles, key = { it.id }) { tile ->
+                val pos = orderedTiles.indexOfFirst { it.id == tile.id }
+                SortableHomeTileV130(tile, homeEdit,
+                    Modifier.animateItemPlacement(
+                        animationSpec = tween(durationMillis = 310,
+                            delayMillis = (pos % 12) * 14, easing = FastOutSlowInEasing)),
+                    onEdit = { homeEdit = true },
+                    onDrop = { dx, dy ->
+                        val density = context.resources.displayMetrics.density
+                        val slotW = ((gridWidth - 20f * density) / 3f + 10f * density)
+                        val slotH = 134f * density
+                        val colDelta = kotlin.math.round(dx / slotW.coerceAtLeast(1f)).toInt()
+                        val rowDelta = kotlin.math.round(dy / slotH).toInt()
+                        val target = (pos + rowDelta * 3 + colDelta).coerceIn(0, orderedTiles.lastIndex)
+                        val updated = HomeTestOrderV130.moved(orderedTiles.map { it.id }, pos, target)
+                        orderIds.clear(); orderIds.addAll(updated)
+                        HomeTestOrderV130.persist(context, updated)
+                        val targetCol = target % 3; val sourceCol = pos % 3
+                        val targetRow = target / 3; val sourceRow = pos / 3
+                        Pair((targetCol - sourceCol) * slotW, (targetRow - sourceRow) * slotH)
+                    })
             }
         }
 
@@ -7144,7 +7170,7 @@ private data class HomeTestTileV130(
 @Composable
 private fun SortableHomeTileV130(
     tile: HomeTestTileV130, editing: Boolean, modifier: Modifier = Modifier,
-    onEdit: () -> Unit, onDrop: (Float,Float) -> Unit
+    onEdit: () -> Unit, onDrop: (Float,Float) -> Pair<Float,Float>
 ) {
     val dx = remember { Animatable(0f) }
     val dy = remember { Animatable(0f) }
@@ -7164,8 +7190,16 @@ private fun SortableHomeTileV130(
     val gestures = Modifier.pointerInput(tile.id) {
         detectDragGesturesAfterLongPress(
             onDragStart = {onEdit();trackingX=0f;trackingY=0f},
-            onDragEnd = {onDrop(trackingX,trackingY);scope.launch{dx.snapTo(0f);dy.snapTo(0f)}},
-            onDragCancel = {scope.launch{dx.snapTo(0f);dy.snapTo(0f)}}
+            onDragEnd = {
+                val shift = onDrop(trackingX, trackingY)
+                scope.launch {
+                    dx.snapTo(trackingX - shift.first)
+                    dy.snapTo(trackingY - shift.second)
+                    launch { dx.animateTo(0f, spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = Spring.DampingRatioMediumBouncy)) }
+                    launch { dy.animateTo(0f, spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = Spring.DampingRatioMediumBouncy)) }
+                }
+            },
+            onDragCancel = {scope.launch{launch{dx.animateTo(0f,spring())};launch{dy.animateTo(0f,spring())}}}
         ) { change, amount ->
             change.consume();trackingX+=amount.x;trackingY+=amount.y
             scope.launch{dx.snapTo(trackingX);dy.snapTo(trackingY)}
@@ -7187,7 +7221,7 @@ private fun HomeQuickCardV121(title: String, subtitle: String, symbol: String, i
     val version = remember(context, appPackages) {
         if (appPackages.isNotEmpty()) installedAppVersionV1(context, appPackages) else null
     }
-    val tileBrush = bunnyTileBrush()
+    val tileBrush = gradientCardBrushV130(iconColor)
     val interaction = remember { MutableInteractionSource() }
     val isPressed by interaction.collectIsPressedAsState()
     val pressScale by animateFloatAsState(

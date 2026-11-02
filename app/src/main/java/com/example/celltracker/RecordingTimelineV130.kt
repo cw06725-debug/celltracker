@@ -42,7 +42,7 @@ object RecordingTimelineV130 {
         return String.format(Locale.US, "%02d:%02d:%02d,%03d", value / 3600000L,
             (value / 60000L) % 60L, (value / 1000L) % 60L, value % 1000L)
     }
-    fun csv(session: Session, videoName: String): String = buildString {
+    fun csv(session: Session, videoName: String, mappingType: String = "ESTIMATED"): String = buildString {
         // Header first, so Excel/WPS can import it directly without skipping metadata rows.
         appendLine("VideoFile,VideoPosition,VideoOffsetMs,LocalTime,EpochMs,MappingType,DurationMismatchMs")
         val videoField = "\"" + videoName.replace("\"", "\"\"") + "\""
@@ -52,13 +52,13 @@ object RecordingTimelineV130 {
             val time = session.wallAt(ms)
             append(videoField).append(',').append(subtitleTime(ms).replace(',', '.')).append(',').append(ms).append(',')
             append('"').append(clockFormat(time)).append('"').append(',').append(time)
-            append(",ESTIMATED,").append(session.durationDiscrepancyMs).appendLine()
+            append(",").append(mappingType).append(",").append(session.durationDiscrepancyMs).appendLine()
         }
         if (length % 1000L != 0L) {
             val time = session.wallAt(length)
             append(videoField).append(',').append(subtitleTime(length).replace(',', '.')).append(',').append(length).append(',')
             append('"').append(clockFormat(time)).append('"').append(',').append(time)
-            append(",ESTIMATED,").append(session.durationDiscrepancyMs).appendLine()
+            append(",").append(mappingType).append(",").append(session.durationDiscrepancyMs).appendLine()
         }
     }
     fun srt(session: Session): String = buildString {
@@ -74,7 +74,7 @@ object RecordingTimelineV130 {
             sec = end
         }
     }
-    fun save(context: Context, videoName: String, videoUri: Uri, session: Session, directory: String): Pair<Uri, Uri> {
+    fun save(context: Context, videoName: String, videoUri: Uri, session: Session, directory: String, mappingType: String = "ESTIMATED"): Pair<Uri, Uri> {
         require(session.videoDurationMs > 0) { "Video duration invalid" }
         val basename = videoName.removeSuffix(".mp4")
         fun publish(name: String, mime: String, body: String): Uri {
@@ -98,7 +98,7 @@ object RecordingTimelineV130 {
                 throw e
             }
         }
-        val csv = publish("${basename}_TimeMap.csv", "text/csv", csv(session, videoName))
+        val csv = publish("${basename}_TimeMap.csv", "text/csv", csv(session, videoName, mappingType))
         val srt = try { publish("$basename.srt", "application/x-subrip", srt(session)) }
             catch (e: Exception) { context.contentResolver.delete(csv, null, null); throw e }
         val js = JSONArray()
@@ -108,7 +108,9 @@ object RecordingTimelineV130 {
             .putLong("startElapsed", session.start.elapsedMs).putLong("startWall", session.start.wallMs)
             .putLong("stopElapsed", session.end.elapsedMs).putLong("stopWall", session.end.wallMs)
             .putLong("duration", session.videoDurationMs).putString("anchors", js.toString())
-            .putString("csvUri", csv.toString()).putString("srtUri", srt.toString()).apply()
+            .putString("csvUri", csv.toString()).putString("srtUri", srt.toString())
+            .putString("mappingProvenance", if(mappingType.startsWith("EXTERNAL")) mappingType else "")
+            .apply()
         return csv to srt
     }
     fun last(context: Context): Pair<Uri, Session>? {

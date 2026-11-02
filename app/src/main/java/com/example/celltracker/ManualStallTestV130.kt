@@ -301,6 +301,47 @@ fun ManualStallScreenV130(kind: ManualStallKindV130, liveState: AppState, onBack
     var recordingOnly by rememberSaveable(kind) { mutableStateOf(false) }
     var videoActive by remember { mutableStateOf(TestScreenRecordingService.isRecording) }
     var lastVideoAvailable by remember { mutableStateOf(RecordingTimelineV130.last(context) != null) }
+    val sessionPrefs = remember(context) { context.getSharedPreferences("ct_external_recording_session", Context.MODE_PRIVATE) }
+    var externalStarted by remember { mutableLongStateOf(sessionPrefs.getLong("start_${kind.name}", 0L)) }
+    var externalEnded by remember { mutableLongStateOf(sessionPrefs.getLong("end_${kind.name}", 0L)) }
+    var externalCandidate by remember { mutableStateOf<ExternalRecordingV130.Candidate?>(null) }
+    var externalTime by remember { mutableStateOf("") }
+    var externalStatus by remember { mutableStateOf("") }
+    var nearbyVideos by remember { mutableStateOf<List<ExternalRecordingV130.NearbyVideo>>(emptyList()) }
+    var searchBusy by remember { mutableStateOf(false) }
+    val mainScope=rememberCoroutineScope()
+    fun searchVideos() {
+        if(externalStarted<=0L || externalEnded<=externalStarted) {
+            externalStatus="Start and finish a test window to find matching videos."
+        } else {
+            searchBusy=true
+            mainScope.launch {
+                val found=withContext(Dispatchers.IO) {runCatching {ExternalRecordingV130.nearbyVideos(context,externalStarted,externalEnded)} }
+                searchBusy=false
+                found.onSuccess { nearbyVideos=it;externalStatus="${it.size} possible videos; verify file and timestamp before import." }
+                    .onFailure {externalStatus="Video search failed: ${it.message}. Use SELECT SYSTEM VIDEO instead."}
+            }
+        }
+    }
+    val videoSearchPermission=rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if(granted)searchVideos() else externalStatus="Media permission denied; use SELECT SYSTEM VIDEO instead."
+    }
+    val externalPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            mainScope.launch {
+                externalStatus="Reading video metadata…"
+                val found=withContext(Dispatchers.IO) {runCatching {
+                    context.contentResolver.takePersistableUriPermission(uri,Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    ExternalRecordingV130.read(context,uri,externalStarted,externalEnded)
+                }}
+                found.onSuccess { candidate ->
+                    externalCandidate=candidate
+                    externalTime=candidate.suggestedStartMs?.let(ExternalRecordingV130::formatLocalTime).orEmpty()
+                    externalStatus="${candidate.source} · ${candidate.durationMs/1000}s · verify start before saving"
+                }.onFailure { externalStatus="Cannot read selected video: ${it.message}" }
+            }
+        }
+    }
     LaunchedEffect(Unit) {
         while (true) {
             videoActive = TestScreenRecordingService.isRecording
@@ -352,14 +393,14 @@ fun ManualStallScreenV130(kind: ManualStallKindV130, liveState: AppState, onBack
         Column(Modifier.fillMaxSize().background(bunnyScreenBrush()).padding(pad).verticalScroll(rememberScrollState()).padding(16.dp),verticalArrangement=Arrangement.spacedBy(14.dp)) {
             Text("Manual Data Experience Test",style=MaterialTheme.typography.titleLarge)
             Text("Choose manual stall markers, or recording-only mode without an overlay. Video-only mode creates an MP4 + per-second wall-clock timeline; it does not claim to detect stalls automatically.",style=MaterialTheme.typography.bodySmall)
-            Card(shape=RoundedCornerShape(25.dp)) {Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
+            Card(shape=RoundedCornerShape(25.dp),colors=CardDefaults.cardColors(containerColor=androidx.compose.ui.graphics.Color.Transparent)) {Column(Modifier.background(gradientCardBrushV130()).padding(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(task,{task=it},label={Text("Task name")},singleLine=true,enabled=!active,modifier=Modifier.fillMaxWidth())
                 Text("Device role",style=MaterialTheme.typography.labelLarge)
                 Row(horizontalArrangement=Arrangement.spacedBy(5.dp)) {
                     listOf("DUT1","DUT2","REF1","REF2").forEach { item -> FilterChip(selected=role==item,onClick={role=item},enabled=!active,label={Text(item)}) }
                 }
                 Text("Target app: ${kind.application} · ${version?.let{"v$it"}?:"Not installed"}",style=MaterialTheme.typography.bodySmall)
-                OutlinedButton(onClick={ManualStallReportV130.openOrInstall(context,kind);version=ManualStallReportV130.installed(context,kind)?.second},modifier=Modifier.fillMaxWidth()) {Text(if(version==null)"Install ${kind.application}" else "Open ${kind.application}")}
+                GradientActionV130(if(version==null)"INSTALL ${kind.application}" else "OPEN ${kind.application}", {ManualStallReportV130.openOrInstall(context,kind);version=ManualStallReportV130.installed(context,kind)?.second}, Modifier.fillMaxWidth(),primary=false)
                 Text("Capture mode",style=MaterialTheme.typography.labelLarge)
                 Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                     FilterChip(selected=!recordingOnly,onClick={recordingOnly=false},enabled=!active && !videoActive,label={Text("Manual overlay")})
@@ -368,21 +409,81 @@ fun ManualStallScreenV130(kind: ManualStallKindV130, liveState: AppState, onBack
                 if (recordingOnly) {
                     Text("A system consent screen is required for each recording. No floating window is shown; stop from the ongoing notification or by returning here. Timeline is an estimate, not frame-exact.",style=MaterialTheme.typography.bodySmall)
                     if (videoActive) {
-                        Button(onClick={context.startService(Intent(context,TestScreenRecordingService::class.java).apply{action=TestScreenRecordingService.STOP})},modifier=Modifier.fillMaxWidth()) { Text("STOP RECORDING & SAVE TIME MAP") }
+                        GradientActionV130("STOP RECORDING & SAVE", {context.startService(Intent(context,TestScreenRecordingService::class.java).apply{action=TestScreenRecordingService.STOP})},Modifier.fillMaxWidth())
                     } else {
-                        Button(onClick={
+                        GradientActionV130("START RECORDING", {
                             val mgr=context.getSystemService(android.media.projection.MediaProjectionManager::class.java)
                             videoConsent.launch(mgr.createScreenCaptureIntent())
-                        },enabled=!active && task.isNotBlank(),modifier=Modifier.fillMaxWidth()) { Text("START VIDEO RECORDING (NO OVERLAY)") }
+                        },Modifier.fillMaxWidth(),enabled=!active && task.isNotBlank())
                     }
-                    if(lastVideoAvailable) OutlinedButton(onClick={RecordingTimelinePlayerV130.open(context)},modifier=Modifier.fillMaxWidth()) {Text("REVIEW LAST VIDEO WITH REAL-TIME CLOCK")}
+                    if(lastVideoAvailable) GradientActionV130("REVIEW RECORDING", { RecordingTimelinePlayerV130.open(context) }, Modifier.fillMaxWidth(), primary=false)
+                    HorizontalDivider()
+                    Text("System / OEM screen recorder", style=MaterialTheme.typography.titleMedium)
+                    Text("Use this if the phone cannot record through CellTracker. Record the test window, then select its MP4 and confirm the video start time.",style=MaterialTheme.typography.bodySmall)
+                    if(externalStarted==0L || externalEnded>0L) {
+                        GradientActionV130("START EXTERNAL TEST WINDOW", {
+                            externalStarted=System.currentTimeMillis();externalEnded=0L
+                            sessionPrefs.edit().putLong("start_${kind.name}",externalStarted).putLong("end_${kind.name}",0L).apply()
+                            externalStatus="Session clock started. Start system screen recording and the target app."
+                            ManualStallReportV130.openOrInstall(context,kind)
+                        },Modifier.fillMaxWidth(),primary=false)
+                    } else {
+                        GradientActionV130("END EXTERNAL TEST WINDOW", {
+                            externalEnded=System.currentTimeMillis()
+                            sessionPrefs.edit().putLong("end_${kind.name}",externalEnded).apply()
+                            externalStatus="Test window saved; choose the recorded video."
+                        },Modifier.fillMaxWidth(),primary=false)
+                    }
+                    GradientActionV130(if(searchBusy)"SEARCHING VIDEOS…" else "FIND MATCHING RECORDINGS", {
+                        val permission=if(Build.VERSION.SDK_INT>=33) android.Manifest.permission.READ_MEDIA_VIDEO
+                            else android.Manifest.permission.READ_EXTERNAL_STORAGE
+                        if(ContextCompat.checkSelfPermission(context,permission)==android.content.pm.PackageManager.PERMISSION_GRANTED) searchVideos()
+                        else videoSearchPermission.launch(permission)
+                    },Modifier.fillMaxWidth(),primary=false,enabled=!searchBusy)
+                    nearbyVideos.forEach { item ->
+                        GradientActionV130("${item.name.take(23)} · ${item.durationMs/1000}s", {
+                            mainScope.launch {
+                                val found=withContext(Dispatchers.IO) {runCatching {ExternalRecordingV130.read(context,item.uri,externalStarted,externalEnded)}}
+                                found.onSuccess {candidate->
+                                    externalCandidate=candidate
+                                    externalTime=ExternalRecordingV130.formatLocalTime(item.approximateStartMs)
+                                    externalStatus="${item.reason} · confirm video start manually before saving"
+                                }.onFailure{externalStatus="Cannot read video: ${it.message}"}
+                            }
+                        },Modifier.fillMaxWidth(),primary=false)
+                    }
+                    GradientActionV130("SELECT SYSTEM VIDEO", { externalPicker.launch(arrayOf("video/*")) },Modifier.fillMaxWidth(),primary=false)
+                    externalCandidate?.let { candidate ->
+                        Text("Video: ${candidate.durationMs/1000}s · ${candidate.source}",style=MaterialTheme.typography.bodySmall)
+                        OutlinedTextField(value=externalTime,onValueChange={externalTime=it},
+                            label={Text("Video first-frame time · yyyy-MM-dd HH:mm:ss")},
+                            supportingText={Text("Estimated. Metadata may refer to file modification; verify manually.")},
+                            singleLine=true,modifier=Modifier.fillMaxWidth())
+                        GradientActionV130("CONFIRM TIME & CREATE TIMELINE", {
+                            val startMs=ExternalRecordingV130.parseLocalTime(externalTime)
+                            if(startMs==null) externalStatus="Enter a valid start time (yyyy-MM-dd HH:mm:ss)"
+                            else {
+                                val snapshot=cell
+                                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                                    val result=runCatching {ExternalRecordingV130.save(context,candidate,startMs,kind,role,task,version.orEmpty(),
+                                        snapshot?.operator.orEmpty(), snapshot?.displayRat.orEmpty(), snapshot?.band.orEmpty(),
+                                        snapshot?.pci.orEmpty(), snapshot?.rsrp.orEmpty(), snapshot?.sinr.orEmpty())}
+                                    withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                        result.onSuccess {lastVideoAvailable=true;externalStatus="External time map created · ESTIMATED. Open Review to mark stalls." }
+                                            .onFailure {externalStatus="Video import failed: ${it.message}"}
+                                    }
+                                }
+                            }
+                        },Modifier.fillMaxWidth(),primary=true)
+                    }
+                    if(externalStatus.isNotBlank()) Text(externalStatus,style=MaterialTheme.typography.bodySmall)
                     Text("After recording, open Review to mark stalls on the video timeline. Export creates a manual-reviewed CSV + XLSX without displaying an overlay during gameplay. CSV and SRT remain alongside the MP4.",style=MaterialTheme.typography.bodySmall)
                 } else {
                     if(!permissionReady) Text("Overlay permission required to mark stalls while using ${kind.application}.",color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)
-                    Button(onClick={start()},enabled=!active && task.isNotBlank() && !videoActive && !ManualStallStatusV130.state.value.running,modifier=Modifier.fillMaxWidth()) {Text(if(permissionReady)"START TEST & SHOW FLOATING CONTROLS" else "GRANT OVERLAY PERMISSION")}
+                    GradientActionV130(if(permissionReady)"START MANUAL STALL TEST" else "GRANT OVERLAY PERMISSION", {start()},Modifier.fillMaxWidth(),enabled=!active && task.isNotBlank() && !videoActive && !ManualStallStatusV130.state.value.running)
                 }
             }}
-            if(active) Card(shape=RoundedCornerShape(25.dp)) {Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
+            if(active) Card(shape=RoundedCornerShape(25.dp),colors=CardDefaults.cardColors(containerColor=androidx.compose.ui.graphics.Color.Transparent)) {Column(Modifier.background(gradientCardBrushV130()).padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
                 Text("Current test · ${kind.application}",style=MaterialTheme.typography.titleMedium)
                 Text("Completed stalls: ${progress.count} · Total ${String.format(Locale.US,"%.2f",progress.totalMs/1000.0)} s")
                 Text(if(progress.stallStartedMs!=null)"STALL IN PROGRESS" else "Waiting for a stall",color=MaterialTheme.colorScheme.primary)
