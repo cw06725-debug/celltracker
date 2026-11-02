@@ -1,3 +1,10 @@
+## v1.3.0 Preview 13 · Home Motion Polish (versionCode 264)
+- Add short, one-shot Home entrance animations: header, signal hero and test-card rows fade in with a subtle upward drift and stagger. Animation starts only when Home is composed (not on periodic cellular samples); reusable `HomeRevealV130` uses draw-only graphics-layer updates to avoid re-composing heavy icons every frame.
+- Add restrained press feedback to the Home signal summary and test cards; keep card sizes/layout unchanged and preserve existing click actions.
+- Preserve Preview 12 flicker-free static bottom navigation (no icon or selection animations) and existing Settings subpage horizontal push/pop unchanged.
+- No changes to cellular sampling, Tests, reports, Shizuku, Wi-Fi Direct, vendor log tools, overlays or launcher icon.
+- Source validation complete; full Gradle build and device-level motion/performance validation remain pending.
+
 ## v1.3.0 Preview 12 · Navigation & Settings Motion (versionCode 263)
 - Replace system Home eye (`ic_menu_view`) with an app-owned home-outline vector. Reports and Settings also get app-owned vector icons for consistent navigation.
 - Remove animated bottom-navigation tint that looked like a glyph flash; selection has static, stable background and glyph tint; click ripple remains disabled.

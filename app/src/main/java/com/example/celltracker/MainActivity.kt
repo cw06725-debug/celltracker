@@ -32,6 +32,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.animateColorAsState
@@ -42,6 +43,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -6843,6 +6845,35 @@ private data class ScenarioStartConfigV1(
     val testItems: List<String>
 )
 
+/**
+ * One-shot Home entrance: a short staggered fade + 10dp rise on lightweight
+ * Home sections. Animatable is remembered by each section and starts only
+ * when the Home tab is newly composed, never on the 1-second RF updates.
+ * graphicsLayer reads animation progress in the draw phase rather than
+ * rebuilding Cards / AndroidView app icons every animation frame.
+ * Main bottom-navigation remains instantaneous to avoid the prior flicker.
+ */
+@Composable
+private fun HomeRevealV130(
+    order: Int,
+    content: @Composable () -> Unit
+) {
+    val reveal = remember { Animatable(0f) }
+    LaunchedEffect(Unit) {
+        delay(order * 45L)
+        reveal.animateTo(
+            targetValue = 1f,
+            animationSpec = tween(durationMillis = 310, easing = FastOutSlowInEasing)
+        )
+    }
+    Box(
+        modifier = Modifier.graphicsLayer {
+            alpha = reveal.value
+            translationY = (1f - reveal.value) * 10.dp.toPx()
+        }
+    ) { content() }
+}
+
 @Composable
 private fun HomeScreenV121(
     state: AppState,
@@ -6879,6 +6910,7 @@ private fun HomeScreenV121(
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         Spacer(Modifier.height(12.dp))
+        HomeRevealV130(order = 0) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -6891,9 +6923,18 @@ private fun HomeScreenV121(
                 Text(if (state.isRecording) "● Recording" else "● Ready", modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp), style = MaterialTheme.typography.labelMedium, color = if (state.isRecording) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.SemiBold)
             }
         }
+        }
 
         val heroBrush = bunnyHeroBrush()
-        Card(onClick = onCellInfo, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(30.dp), colors = CardDefaults.cardColors(containerColor = Color.Transparent), elevation = CardDefaults.cardElevation(defaultElevation = 0.dp, pressedElevation = 0.dp)) {
+        val heroInteraction = remember { MutableInteractionSource() }
+        val heroPressed by heroInteraction.collectIsPressedAsState()
+        val heroScale by animateFloatAsState(
+            targetValue = if (heroPressed) 0.99f else 1f,
+            animationSpec = tween(durationMillis = 150, easing = FastOutSlowInEasing),
+            label = "homeHeroPress"
+        )
+        HomeRevealV130(order = 1) {
+        Card(onClick = onCellInfo, interactionSource = heroInteraction, modifier = Modifier.fillMaxWidth().graphicsLayer { scaleX = heroScale; scaleY = heroScale }, shape = RoundedCornerShape(30.dp), colors = CardDefaults.cardColors(containerColor = Color.Transparent), elevation = CardDefaults.cardElevation(defaultElevation = 0.dp, pressedElevation = 0.dp)) {
             Column(Modifier.background(heroBrush).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     OperatorIconTileV1(operator, MaterialTheme.colorScheme.onSurface)
@@ -6912,11 +6953,17 @@ private fun HomeScreenV121(
                 }
             }
         }
+        }
 
-        Text("Tests", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-        Text("Select a test to configure", style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        HomeRevealV130(order = 2) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Tests", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text("Select a test to configure", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        HomeRevealV130(order = 3) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             HomeQuickCardV121("TikTok", "Upload", "♪", Color(0xFF111111),
                 listOf("com.zhiliaoapp.musically", "com.ss.android.ugc.trill"), Modifier.weight(1f), onClick = onTikTokUpload)
             HomeQuickCardV121("TikTok", "Video Lag", "♪", Color(0xFF111111),
@@ -6924,7 +6971,9 @@ private fun HomeScreenV121(
             HomeQuickCardV121("YouTube", "Loading", "▶", Color(0xFFFF0033),
                 listOf("com.google.android.youtube"), Modifier.weight(1f), onClick = onVideoLoading)
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            }
+        HomeRevealV130(order = 4) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             HomeQuickCardV121("WhatsApp", "Image Send", "☎", Color(0xFF25D366),
                 listOf("com.whatsapp", "com.whatsapp.w4b"), Modifier.weight(1f), onClick = onWhatsAppSend)
             HomeQuickCardV121("Ping", "Latency Test", "PING", MaterialTheme.colorScheme.primary,
@@ -6932,7 +6981,9 @@ private fun HomeScreenV121(
             HomeQuickCardV121("Call", "Call Setup", "CALL", Color(0xFF16A34A),
                 modifier = Modifier.weight(1f), onClick = onCallSetup)
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            }
+        HomeRevealV130(order = 5) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             HomeQuickCardV121("Network", if(state.isRecording) "Stop Recording" else "Recording", "REC",
                 Color(0xFF6D4AFF), modifier = Modifier.weight(1f), onClick = onNetworkRecording)
             HomeQuickCardV121("Speedtest", "DL / UL", "⇅", Color(0xFF0891B2),
@@ -6941,8 +6992,10 @@ private fun HomeScreenV121(
             HomeQuickCardV121("Device Logs", "ADB Tools", "ADB", Color(0xFF64748B),
                 modifier = Modifier.weight(1f), onClick = onDeviceLogs)
         }
+            }
         if (mtkLoggerPackage != null || qtiLoggerPackage != null) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            HomeRevealV130(order = 6) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (mtkLoggerPackage != null) {
                     HomeQuickCardV121("MTK Logger", "Vendor Log", "LOG", Color(0xFF64748B),
                         listOf(mtkLoggerPackage), Modifier.weight(1f), installIfMissing = false, onClick = {
@@ -6965,6 +7018,7 @@ private fun HomeScreenV121(
                 repeat(3 - listOf(mtkLoggerPackage, qtiLoggerPackage).count { it != null }) {
                     Spacer(Modifier.weight(1f))
                 }
+            }
             }
         }
 
@@ -7016,9 +7070,17 @@ private fun HomeQuickCardV121(title: String, subtitle: String, symbol: String, i
         if (appPackages.isNotEmpty()) installedAppVersionV1(context, appPackages) else null
     }
     val tileBrush = bunnyTileBrush()
+    val interaction = remember { MutableInteractionSource() }
+    val isPressed by interaction.collectIsPressedAsState()
+    val pressScale by animateFloatAsState(
+        targetValue = if (isPressed) 0.975f else 1f,
+        animationSpec = tween(durationMillis = 145, easing = FastOutSlowInEasing),
+        label = "homeTestCardPress"
+    )
     Card(
         onClick = { if (installIfMissing) runAppTestOrInstallV1(context, appPackages, onClick) else onClick() },
-        modifier = modifier.height(124.dp),
+        interactionSource = interaction,
+        modifier = modifier.height(124.dp).graphicsLayer { scaleX = pressScale; scaleY = pressScale },
         shape = RoundedCornerShape(25.dp),
         colors = CardDefaults.cardColors(containerColor = Color.Transparent),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)),

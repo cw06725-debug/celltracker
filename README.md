@@ -1,3 +1,5 @@
+**Current test build: v1.3.0 Preview 13 (versionCode 264).** Home-only one-shot staggered entrance and card press feedback; bottom navigation and Settings transitions retained from Preview 12. Requires GitHub Actions Android build and device verification.
+
 **Preview 12 (Gradient Icon Approved)** — versionCode 262. Replaces the legacy, circular and adaptive launcher icons with the approved lavender–blue–mint gradient artwork. No functional, Wi-Fi, animation, overlay, logging or report changes. Requires GitHub Actions Android Gradle build and launcher verification on real devices.
 
 **Preview 10** — soft-gradient motion and icon update (versionCode 261). Gradual 260ms eased fades with 85ms offset, non-flashing static bottom icons, themed floating overlays and launcher assets. Existing Tests, Wi-Fi Direct, Shizuku, Speedtest, Reports and Bluetooth Call Setup remain unchanged. Needs full Android Gradle build and device verification.
