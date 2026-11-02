@@ -112,11 +112,17 @@ class RecordingTimelinePlayerV130 : Activity() {
         base.addView(smallText("Video playback · real-time clock (estimated)",12f),
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,d(32)))
         val frame=FrameLayout(this).apply {
+            clipChildren=true
+            clipToPadding=true
             setBackgroundColor(Color.BLACK)
             background=GradientDrawable().apply {setColor(Color.BLACK);cornerRadius=d(20).toFloat()}
             clipToOutline=true
         }
         val videoView=VideoView(this)
+        // Some OEM recorders save landscape gameplay inside a portrait MP4 canvas.
+        // Zoom is preview-only; the source MP4 and event timestamps are unchanged.
+        val zoomLevels=floatArrayOf(1f,1.5f,2f,2.5f)
+        var zoomIndex=0
         video=videoView
         frame.addView(videoView,FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.MATCH_PARENT,Gravity.CENTER))
         val clock=TextView(this).apply {
@@ -140,6 +146,18 @@ class RecordingTimelinePlayerV130 : Activity() {
         val timeText=smallText("${displayTime(0L)} / ${displayTime(session.videoDurationMs)}",13f)
         timeText.setTextColor(darkText)
         transport.addView(timeText)
+        val zoomRow=LinearLayout(this).apply {orientation=LinearLayout.HORIZONTAL;gravity=Gravity.CENTER_VERTICAL}
+        zoomRow.addView(smallText("Small gameplay image? Zoom preview",12f),LinearLayout.LayoutParams(0,d(42),1f))
+        val zoomButton=button("ZOOM 1×",tint=3) {
+            zoomIndex=(zoomIndex+1)%zoomLevels.size
+            val factor=zoomLevels[zoomIndex]
+            videoView.scaleX=factor
+            videoView.scaleY=factor
+            // The FrameLayout clips zoomed content; only the preview is affected.
+            Toast.makeText(this,if(factor==1f)"Full video restored" else "Preview zoom ${factor}× · edges may be cropped",Toast.LENGTH_SHORT).show()
+        }
+        zoomRow.addView(zoomButton,LinearLayout.LayoutParams(d(112),d(40)))
+        transport.addView(zoomRow)
         val smoother=PlaybackClockSmootherV130()
         var seekProtectionUntil=0L
         var requestedPosition=0L
