@@ -1,3 +1,14 @@
+## Preview 15 — Compile Fix + Recording Time Map (versionCode 266)
+
+- Fixes Kotlin compile errors in `MainActivity.kt` (`ReportListCard` click parameter) and `ManualStallTestV130.kt` (`Button.text` assignment shadowing).
+- PUBG/Tamasha Manual Data Experience Test supports **Video only · no overlay** as an alternative to the existing manual stall floating control. Each screen recording requires Android MediaProjection consent. Recording can be stopped by the ongoing foreground notification action or from the test page.
+- Existing `TestScreenRecordingService` now samples wall-clock / elapsedRealtime each second. After a valid MP4 is saved, two **companion files** are written beside it under `Downloads/CellTracker/.../Screen Recordings/`: `<video>_TimeMap.csv` (every video second mapped to local time + epoch ms) and `<video>.srt` (playback time-clock subtitle file).
+- `Reports → Screen Recording · Real-Time Playback` opens the latest CellTracker time-mapped video in the built-in viewer and overlays local time at the current playback position. The underlying MP4 remains unchanged, and ordinary gallery players do **not** automatically embed/burn-in the subtitle; use the built-in viewer or a media player that can load SRT.
+- Time-map accuracy: **estimated**, not frame-exact. MediaRecorder does not provide a direct wall-clock timestamp for the first encoded frame, and dropped/shifted frames or recording start latency can affect mapping. Video length is read from saved MP4 and correlated with monotonic recording start/stop clocks; periodic wall-clock anchors are saved to handle clock changes. Validate important log timestamps against a visible reference event.
+- Video-only mode does not mark or detect stall events. Use original overlay mode for manual live stall marking; future post-test mark/review UI can be added separately.
+- Unchanged: Bluetooth Call Setup, Wi-Fi Direct, Shizuku, Speedtest, existing report analysis, Home/Settings animation and gradient launcher resources.
+- Validation: source Kotlin PSI/XML/ZIP checks only; full Gradle assembleDebug and on-device video recording remain necessary.
+
 # CellTracker v1.3.0 Preview 14 — Soft Page Motion + Manual Stall Tests
 
 **Test preview** · `versionCode=265` · `versionName=1.3.0` · based on Preview 13 Home Motion. Full Android Gradle compilation and real-device testing are **not verified in this environment**.

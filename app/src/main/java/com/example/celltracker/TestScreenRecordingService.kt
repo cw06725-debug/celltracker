@@ -16,6 +16,8 @@ import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
+import android.os.SystemClock
+import android.app.PendingIntent
 import android.os.Handler
 import android.os.IBinder
 import android.provider.MediaStore
@@ -41,6 +43,18 @@ class TestScreenRecordingService : Service() {
     private var outputUri: Uri? = null
     private var outputPfd: ParcelFileDescriptor? = null
     private var recorderStarted = false
+    private var recordedVideoName = ""
+    private var recordingDirectory = ""
+    private var recordingStart: RecordingTimelineV130.Anchor? = null
+    private val clockSamples = mutableListOf<RecordingTimelineV130.Anchor>()
+    private val timelineHandler = Handler(android.os.Looper.getMainLooper())
+    private val sampleClock = object : Runnable {
+        override fun run() {
+            if (!recorderStarted || stopping) return
+            clockSamples += RecordingTimelineV130.Anchor(SystemClock.elapsedRealtime(), System.currentTimeMillis())
+            timelineHandler.postDelayed(this, 1000L)
+        }
+    }
     @Volatile private var stopping = false
 
     private var diagnosticFile: File? = null
@@ -96,6 +110,8 @@ class TestScreenRecordingService : Service() {
                     put(MediaStore.Downloads.IS_PENDING, 1)
                 }
             }
+            recordedVideoName = name
+            recordingDirectory = ReportStorage.relativePath("Screen Recordings", now)
             outputUri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
                 ?: error("Unable to create screen recording output")
             outputPfd = contentResolver.openFileDescriptor(outputUri!!, "w")
@@ -122,7 +138,11 @@ class TestScreenRecordingService : Service() {
             }
             diag("MediaRecorder.prepare OK encoder=H264 size=${width}x${height} fps=30 bitrate=8000000")
 
+            val stopAction = PendingIntent.getService(this, NID,
+                Intent(this, TestScreenRecordingService::class.java).apply { action = STOP },
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
             val notification = NotificationCompat.Builder(this, CH)
+                .addAction(android.R.drawable.ic_media_pause, "Stop recording", stopAction)
                 .setSmallIcon(android.R.drawable.presence_video_online)
                 .setContentTitle("CellTracker screen recording")
                 .setContentText(name)
@@ -156,13 +176,18 @@ class TestScreenRecordingService : Service() {
             diag("VirtualDisplay created=true name=CellTrackerTestRecording ${width}x${height} dpi=${metrics.densityDpi}")
 
             recorder!!.start()
+            // The closest available anchor without switching to a custom MediaCodec pipeline.
+            // The first encoded frame may start later; exported mapping is flagged ESTIMATED.
+            recordingStart = RecordingTimelineV130.Anchor(SystemClock.elapsedRealtime(), System.currentTimeMillis())
+            clockSamples.clear()
             recorderStarted = true
-            diag("MediaRecorder.start OK")
+            timelineHandler.postDelayed(sampleClock, 1000L)
+            diag("MediaRecorder.start OK; timeline anchor=${recordingStart?.wallMs}")
 
             isRecording = true
             currentName = name
             currentUri = outputUri.toString()
-            currentStartedAt = now
+            currentStartedAt = recordingStart?.wallMs ?: now
             lastError = ""
             diag("Recording state ACTIVE")
         } catch (t: Throwable) {
@@ -179,6 +204,8 @@ class TestScreenRecordingService : Service() {
             return
         }
         stopping = true
+        timelineHandler.removeCallbacks(sampleClock)
+        val recordingEnd = RecordingTimelineV130.Anchor(SystemClock.elapsedRealtime(), System.currentTimeMillis())
         isRecording = false
         val uri = outputUri
         diag("STOP requested recorderStarted=$recorderStarted")
@@ -210,7 +237,24 @@ class TestScreenRecordingService : Service() {
             }
         }
 
-        if (uri != null) inspectPublishedVideo(uri)
+        val validMediaDuration = if (uri != null) inspectPublishedVideo(uri) else -1L
+        val anchor = recordingStart
+        if (stopOk && uri != null && anchor != null && validMediaDuration > 0L) {
+            runCatching {
+                RecordingTimelineV130.save(this, recordedVideoName, uri,
+                    RecordingTimelineV130.Session(anchor, recordingEnd, validMediaDuration, clockSamples.toList()),
+                    recordingDirectory)
+            }.onSuccess { (csv, subtitle) ->
+                lastTimelineCsv = csv.toString()
+                lastTimelineSrt = subtitle.toString()
+                diag("Time-map CSV and SRT saved, confidence=estimated")
+            }.onFailure { e ->
+                lastError = "Video saved, but timeline export failed: ${e.message}"
+                diagThrowable("TIMELINE EXPORT FAILED", e)
+            }
+        }
+        recordingStart = null
+        clockSamples.clear()
 
         lastName = currentName
         lastUri = currentUri
@@ -226,7 +270,7 @@ class TestScreenRecordingService : Service() {
         stopSelf()
     }
 
-    private fun inspectPublishedVideo(uri: Uri) {
+    private fun inspectPublishedVideo(uri: Uri): Long {
         val bytes = runCatching {
             contentResolver.openAssetFileDescriptor(uri, "r")?.use { it.length }
         }.getOrNull() ?: -1L
@@ -248,10 +292,15 @@ class TestScreenRecordingService : Service() {
         if (bytes in 0..8191 || durationMs <= 0 || width <= 0 || height <= 0) {
             lastError = "Screen recording invalid/empty: bytes=$bytes durationMs=$durationMs size=${width}x${height}"
             diag("INVALID RECORDING: $lastError")
+            return -1L
         }
+        return durationMs
     }
 
     private fun cleanupFailedStart() {
+        timelineHandler.removeCallbacks(sampleClock)
+        recordingStart = null
+        clockSamples.clear()
         isRecording = false
         recorderStarted = false
         runCatching { recorder?.reset() }
@@ -384,6 +433,8 @@ class TestScreenRecordingService : Service() {
         @Volatile var currentStartedAt = 0L
         @Volatile var lastStartedAt = 0L
         @Volatile var lastError = ""
+        @Volatile var lastTimelineCsv = ""
+        @Volatile var lastTimelineSrt = ""
         @Volatile var lastDiagnosticUri = ""
         @Volatile var lastDiagnosticName = ""
         @Volatile var lastDiagnosticPathHint = ""

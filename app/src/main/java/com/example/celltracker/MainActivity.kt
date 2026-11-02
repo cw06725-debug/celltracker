@@ -1542,10 +1542,10 @@ private fun ReportsHome(
                 LazyColumn(Modifier.fillMaxSize().padding(16.dp),verticalArrangement=Arrangement.spacedBy(9.dp)) {
                     item { Text("${files.size} completed tests · XLSX summaries and events saved under Downloads/CellTracker.") }
                     items(files,key={it.uri.toString()}) { file ->
-                        ReportListCard(file.name, SimpleDateFormat("yyyy-MM-dd HH:mm",Locale.US).format(Date(file.timestamp))) {
+                        ReportListCard(file.name, SimpleDateFormat("yyyy-MM-dd HH:mm",Locale.US).format(Date(file.timestamp)), onClick = {
                             val i=Intent(Intent.ACTION_VIEW).apply {setDataAndType(file.uri,"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)}
                             runCatching { context.startActivity(i) }.onFailure { Toast.makeText(context,"No XLSX viewer installed",Toast.LENGTH_SHORT).show() }
-                        }
+                        })
                     }
                 }
             }
@@ -1706,6 +1706,16 @@ private fun ReportsHome(
                 title = "Experience Analysis · Daily / Weekly",
                 subtitle = "Compare DUT/REF with your own threshold rules; generate test result and reports",
                 onClick = { category = "ANALYSIS" }
+            )
+        }
+        item {
+            ReportListCard(
+                title = "Screen Recording · Real-Time Playback",
+                subtitle = "Replay last CellTracker MP4 with a real-clock overlay; export a 1-second CSV and SRT",
+                onClick = {
+                    if (RecordingTimelineV130.last(context) != null) RecordingTimelinePlayerV130.open(context)
+                    else Toast.makeText(context, "No timestamped recording yet. Start a video-only PUBG/Tamasha test first.", Toast.LENGTH_LONG).show()
+                }
             )
         }
         item {

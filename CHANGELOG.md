@@ -1,3 +1,10 @@
+## v1.3.0 Preview 15 (versionCode 266) — 2026-11-02
+- Compile fix: four errors shown in Preview 14 GitHub Actions logs, affecting ReportListCard click lambda and Button.text in ManualStallTestV130.
+- Recording time-map: paired MediaRecorder monotonic+wall anchors, per-second CSV, SRT, built-in playback overlay and notification stop action.
+- PUBG/Tamasha: optional no-overlay video-only mode; retain existing manual stall markers.
+- No video re-encoding or burned-in timestamp. Accuracy is estimated (MediaRecorder first-frame PTS not calibrated). Log alignment must account for uncertainty.
+- Gradle build and device validation pending.
+
 ## v1.3.0 Preview 14 · versionCode 265 (2026-11-02)
 
 - Apply Home-like one-shot eased entrance/re-entry to main tabs, Settings subpage content, Reports/Experience Analysis and existing test screens, while preserving Preview 12 stable bottom navigation and Settings horizontal slide.

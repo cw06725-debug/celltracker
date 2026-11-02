@@ -27,6 +27,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.cancel
 import java.io.ByteArrayOutputStream
@@ -256,8 +257,8 @@ class ManualStallServiceV130 : Service() {
         val root=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL;setPadding(px(10),px(8),px(10),px(8));background=OverlayStyleV130.card(this@ManualStallServiceV130,.94f) }
         val header=TextView(this).apply {text="⋮⋮  CellTracker · Move";textSize=12f;setTextColor(OverlayStyleV130.secondaryTextColor(this@ManualStallServiceV130));setPadding(px(3),0,px(3),px(5))}
         val text=TextView(this).apply {textSize=13f;setTextColor(OverlayStyleV130.textColor(this@ManualStallServiceV130));setPadding(px(3),0,px(3),px(7))};statusText=text
-        val toggle=Button(this).apply {text="START STALL";OverlayStyleV130.button(this@ManualStallServiceV130,this);setOnClickListener { command(this@ManualStallServiceV130,ACTION_TOGGLE) }};toggleButton=toggle
-        val finish=Button(this).apply{text="FINISH TEST";OverlayStyleV130.button(this@ManualStallServiceV130,this,true);setOnClickListener{command(this@ManualStallServiceV130,ACTION_FINISH)}}
+        val toggle=Button(this).apply {this.text="START STALL";OverlayStyleV130.button(this@ManualStallServiceV130,this);setOnClickListener { command(this@ManualStallServiceV130,ACTION_TOGGLE) }};toggleButton=toggle
+        val finish=Button(this).apply{this.text="FINISH TEST";OverlayStyleV130.button(this@ManualStallServiceV130,this,true);setOnClickListener{command(this@ManualStallServiceV130,ACTION_FINISH)}}
         val buttons=LinearLayout(this).apply {orientation=LinearLayout.HORIZONTAL;addView(toggle,LinearLayout.LayoutParams(0,px(44),1f));addView(finish,LinearLayout.LayoutParams(0,px(44),1f))}
         root.addView(header);root.addView(text);root.addView(buttons)
         val lp=WindowManager.LayoutParams(px(285),WindowManager.LayoutParams.WRAP_CONTENT,
@@ -298,6 +299,30 @@ fun ManualStallScreenV130(kind: ManualStallKindV130, liveState: AppState, onBack
     val permissionLauncher=rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()){
         permissionReady=android.provider.Settings.canDrawOverlays(context)
     }
+    var recordingOnly by rememberSaveable(kind) { mutableStateOf(false) }
+    var videoActive by remember { mutableStateOf(TestScreenRecordingService.isRecording) }
+    var lastVideoAvailable by remember { mutableStateOf(RecordingTimelineV130.last(context) != null) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            videoActive = TestScreenRecordingService.isRecording
+            lastVideoAvailable = RecordingTimelineV130.last(context) != null
+            delay(900L)
+        }
+    }
+    val videoConsent = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val data = result.data
+        if (result.resultCode == Activity.RESULT_OK && data != null) {
+            ContextCompat.startForegroundService(context, Intent(context,TestScreenRecordingService::class.java).apply {
+                action=TestScreenRecordingService.START
+                putExtra(TestScreenRecordingService.CODE,result.resultCode)
+                putExtra(TestScreenRecordingService.DATA,data)
+                putExtra(TestScreenRecordingService.NAME,"${kind.name}_${role}_${task.trim()}")
+            })
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                ManualStallReportV130.openOrInstall(context, kind)
+            }, 850L)
+        } else Toast.makeText(context,"Recording permission cancelled",Toast.LENGTH_SHORT).show()
+    }
     val cell=liveState.sims.firstOrNull { it.subscriptionId==liveState.selectedSubscriptionId }?.servingCell ?: liveState.sims.firstOrNull()?.servingCell
     fun start() {
         if(!permissionReady) {
@@ -315,7 +340,7 @@ fun ManualStallScreenV130(kind: ManualStallKindV130, liveState: AppState, onBack
     Scaffold(topBar={TopAppBar(title={Text(kind.label)},navigationIcon={TextButton(onClick=onBack){Text("‹ Back")}})}) { pad ->
         Column(Modifier.fillMaxSize().background(bunnyScreenBrush()).padding(pad).verticalScroll(rememberScrollState()).padding(16.dp),verticalArrangement=Arrangement.spacedBy(14.dp)) {
             Text("Manual Data Experience Test",style=MaterialTheme.typography.titleLarge)
-            Text("Use the floating START STALL / END STALL buttons while watching ${kind.application}. The timestamps, count and total duration are saved without guessing.",style=MaterialTheme.typography.bodySmall)
+            Text("Choose manual stall markers, or recording-only mode without an overlay. Video-only mode creates an MP4 + per-second wall-clock timeline; it does not claim to detect stalls automatically.",style=MaterialTheme.typography.bodySmall)
             Card(shape=RoundedCornerShape(25.dp)) {Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(task,{task=it},label={Text("Task name")},singleLine=true,enabled=!active,modifier=Modifier.fillMaxWidth())
                 Text("Device role",style=MaterialTheme.typography.labelLarge)
@@ -324,8 +349,27 @@ fun ManualStallScreenV130(kind: ManualStallKindV130, liveState: AppState, onBack
                 }
                 Text("Target app: ${kind.application} · ${version?.let{"v$it"}?:"Not installed"}",style=MaterialTheme.typography.bodySmall)
                 OutlinedButton(onClick={ManualStallReportV130.openOrInstall(context,kind);version=ManualStallReportV130.installed(context,kind)?.second},modifier=Modifier.fillMaxWidth()) {Text(if(version==null)"Install ${kind.application}" else "Open ${kind.application}")}
-                if(!permissionReady) Text("Overlay permission required to mark stalls while using ${kind.application}.",color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)
-                Button(onClick={start()},enabled=!active && task.isNotBlank() && !ManualStallStatusV130.state.value.running,modifier=Modifier.fillMaxWidth()) {Text(if(permissionReady)"START TEST & SHOW FLOATING CONTROLS" else "GRANT OVERLAY PERMISSION")}
+                Text("Capture mode",style=MaterialTheme.typography.labelLarge)
+                Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                    FilterChip(selected=!recordingOnly,onClick={recordingOnly=false},enabled=!active && !videoActive,label={Text("Manual overlay")})
+                    FilterChip(selected=recordingOnly,onClick={recordingOnly=true},enabled=!active && !videoActive,label={Text("Video only · no overlay")})
+                }
+                if (recordingOnly) {
+                    Text("A system consent screen is required for each recording. No floating window is shown; stop from the ongoing notification or by returning here. Timeline is an estimate, not frame-exact.",style=MaterialTheme.typography.bodySmall)
+                    if (videoActive) {
+                        Button(onClick={context.startService(Intent(context,TestScreenRecordingService::class.java).apply{action=TestScreenRecordingService.STOP})},modifier=Modifier.fillMaxWidth()) { Text("STOP RECORDING & SAVE TIME MAP") }
+                    } else {
+                        Button(onClick={
+                            val mgr=context.getSystemService(android.media.projection.MediaProjectionManager::class.java)
+                            videoConsent.launch(mgr.createScreenCaptureIntent())
+                        },enabled=!active && task.isNotBlank(),modifier=Modifier.fillMaxWidth()) { Text("START VIDEO RECORDING (NO OVERLAY)") }
+                    }
+                    if(lastVideoAvailable) OutlinedButton(onClick={RecordingTimelinePlayerV130.open(context)},modifier=Modifier.fillMaxWidth()) {Text("REVIEW LAST VIDEO WITH REAL-TIME CLOCK")}
+                    Text("CSV and SRT are saved alongside the MP4 in Downloads/CellTracker/Screen Recordings.",style=MaterialTheme.typography.bodySmall)
+                } else {
+                    if(!permissionReady) Text("Overlay permission required to mark stalls while using ${kind.application}.",color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)
+                    Button(onClick={start()},enabled=!active && task.isNotBlank() && !videoActive && !ManualStallStatusV130.state.value.running,modifier=Modifier.fillMaxWidth()) {Text(if(permissionReady)"START TEST & SHOW FLOATING CONTROLS" else "GRANT OVERLAY PERMISSION")}
+                }
             }}
             if(active) Card(shape=RoundedCornerShape(25.dp)) {Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
                 Text("Current test · ${kind.application}",style=MaterialTheme.typography.titleMedium)
