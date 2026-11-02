@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+<defs>
+  <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#E6DDFC"/><stop offset="0.53" stop-color="#F9E6F1"/><stop offset="1" stop-color="#D4F2E7"/></linearGradient>
+  <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7E67C6"/><stop offset="0.52" stop-color="#9E7FC3"/><stop offset="1" stop-color="#47A99F"/></linearGradient>
+  <linearGradient id="mark" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7964BD"/><stop offset="1" stop-color="#299F93"/></linearGradient>
+</defs>
+<rect width="512" height="512" rx="126" fill="url(#bg)"/>
+<rect x="77" y="77" width="358" height="358" rx="105" fill="#FFFFFF" fill-opacity="0.67" stroke="#FFFFFF" stroke-opacity="0.8" stroke-width="5"/>
+<!-- Signal bars: measurable network and radio strength -->
+<g fill="url(#accent)">
+ <rect x="147" y="268" width="47" height="95" rx="17"/>
+ <rect x="231" y="217" width="47" height="146" rx="17"/>
+ <rect x="315" y="165" width="47" height="198" rx="17"/>
+</g>
+<!-- Two soft measurement waves across the bars -->
+<path d="M121 313 C184 264 220 310 271 280 S352 248 397 274" fill="none" stroke="#FFFFFF" stroke-width="14" stroke-linecap="round" opacity=".95"/>
+<path d="M120 335 C182 297 228 341 277 310 S359 284 399 309" fill="none" stroke="#47A99F" stroke-width="10" stroke-linecap="round" opacity=".85"/>
+</svg>

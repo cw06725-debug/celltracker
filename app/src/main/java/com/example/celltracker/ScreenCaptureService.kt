@@ -205,7 +205,7 @@ class ScreenCaptureService : Service() {
         }
         val status = TextView(this).apply {
             text = "AI F:0 A:0"
-            setTextColor(Color.WHITE)
+            setTextColor(OverlayStyleV130.textColor(this@ScreenCaptureService))
             textSize = 11f
             gravity = Gravity.CENTER
             setPadding(4, 0, 4, 0)

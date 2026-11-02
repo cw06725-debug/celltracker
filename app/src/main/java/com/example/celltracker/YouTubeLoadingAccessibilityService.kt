@@ -855,18 +855,18 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             background = OverlayStyleV130.card(this@YouTubeLoadingAccessibilityService)
         }
         val header = TextView(this).apply {
-            setTextColor(0xffffffff.toInt())
+            setTextColor(OverlayStyleV130.textColor(this@YouTubeLoadingAccessibilityService))
             text = "YouTube Video Test"
             setPadding(8, 8, 8, 12)
         }
         val status = TextView(this).apply {
-            setTextColor(0xffffffff.toInt())
+            setTextColor(OverlayStyleV130.textColor(this@YouTubeLoadingAccessibilityService))
             text = "Ready · open creator Videos page"
             setPadding(8, 0, 8, 8)
         }
         overlayStatus = status
         val clock = TextView(this).apply {
-            setTextColor(0xffffffff.toInt())
+            setTextColor(OverlayStyleV130.textColor(this@YouTubeLoadingAccessibilityService))
             text = "TIME --:--:--.---"
             setPadding(8, 0, 8, 8)
         }
@@ -1540,10 +1540,10 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             setPadding(20, 14, 20, 14)
             background = OverlayStyleV130.card(this@YouTubeLoadingAccessibilityService)
         }
-        val header = TextView(this).apply { setTextColor(0xffffffff.toInt()); text = "WhatsApp Image Send  ·  drag here"; setPadding(8,8,8,12) }
-        val status = TextView(this).apply { setTextColor(0xffffffff.toInt()); text = "Ready · open WhatsApp image preview"; setPadding(8,0,8,8) }
+        val header = TextView(this).apply { setTextColor(OverlayStyleV130.textColor(this@YouTubeLoadingAccessibilityService)); text = "WhatsApp Image Send  ·  drag here"; setPadding(8,8,8,12) }
+        val status = TextView(this).apply { setTextColor(OverlayStyleV130.textColor(this@YouTubeLoadingAccessibilityService)); text = "Ready · open WhatsApp image preview"; setPadding(8,0,8,8) }
         waStatusView = status
-        val clock = TextView(this).apply { setTextColor(0xffffffff.toInt()); text = "TIME --:--:--.---"; setPadding(8,0,8,8) }
+        val clock = TextView(this).apply { setTextColor(OverlayStyleV130.textColor(this@YouTubeLoadingAccessibilityService)); text = "TIME --:--:--.---"; setPadding(8,0,8,8) }
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         val start = Button(this).apply { text = "START"; OverlayStyleV130.button(this@YouTubeLoadingAccessibilityService, this) }
         val sent = Button(this).apply { text = "SENT"; visibility = View.GONE; OverlayStyleV130.button(this@YouTubeLoadingAccessibilityService, this) }
@@ -2422,7 +2422,7 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             background = OverlayStyleV130.card(this@YouTubeLoadingAccessibilityService, if (autoDetectLag) .79f else .90f)
         }
         val header = TextView(this).apply {
-            setTextColor(0xffffffff.toInt())
+            setTextColor(OverlayStyleV130.textColor(this@YouTubeLoadingAccessibilityService))
             text = if (isLag) {
                 val modeLabel = if (autoDetectLag) "AUTO BETA" else if(autoSwipe) "SEMI AUTO" else "MANUAL"
                 listOf(taskName.takeUnless { it == "Session" }, modeLabel, operator).filterNotNull().joinToString(" · ")
@@ -2432,22 +2432,22 @@ class YouTubeLoadingAccessibilityService : AccessibilityService() {
             setPadding(8,8,8,5)
         }
         val meta = TextView(this).apply {
-            setTextColor(0xffdddddd.toInt())
+            setTextColor(OverlayStyleV130.secondaryTextColor(this@YouTubeLoadingAccessibilityService))
             text = if (isLag) "TikTok Video Lag" else "TikTok Upload"
             setPadding(8,0,8,4)
         }
         val realtime = TextView(this).apply {
-            setTextColor(0xffffffff.toInt())
+            setTextColor(OverlayStyleV130.textColor(this@YouTubeLoadingAccessibilityService))
             text = "--:--:--.---"
             setPadding(8,0,8,2)
         }
         val clock = TextView(this).apply {
-            setTextColor(0xffffffff.toInt())
+            setTextColor(OverlayStyleV130.textColor(this@YouTubeLoadingAccessibilityService))
             text = "Elapsed 00:00 · Ready"
             setPadding(8,0,8,6)
         }
         val status = TextView(this).apply {
-            setTextColor(0xffffffff.toInt())
+            setTextColor(OverlayStyleV130.textColor(this@YouTubeLoadingAccessibilityService))
             text="Press START"
             setPadding(8,0,8,8)
         }

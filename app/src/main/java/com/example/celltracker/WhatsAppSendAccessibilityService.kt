@@ -99,10 +99,10 @@ class WhatsAppSendAccessibilityService : AccessibilityService() {
             setPadding(20, 14, 20, 14)
             background = OverlayStyleV130.card(this@WhatsAppSendAccessibilityService)
         }
-        val header = TextView(this).apply { setTextColor(0xffffffff.toInt()); text = "WhatsApp Image Send  ·  drag here"; setPadding(8,8,8,12) }
-        val status = TextView(this).apply { setTextColor(0xffffffff.toInt()); text = "Ready · open WhatsApp image preview"; setPadding(8,0,8,8) }
+        val header = TextView(this).apply { setTextColor(OverlayStyleV130.textColor(this@WhatsAppSendAccessibilityService)); text = "WhatsApp Image Send  ·  drag here"; setPadding(8,8,8,12) }
+        val status = TextView(this).apply { setTextColor(OverlayStyleV130.textColor(this@WhatsAppSendAccessibilityService)); text = "Ready · open WhatsApp image preview"; setPadding(8,0,8,8) }
         statusView = status
-        val clock = TextView(this).apply { setTextColor(0xffffffff.toInt()); text = "TIME --:--:--.---"; setPadding(8,0,8,8) }
+        val clock = TextView(this).apply { setTextColor(OverlayStyleV130.textColor(this@WhatsAppSendAccessibilityService)); text = "TIME --:--:--.---"; setPadding(8,0,8,8) }
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         val start = Button(this).apply { text = "START"; OverlayStyleV130.button(this@WhatsAppSendAccessibilityService, this) }
         val sent = Button(this).apply { text = "SENT"; visibility = View.GONE; OverlayStyleV130.button(this@WhatsAppSendAccessibilityService, this) }

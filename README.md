@@ -1,3 +1,7 @@
+**Preview 11 (Gradient Icon Approved)** — versionCode 262. Replaces the legacy, circular and adaptive launcher icons with the approved lavender–blue–mint gradient artwork. No functional, Wi-Fi, animation, overlay, logging or report changes. Requires GitHub Actions Android Gradle build and launcher verification on real devices.
+
+**Preview 10** — soft-gradient motion and icon update (versionCode 261). Gradual 260ms eased fades with 85ms offset, non-flashing static bottom icons, themed floating overlays and launcher assets. Existing Tests, Wi-Fi Direct, Shizuku, Speedtest, Reports and Bluetooth Call Setup remain unchanged. Needs full Android Gradle build and device verification.
+
 # CellTracker v1.3.0 Preview 9 — Soft Gradient UI + Performance Pass 2
 
 **TEST PREVIEW ONLY** · `versionCode=260` · `versionName=1.3.0` · based on **Preview 8 CompileFix** (not the earlier unpatched Preview 8 archive).

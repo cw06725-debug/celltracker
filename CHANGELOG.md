@@ -1,3 +1,16 @@
+## v1.3.0 Preview 11 — Approved Gradient Launcher Icon (versionCode 262)
+- Replaced all density launcher icons and circular variants with the user-approved lilac/blue/mint radio-analytics design. Removed black corner pixels from the generated artwork for correct transparency on varied launcher backgrounds.
+- Updated Android 8+ adaptive launcher foreground/background with a centered glass signal motif and a full-bleed soft-gradient background. Original image retained in `design/` for future edits.
+- No app UI, animations, floating overlays, network sampling, testing features, Wi-Fi, Shizuku, or report functionality changed.
+- Source resource and ZIP checks completed; full Android Gradle build and real device appearance not validated.
+
+## v1.3.0 Preview 10 — Motion & Overlay Polish (versionCode 261)
+- Adjusted root and tab transitions to staged, eased fades to prevent harsh fast switching and reduce old/new page ghosting.
+- Removed bottom navigation icon scaling and touch ripple flashing; selection pill animates without changing icon geometry.
+- Unified Android View floating overlays with soft pastel gradient/dark-mode palettes, rounded buttons and readable text. Existing drag, opacity, collapse and test-mark behaviors preserved.
+- Regenerated density launcher icons and added Android adaptive launcher resources in the same soft-purple/mint radio-signal visual language.
+- UI-only preview; source/static resource checks performed; GitHub Actions Gradle build and real-device motion tests are still required.
+
 ## v1.3.0 Preview 9 — Soft Gradient UI & Performance Pass 2 (versionCode 260)
 - Restyled primary Material3 color scheme, shapes and primary dashboards to soft lilac/blush/mint, with dark-mode support. Added reusable, cached `BunnyVisualsV130.kt` gradient brushes. Home hero, test tiles, Cell Info summary, Reports category surfaces, Settings groups and shared info cards updated while retaining CellTracker content and workflows.
 - Replaced heavyweight root/bottom-tab slide transitions with short crossfades, and animated bottom-nav selected color with a 210 ms tween rather than a continuously animated gradient. Preserved the no-transition handling for active test pages.

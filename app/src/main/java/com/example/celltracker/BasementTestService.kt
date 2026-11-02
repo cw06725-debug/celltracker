@@ -1367,13 +1367,13 @@ $roundSections
             background = OverlayStyleV130.card(this@BasementTestService)
         }
         overlayTitle = TextView(this).apply {
-            setTextColor(Color.WHITE); textSize = 14f
+            setTextColor(OverlayStyleV130.textColor(this@BasementTestService)); textSize = 14f
         }
         overlayNetwork = TextView(this).apply {
-            setTextColor(Color.WHITE); textSize = 12f
+            setTextColor(OverlayStyleV130.textColor(this@BasementTestService)); textSize = 12f
         }
         overlaySub = TextView(this).apply {
-            setTextColor(0xFFDDDDDD.toInt()); textSize = 11f
+            setTextColor(OverlayStyleV130.secondaryTextColor(this@BasementTestService)); textSize = 11f
         }
         overlayButton = Button(this).apply {
             textSize = 11f

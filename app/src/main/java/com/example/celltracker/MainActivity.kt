@@ -32,6 +32,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.BorderStroke
@@ -40,6 +41,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -375,8 +377,8 @@ MainScreen(
                                 EnterTransition.None.togetherWith(ExitTransition.None)
                             // Lightweight bunnylock-style soft fade instead of moving two
                             // expensive screen trees horizontally during the transition.
-                            else -> fadeIn(animationSpec = tween(160))
-                                .togetherWith(fadeOut(animationSpec = tween(105)))
+                            else -> fadeIn(animationSpec = tween(260, delayMillis = 85, easing = FastOutSlowInEasing))
+                                .togetherWith(fadeOut(animationSpec = tween(150, easing = FastOutSlowInEasing)))
                         }
                     },
                     label = "rootNavigation"
@@ -489,11 +491,11 @@ private fun WeChatBottomBar(
     onSelect: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val items = listOf(
+    val items = remember { listOf(
         Triple("HOME", android.R.drawable.ic_menu_view, "Home"),
         Triple("REPORTS", android.R.drawable.ic_menu_agenda, "Reports"),
         Triple("SETTINGS", android.R.drawable.ic_menu_manage, "Settings")
-    )
+    ) }
     val selectedIndex = items.indexOfFirst { it.first == selected }.coerceAtLeast(0)
     var dragX by remember { mutableFloatStateOf(0f) }
     var barWidthPx by remember { mutableIntStateOf(1) }
@@ -535,21 +537,21 @@ private fun WeChatBottomBar(
             ) {
                 items.forEach { (key, icon, label) ->
                     val isSelected = selected == key
-                    val selectedScale by animateFloatAsState(
-                        targetValue = if (isSelected) 1.04f else 1f,
-                        animationSpec = tween(165),
-                        label = "bottomNavScale"
-                    )
+                    // Never scale/rebuild nav icons on selection; only the selection pill fades.
+                    // This avoids the visual flash observed while rapidly changing tabs.
+                    val interactionSource = remember(key) { MutableInteractionSource() }
                     val selectedTint by animateColorAsState(
                         targetValue = if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
-                        animationSpec = tween(210),
-                        label = "bottomNavTint"
+                        animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing),
+                        label = "bottomNavPillTint"
                     )
                     Column(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxHeight()
-                            .clickable { onSelect(key) },
+                            .clickable(interactionSource = interactionSource, indication = null) {
+                                if (!isSelected) onSelect(key)
+                            },
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center
                     ) {
@@ -560,8 +562,8 @@ private fun WeChatBottomBar(
                             Icon(
                                 painter = painterResource(icon),
                                 contentDescription = label,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp).size(22.dp).scale(selectedScale),
-                                tint = if (isSelected) MaterialTheme.colorScheme.primary else Color(0xFF94A3B8)
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp).size(22.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                         Spacer(Modifier.height(2.dp))
@@ -1945,7 +1947,8 @@ private fun MainScreen(
                     // the animation direction.
                     // Cross-fade avoids translating full Reports/Cell Info trees at once.
                     // Draw a soft fade instead of a two-screen slide during navigation.
-                    fadeIn(tween(155)).togetherWith(fadeOut(tween(100)))
+                    fadeIn(tween(durationMillis = 260, delayMillis = 85, easing = FastOutSlowInEasing))
+                        .togetherWith(fadeOut(tween(durationMillis = 150, easing = FastOutSlowInEasing)))
                 },
                 label = "mainTabs",
                 modifier = Modifier
@@ -3886,14 +3889,14 @@ private fun SettingsScreen(
             transitionSpec = {
                 when {
                     initialState == "root" && targetState != "root" ->
-                        (slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(300)) + fadeIn(tween(220)))
-                            .togetherWith(slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(300)) + fadeOut(tween(180)))
+                        (slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(340, easing = FastOutSlowInEasing)) + fadeIn(tween(275, easing = FastOutSlowInEasing)))
+                            .togetherWith(slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(340, easing = FastOutSlowInEasing)) + fadeOut(tween(215, easing = FastOutSlowInEasing)))
                     initialState != "root" && targetState == "root" ->
-                        (slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Right, tween(300)) + fadeIn(tween(220)))
-                            .togetherWith(slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Right, tween(300)) + fadeOut(tween(180)))
+                        (slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Right, tween(340, easing = FastOutSlowInEasing)) + fadeIn(tween(275, easing = FastOutSlowInEasing)))
+                            .togetherWith(slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Right, tween(340, easing = FastOutSlowInEasing)) + fadeOut(tween(215, easing = FastOutSlowInEasing)))
                     else ->
-                        (slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(300)) + fadeIn(tween(220)))
-                            .togetherWith(slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(300)) + fadeOut(tween(180)))
+                        (slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(340, easing = FastOutSlowInEasing)) + fadeIn(tween(275, easing = FastOutSlowInEasing)))
+                            .togetherWith(slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(340, easing = FastOutSlowInEasing)) + fadeOut(tween(215, easing = FastOutSlowInEasing)))
                 }
             },
             label = "settingsNavigation",

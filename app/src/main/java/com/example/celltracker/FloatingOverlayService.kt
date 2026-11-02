@@ -374,8 +374,8 @@ class FloatingOverlayService : Service() {
         val taskInput = EditText(this).apply {
             hint = "Task name"
             setText(prefs.getString(KEY_LAST_TASK, "").orEmpty())
-            setTextColor(Color.WHITE)
-            setHintTextColor(Color.LTGRAY)
+            setTextColor(OverlayStyleV130.textColor(this@FloatingOverlayService))
+            setHintTextColor(OverlayStyleV130.secondaryTextColor(this@FloatingOverlayService))
             setSingleLine(true)
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
             setPadding(dp(8), dp(4), dp(8), dp(4))
@@ -383,6 +383,7 @@ class FloatingOverlayService : Service() {
         panel.addView(taskInput, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(48)))
 
         val scopeButton = Button(this)
+        OverlayStyleV130.button(this, scopeButton)
         val targetTitle = textView(13f, true)
         val simButtons = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
@@ -393,6 +394,7 @@ class FloatingOverlayService : Service() {
             sims.forEach { sim ->
                 val selected = sim.subscriptionId == selectedSub
                 simButtons.addView(Button(this).apply {
+                    OverlayStyleV130.button(this@FloatingOverlayService, this)
                     isAllCaps = false
                     text = "${if (selected) "✓ " else ""}SIM ${sim.simSlotIndex + 1} · ${sim.servingCell.operator.ifBlank { "--" }}"
                     setOnClickListener { selectedSub = sim.subscriptionId; redraw() }
@@ -414,12 +416,12 @@ class FloatingOverlayService : Service() {
         val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         actions.addView(Button(this).apply {
             text = "Cancel"
-            isAllCaps = false
+            OverlayStyleV130.button(this@FloatingOverlayService, this, destructive = true)
             setOnClickListener { closeStartMenu() }
         }, LinearLayout.LayoutParams(0, dp(44), 1f).apply { marginEnd = dp(4) })
         actions.addView(Button(this).apply {
             text = "Start"
-            isAllCaps = false
+            OverlayStyleV130.button(this@FloatingOverlayService, this)
             setOnClickListener {
                 startRecordingFromOverlay(taskInput.text?.toString().orEmpty(), selectedSub, both)
                 closeStartMenu()
@@ -485,8 +487,8 @@ class FloatingOverlayService : Service() {
             setPadding(0,dp(8),0,dp(12))
         })
         val row=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL}
-        row.addView(Button(this).apply{text="Cancel";isAllCaps=false;setOnClickListener{closeCloseConfirmation()}},LinearLayout.LayoutParams(0,dp(48),1f).apply{marginEnd=dp(5)})
-        row.addView(Button(this).apply{text="Close";isAllCaps=false;setOnClickListener{
+        row.addView(Button(this).apply{text="Cancel";OverlayStyleV130.button(this@FloatingOverlayService,this);setOnClickListener{closeCloseConfirmation()}},LinearLayout.LayoutParams(0,dp(48),1f).apply{marginEnd=dp(5)})
+        row.addView(Button(this).apply{text="Close";OverlayStyleV130.button(this@FloatingOverlayService,this,true);setOnClickListener{
             val current=settingsRepository.load();settingsRepository.save(current.copy(floatingWindowEnabled=false))
             closeCloseConfirmation();closeIssueMenu();closeStartMenu();stopSelf()
         }},LinearLayout.LayoutParams(0,dp(48),1f).apply{marginStart=dp(5)})
@@ -526,13 +528,13 @@ class FloatingOverlayService : Service() {
         settings.issueTypes.forEach { issue ->
             scrollContent.addView(Button(this).apply {
                 text = issue
-                isAllCaps = false
+                OverlayStyleV130.button(this@FloatingOverlayService, this)
                 setOnClickListener { submitMark(issue); closeIssueMenu() }
             }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(44)))
         }
         scrollContent.addView(Button(this).apply {
             text = "Cancel"
-            isAllCaps = false
+            OverlayStyleV130.button(this@FloatingOverlayService, this, true)
             setOnClickListener { closeIssueMenu() }
         }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(44)))
         panel.addView(ScrollView(this).apply { addView(scrollContent) }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(330)))
@@ -603,7 +605,7 @@ class FloatingOverlayService : Service() {
 
     private fun textView(sizeSp: Float, bold: Boolean) = TextView(this).apply {
         textSize = sizeSp
-        setTextColor(Color.WHITE)
+        setTextColor(OverlayStyleV130.textColor(this@FloatingOverlayService))
         if (bold) setTypeface(typeface, android.graphics.Typeface.BOLD)
         gravity = Gravity.CENTER_VERTICAL
         setPadding(dp(2), dp(2), dp(2), dp(2))
