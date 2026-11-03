@@ -115,7 +115,7 @@ object ManualStallReportV130 {
     }
     fun save(context: Context, kind: ManualStallKindV130, task: String, role: String, startMs: Long,
              endMs: Long, events: List<ManualStallEventV130>, operator: String, rat: String, band: String,
-             pci: String, rsrp: String, sinr: String, appVersion: String, origin: String = "MANUAL_STALL_TAP"): List<Uri> {
+             pci: String, rsrp: String, sinr: String, appVersion: String, origin: String = "MANUAL_STALL_TAP", reviewAudit: List<List<String>> = emptyList()): List<Uri> {
         val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date(startMs))
         val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(startMs))
         val cleanTask = task.replace(Regex("[^A-Za-z0-9_-]"), "_").take(48).ifBlank { "Test" }
@@ -131,7 +131,9 @@ object ManualStallReportV130 {
         val csv = rows.joinToString("\n") { it.joinToString(",", transform=::csvCell) }.toByteArray(Charsets.UTF_8)
         val summary = listOf(listOf("Field","Value"), listOf("Scenario",kind.label), listOf("Task",task),listOf("Device Role",role), listOf("Device Model",device), listOf("App Version",appVersion),listOf("Test Start (ms)",startMs.toString()),listOf("Test End (ms)",endMs.toString()),listOf("Test Duration (s)",String.format(Locale.US,"%.3f",durationMs/1000.0)),listOf("Stall Count",events.size.toString()),listOf("Total Stall Duration (s)",String.format(Locale.US,"%.3f",totalMs/1000.0)),listOf("Stall Ratio (%)",String.format(Locale.US,"%.3f",totalMs*100.0/durationMs)),listOf("Operator",operator),listOf("RAT",rat), listOf("Band",band),listOf("PCI",pci),listOf("RSRP",rsrp),listOf("SINR",sinr),listOf("Source",origin))
         val raw = listOf(listOf("Event","StartMs","EndMs","DurationMs","DurationSec")) + events.mapIndexed { i,e -> listOf((i+1).toString(),e.startMs.toString(),e.endMs.toString(),e.durationMs.toString(),String.format(Locale.US,"%.3f",e.durationMs/1000.0)) }
-        val xlsx = workbook(listOf("Summary" to summary, "Stall Events" to raw))
+        val auditSheets = if (reviewAudit.isEmpty()) emptyList() else listOf("Review Audit" to
+            (listOf(listOf("Event", "Original T0 ms", "Original T1 ms", "Reviewed T0 ms", "Reviewed T1 ms", "Status")) + reviewAudit))
+        val xlsx = workbook(listOf("Summary" to summary, "Stall Events" to raw) + auditSheets)
         val content = listOf(Triple("$base.csv","text/csv",csv), Triple("$base.xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",xlsx))
         val result = mutableListOf<Uri>()
         try {

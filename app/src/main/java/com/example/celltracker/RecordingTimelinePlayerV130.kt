@@ -326,6 +326,11 @@ class RecordingTimelinePlayerV130 : Activity() {
                 videoParams.height=target.coerceIn(d(185),maximum.coerceAtLeast(d(185)))
                 frame.layoutParams=videoParams
             }
+            val seekWall = intent.getLongExtra("review_event_start_wall_ms", -1L)
+            if (seekWall >= 0L) {
+                val offset = (seekWall - session.wallAt(0L) - 2000L).coerceIn(0L, session.videoDurationMs)
+                seekTo(offset.coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
+            }
             videoView.start()
             VideoDiagnosticLogV130.event(this,"Prepared video ${w}x$h")
         }
@@ -363,6 +368,10 @@ class RecordingTimelinePlayerV130 : Activity() {
         super.onDestroy()
     }
     companion object {
-        fun open(context: Context) { context.startActivity(Intent(context,RecordingTimelinePlayerV130::class.java)) }
+        fun open(context: Context, eventStartWallMs: Long? = null) {
+            context.startActivity(Intent(context,RecordingTimelinePlayerV130::class.java).apply {
+                eventStartWallMs?.let { putExtra("review_event_start_wall_ms",it) }
+            })
+        }
     }
 }

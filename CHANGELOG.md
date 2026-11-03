@@ -1,3 +1,10 @@
+## Preview 27 — Per-Stall Review & Calibration (versionCode 278)
+- PUBG/Tamasha saved reports show individual stall cards: original T0/T1, reviewed T0/T1, video review, edit, invalidate/restore.
+- Millisecond time edits persist per source report URI, invalidate review confirmation, and require reconfirmation before export.
+- Reviewed CSV/XLSX is a new export. XLSX adds a Review Audit sheet retaining original and adjusted event times and validity. Original XLSX and MP4 remain unchanged.
+- Video review can request seeking near the selected stall, using estimated recording time mapping; not frame-accurate. Requires the correct video to be linked.
+- Source-only preview: no Android SDK/Gradle build or real-device validation completed.
+
 ## Preview 26 — CompileFix (versionCode 277)
 - Fix ManualStallTestV130 overlay confirmation TextView/Button text property shadowing.
 - Fix illegal return inside overlay-start lambda using labeled return.

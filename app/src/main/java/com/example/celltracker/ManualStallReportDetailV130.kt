@@ -4,6 +4,9 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
+import org.json.JSONArray
+import org.json.JSONObject
+import java.security.MessageDigest
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -114,6 +117,44 @@ internal fun ManualStallReportDetailScreenV130(
             }.onFailure { videoMessage = "Unable to read video: ${it.message}" }
         }
     }
+    // Per-report review is stored separately: never rewrite the original XLSX.
+    val reviewPrefs = remember(context) { context.getSharedPreferences("ct_manual_stall_reviews_v130", Context.MODE_PRIVATE) }
+    val reviewKey = remember(uri) { "stall_" + MessageDigest.getInstance("SHA-256").digest(uri.toString().toByteArray()).joinToString("") { "%02x".format(it) } }
+    data class EventEdit(val originalStart: Long, val originalEnd: Long, val start: Long, val end: Long, val valid: Boolean)
+    val edits = remember(uri) { mutableStateMapOf<Int, EventEdit>() }
+    var reviewConfirmed by remember(uri) { mutableStateOf(false) }
+    var reviewMessage by remember(uri) { mutableStateOf("") }
+    var editingIndex by remember(uri) { mutableIntStateOf(-1) }
+    var editingStart by remember(uri) { mutableStateOf("") }
+    var editingEnd by remember(uri) { mutableStateOf("") }
+    var exportBusy by remember(uri) { mutableStateOf(false) }
+    val clockFormat = remember { SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault()) }
+    fun parseEventTime(text: String): Long? = runCatching { clockFormat.parse(text.trim())?.time }.getOrNull()
+    fun displayEventTime(ms: Long): String = clockFormat.format(Date(ms))
+    LaunchedEffect(uri, result) {
+        val detail = result?.getOrNull() ?: return@LaunchedEffect
+        edits.clear()
+        val saved = runCatching { JSONObject(reviewPrefs.getString(reviewKey, "{}") ?: "{}") }.getOrDefault(JSONObject())
+        val savedItems = saved.optJSONArray("events")
+        detail.events.forEachIndexed { index, cells ->
+            val a = cells.getOrNull(1)?.toLongOrNull() ?: return@forEachIndexed
+            val b = cells.getOrNull(2)?.toLongOrNull() ?: return@forEachIndexed
+            val stored = savedItems?.optJSONObject(index)
+            edits[index] = if (stored != null && stored.optLong("originalStart") == a && stored.optLong("originalEnd") == b) {
+                EventEdit(a, b, stored.optLong("start", a), stored.optLong("end", b), stored.optBoolean("valid", true))
+            } else EventEdit(a, b, a, b, true)
+        }
+        reviewConfirmed = saved.optBoolean("confirmed", false) && edits.isNotEmpty()
+    }
+    fun persistReview(confirmed: Boolean) {
+        val arr = JSONArray()
+        edits.toSortedMap().forEach { (_, e) -> arr.put(JSONObject().apply {
+            put("originalStart",e.originalStart);put("originalEnd",e.originalEnd)
+            put("start",e.start);put("end",e.end);put("valid",e.valid)
+        }) }
+        reviewPrefs.edit().putString(reviewKey,JSONObject().put("events",arr).put("confirmed",confirmed).toString()).apply()
+        reviewConfirmed=confirmed
+    }
     val fields = result?.getOrNull()?.fields.orEmpty()
     val isPending = report == null
     val prefs = remember(context) { context.getSharedPreferences("ct_recording_timeline", Context.MODE_PRIVATE) }
@@ -176,21 +217,77 @@ internal fun ManualStallReportDetailScreenV130(
                 }
             }
             if (!isPending && result?.isSuccess == true) {
+                val originalEvents = result?.getOrNull()?.events.orEmpty()
+                val validEvents = edits.values.filter { it.valid && it.end > it.start }
+                val total = validEvents.sumOf { it.end - it.start }
+                val testDuration = ((fields["Test End (ms)"]?.toLongOrNull() ?: 0L) - (fields["Test Start (ms)"]?.toLongOrNull() ?: 0L)).coerceAtLeast(1L)
                 Card(shape=RoundedCornerShape(25.dp),colors=CardDefaults.cardColors(containerColor=androidx.compose.ui.graphics.Color.Transparent)) {
-                    Column(Modifier.fillMaxWidth().background(gradientCardBrushV130()).padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
-                        Text("Stall Events",style=MaterialTheme.typography.titleMedium)
-                        val events=result?.getOrNull()?.events.orEmpty()
-                        if(events.isEmpty()) Text("No completed stall events",style=MaterialTheme.typography.bodySmall)
-                        events.take(100).forEachIndexed { index,event ->
-                            val from=event.getOrNull(1)?.toLongOrNull()
-                            val to=event.getOrNull(2)?.toLongOrNull()
-                            val eventDuration=event.getOrNull(3)?.toDoubleOrNull()?.div(1000.0)
-                            val format=SimpleDateFormat("HH:mm:ss.SSS",Locale.getDefault())
-                            val interval=if(from!=null && to!=null) "${format.format(Date(from))} – ${format.format(Date(to))}" else "Time unavailable"
-                            Text("#${index+1} · $interval · ${if(eventDuration==null) "—" else "%.3f s".format(Locale.US,eventDuration)}",
-                                style=MaterialTheme.typography.bodySmall)
+                    Column(Modifier.fillMaxWidth().background(gradientCardBrushV130()).padding(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
+                        Text("Stall Event Review",style=MaterialTheme.typography.titleMedium)
+                        Text("Original: ${originalEvents.size} stalls · Reviewed: ${validEvents.size} stalls · ${"%.3f".format(Locale.US,total/1000.0)} s · ${"%.3f".format(Locale.US,100.0*total/testDuration)}%",style=MaterialTheme.typography.bodySmall)
+                        originalEvents.forEachIndexed { index, _ ->
+                            val e = edits[index] ?: return@forEachIndexed
+                            Column(Modifier.fillMaxWidth().background(gradientCardBrushV130(),RoundedCornerShape(18.dp)).padding(12.dp),verticalArrangement=Arrangement.spacedBy(7.dp)) {
+                                Text("Stall #${index+1} · ${if(e.valid) "Valid" else "Invalid"}",style=MaterialTheme.typography.titleSmall)
+                                Text("Original T0 → T1",style=MaterialTheme.typography.labelSmall)
+                                Text("${displayEventTime(e.originalStart)} → ${displayEventTime(e.originalEnd)}",style=MaterialTheme.typography.bodySmall)
+                                Text("Reviewed T0 → T1",style=MaterialTheme.typography.labelSmall)
+                                Text("${displayEventTime(e.start)} → ${displayEventTime(e.end)} · ${"%.3f".format(Locale.US,(e.end-e.start)/1000.0)} s",style=MaterialTheme.typography.bodySmall)
+                                Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                                    Box(Modifier.weight(1f)) { GradientActionV130("REVIEW VIDEO",{
+                                        // The player uses the recording currently linked to this report.
+                                        RecordingTimelinePlayerV130.open(context,e.start)
+                                    },Modifier.fillMaxWidth(),primary=false) }
+                                    Box(Modifier.weight(1f)) { GradientActionV130("EDIT T0/T1",{
+                                        editingIndex=index;editingStart=displayEventTime(e.start);editingEnd=displayEventTime(e.end)
+                                    },Modifier.fillMaxWidth(),primary=false) }
+                                }
+                                GradientActionV130(if(e.valid) "MARK INVALID" else "RESTORE VALID",{
+                                    edits[index]=e.copy(valid=!e.valid);persistReview(false)
+                                },Modifier.fillMaxWidth(),primary=false)
+                            }
                         }
+                        GradientActionV130(if(reviewConfirmed) "REVIEW CONFIRMED" else "CONFIRM REVIEW",{
+                            if(edits.size==originalEvents.size && edits.values.all { it.end>it.start }) {
+                                persistReview(true);reviewMessage="Review confirmed. Export will create new reviewed files; originals remain unchanged."
+                            } else reviewMessage="Some events have invalid time ranges."
+                        },Modifier.fillMaxWidth())
+                        GradientActionV130(if(exportBusy) "EXPORTING..." else "EXPORT REVIEWED REPORT",{
+                            if(!reviewConfirmed || exportBusy) { reviewMessage="Confirm review before exporting." }
+                            else {
+                                val from=fields["Test Start (ms)"]?.toLongOrNull()
+                                val to=fields["Test End (ms)"]?.toLongOrNull()
+                                if(from==null || to==null || to<=from) reviewMessage="Invalid test time range."
+                                else {
+                                    exportBusy=true
+                                    runCatching {
+                                        val valid = edits.toSortedMap().values.filter { it.valid }.map { ManualStallEventV130(it.start,it.end) }
+                                        ManualStallReportV130.save(context,kind,fields["Task"].orEmpty(),fields["Device Role"].orEmpty(),from,to,valid,
+                                            fields["Operator"].orEmpty(),fields["RAT"].orEmpty(),fields["Band"].orEmpty(),fields["PCI"].orEmpty(),
+                                            fields["RSRP"].orEmpty(),fields["SINR"].orEmpty(),fields["App Version"].orEmpty(),"MANUAL_REVIEW_CORRECTED",
+                                            edits.toSortedMap().map { (i,e) -> listOf((i+1).toString(),e.originalStart.toString(),e.originalEnd.toString(),e.start.toString(),e.end.toString(),if(e.valid) "VALID" else "INVALID") })
+                                    }.onSuccess { reviewMessage="Reviewed CSV + XLSX exported. Original files preserved." }
+                                        .onFailure { reviewMessage="Export failed: ${it.message}" }
+                                    exportBusy=false
+                                }
+                            }
+                        },Modifier.fillMaxWidth())
+                        if(reviewMessage.isNotBlank()) Text(reviewMessage,style=MaterialTheme.typography.bodySmall)
                     }
+                }
+                if(editingIndex>=0) {
+                    AlertDialog(onDismissRequest={editingIndex=-1},title={Text("Edit Stall #${editingIndex+1}")},
+                        text={Column(verticalArrangement=Arrangement.spacedBy(10.dp)) {
+                            Text("Format: yyyy-MM-dd HH:mm:ss.SSS",style=MaterialTheme.typography.bodySmall)
+                            OutlinedTextField(editingStart,{editingStart=it},label={Text("T0 · Start")},singleLine=true)
+                            OutlinedTextField(editingEnd,{editingEnd=it},label={Text("T1 · End")},singleLine=true)
+                        }},confirmButton={TextButton(onClick={
+                            val a=parseEventTime(editingStart);val b=parseEventTime(editingEnd)
+                            val old=edits[editingIndex]
+                            if(a!=null && b!=null && b>a && old!=null) {
+                                edits[editingIndex]=old.copy(start=a,end=b);persistReview(false);editingIndex=-1
+                            } else reviewMessage="Invalid T0/T1. End must be later than start."
+                        }) { Text("SAVE") }},dismissButton={TextButton(onClick={editingIndex=-1}) { Text("CANCEL") }})
                 }
             }
             Card(shape=RoundedCornerShape(25.dp), colors=CardDefaults.cardColors(containerColor=androidx.compose.ui.graphics.Color.Transparent)) {
