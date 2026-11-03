@@ -1,3 +1,8 @@
+## Preview 26 — CompileFix (versionCode 277)
+- Fix ManualStallTestV130 overlay confirmation TextView/Button text property shadowing.
+- Fix illegal return inside overlay-start lambda using labeled return.
+- No other feature changes. Full Android Gradle build and device validation pending.
+
 ## Preview 22 (versionCode 273)
 - Home / Cell Info root page fade-in and fade-out transitions: 580 ms.
 - Recording Review retains a single EXPORT REPORT action; Summary retains OPEN EXCEL REPORT as a viewer action, not a second export.
@@ -1662,10 +1667,3 @@ Build note: local assembleDebug could not run because this environment cannot re
 - PUBG/Tamasha setup opens as a modal over Home rather than replacing the root page.
 - Existing test-specific options and reports remain intact.
 - Other test setup dialogs have NOT yet been fully standardized; this is an incremental preview.
-
-### v1.3.0 Preview 25 (versionCode 276) — Manual overlay + screen recording
-- PUBG/Tamasha manual overlay defaults to simultaneous CellTracker MediaProjection screen recording and floating START/END stall controls. Optional checkbox disables video recording without disabling overlay markers.
-- Request screen capture consent before launching the manual overlay; cancellation does not silently start the overlay-only test.
-- Manual test FINISH/CANCEL stops the recording started by that manual test, while preserving independent video-only behavior.
-- Recording Review now requires explicit CONFIRM REVIEW after START/END annotation edits and before EXPORT REPORT; editing marks invalidates the confirmation.
-- Source preview only: full Gradle build and device regression remain necessary.

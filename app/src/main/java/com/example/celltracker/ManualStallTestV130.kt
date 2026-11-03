@@ -271,9 +271,9 @@ class ManualStallServiceV130 : Service() {
         val toggle=Button(this).apply {this.text="START";this.isAllCaps=false;this.textSize=12f;this.setSingleLine(true);OverlayStyleV130.button(this@ManualStallServiceV130,this);setOnClickListener { command(this@ManualStallServiceV130,ACTION_TOGGLE) }};toggleButton=toggle
         val finish=Button(this).apply{this.text="FINISH";this.isAllCaps=false;this.textSize=12f;this.setSingleLine(true);OverlayStyleV130.button(this@ManualStallServiceV130,this,true)}
         val confirmPanel=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL;visibility=View.GONE }
-        val confirmText=TextView(this).apply {text="Finish this test? Recording will stop.";textSize=12f;setTextColor(OverlayStyleV130.textColor(this@ManualStallServiceV130))}
-        val cancel=Button(this).apply {text="CANCEL";isAllCaps=false;setSingleLine(true);OverlayStyleV130.button(this@ManualStallServiceV130,this);setOnClickListener{confirmPanel.visibility=View.GONE}}
-        val confirm=Button(this).apply {text="CONFIRM";isAllCaps=false;setSingleLine(true);OverlayStyleV130.button(this@ManualStallServiceV130,this,true);setOnClickListener{confirmPanel.visibility=View.GONE;command(this@ManualStallServiceV130,ACTION_FINISH)}}
+        val confirmText=TextView(this).apply {this.text="Finish this test? Recording will stop.";textSize=12f;setTextColor(OverlayStyleV130.textColor(this@ManualStallServiceV130))}
+        val cancel=Button(this).apply {this.text="CANCEL";isAllCaps=false;setSingleLine(true);OverlayStyleV130.button(this@ManualStallServiceV130,this);setOnClickListener{confirmPanel.visibility=View.GONE}}
+        val confirm=Button(this).apply {this.text="CONFIRM";isAllCaps=false;setSingleLine(true);OverlayStyleV130.button(this@ManualStallServiceV130,this,true);setOnClickListener{confirmPanel.visibility=View.GONE;command(this@ManualStallServiceV130,ACTION_FINISH)}}
         val confirmButtons=LinearLayout(this).apply {orientation=LinearLayout.HORIZONTAL;addView(cancel,LinearLayout.LayoutParams(0,px(44),1f));addView(confirm,LinearLayout.LayoutParams(0,px(44),1f))}
         confirmPanel.addView(confirmText);confirmPanel.addView(confirmButtons)
         finish.setOnClickListener{confirmText.text=if(openAtMs!=null)"A stall is still open and will be excluded. Finish test?" else "Finish this test? Recording will stop.";confirmPanel.visibility=View.VISIBLE}
@@ -413,10 +413,10 @@ fun ManualStallScreenV130(kind: ManualStallKindV130, liveState: AppState, onBack
         }
     }
     val cell=liveState.sims.firstOrNull { it.subscriptionId==liveState.selectedSubscriptionId }?.servingCell ?: liveState.sims.firstOrNull()?.servingCell
-    startOverlayHolder[0] = { ownsRecording ->
+    startOverlayHolder[0] = overlayStart@{ ownsRecording ->
         if(!permissionReady) {
             permissionLauncher.launch(Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,Uri.parse("package:${context.packageName}")))
-            return
+            return@overlayStart
         }
         val intent=Intent(context,ManualStallServiceV130::class.java).apply {
             action=ManualStallServiceV130.ACTION_START
