@@ -331,7 +331,8 @@ class MainActivity : ComponentActivity() {
                     showWhatsAppSend && !whatsappPreparing -> RootDestination.WhatsAppSend
                     showPingTest && !pingPreparing -> RootDestination.PingTest
                     showDeviceLogs -> RootDestination.DeviceLogs
-                    showManualStallTest != null -> RootDestination.ManualStall
+                    // Manual stall setup stays on Home and opens in a modal like other tests.
+                    // showManualStallTest != null -> RootDestination.ManualStall
                     showThroughputTest && !throughputPreparing -> RootDestination.Throughput
                     showSettings -> RootDestination.Settings
                     else -> RootDestination.Main
@@ -447,8 +448,14 @@ MainScreen(
                     }
                 }
                 showManualStallTest?.let { kind ->
-                    SoftPageRevealV130(revealKey = "manual-test-${kind.name}", modifier = Modifier.fillMaxSize()) {
-                        ManualStallScreenV130(kind, state, onBack = { showManualStallTest = null })
+                    Dialog(onDismissRequest = { showManualStallTest = null }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(0.94f).fillMaxHeight(0.90f),
+                            shape = RoundedCornerShape(28.dp),
+                            color = Color.Transparent
+                        ) {
+                            ManualStallScreenV130(kind, state, onBack = { showManualStallTest = null })
+                        }
                     }
                 }
                 if (showThroughputTest) {

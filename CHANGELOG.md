@@ -1654,3 +1654,18 @@ Build note: local assembleDebug could not run because this environment cannot re
 - Summary: explicit MP4 selection, user-confirmed recording start, review access; no automatic linking to unrelated latest video.
 - Soft page reveal increased from 320ms to 390ms; existing Home test-card gradients retained.
 - Preview only; full Gradle build and device verification pending.
+
+## Preview 24 (versionCode 275) - Manual stall controls and setup dialog
+- PUBG/Tamasha overlay displays elapsed time and accumulated stall duration with milliseconds, updating at 50 ms display cadence.
+- FINISH requires explicit confirmation; cancelling does not stop the test. Unfinished stall warning included.
+- Increased spacing between overlay START/END and FINISH.
+- PUBG/Tamasha setup opens as a modal over Home rather than replacing the root page.
+- Existing test-specific options and reports remain intact.
+- Other test setup dialogs have NOT yet been fully standardized; this is an incremental preview.
+
+### v1.3.0 Preview 25 (versionCode 276) — Manual overlay + screen recording
+- PUBG/Tamasha manual overlay defaults to simultaneous CellTracker MediaProjection screen recording and floating START/END stall controls. Optional checkbox disables video recording without disabling overlay markers.
+- Request screen capture consent before launching the manual overlay; cancellation does not silently start the overlay-only test.
+- Manual test FINISH/CANCEL stops the recording started by that manual test, while preserving independent video-only behavior.
+- Recording Review now requires explicit CONFIRM REVIEW after START/END annotation edits and before EXPORT REPORT; editing marks invalidates the confirmation.
+- Source preview only: full Gradle build and device regression remain necessary.

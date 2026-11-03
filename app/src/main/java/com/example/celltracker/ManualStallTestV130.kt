@@ -170,6 +170,7 @@ class ManualStallServiceV130 : Service() {
         const val ACTION_FINISH="com.example.celltracker.stall.FINISH"
         const val ACTION_CANCEL="com.example.celltracker.stall.CANCEL"
         const val EXTRA_KIND="kind";const val EXTRA_ROLE="role";const val EXTRA_TASK="task"
+        const val EXTRA_OWN_RECORDING="ownRecording"
         const val EXTRA_OPERATOR="operator";const val EXTRA_RAT="rat";const val EXTRA_BAND="band";const val EXTRA_PCI="pci";const val EXTRA_RSRP="rsrp";const val EXTRA_SINR="sinr";const val EXTRA_VERSION="version"
         fun command(context:Context,action:String) { context.startService(Intent(context,ManualStallServiceV130::class.java).setAction(action)) }
     }
@@ -179,10 +180,11 @@ class ManualStallServiceV130 : Service() {
     private val events=mutableListOf<ManualStallEventV130>()
     private val work=CoroutineScope(SupervisorJob()+Dispatchers.Main.immediate)
     private var saving=false
+    private var ownsScreenRecording=false
     private var wm:WindowManager?=null;private var overlay:View?=null;private var params:WindowManager.LayoutParams?=null
     private var statusText:TextView?=null;private var toggleButton:Button?=null
     private val handler=Handler(Looper.getMainLooper())
-    private val ticker=object:Runnable {override fun run(){ drawStatus(); if(startMs>0)handler.postDelayed(this,1000L) }}
+    private val ticker=object:Runnable {override fun run(){ drawStatus(); if(startMs>0)handler.postDelayed(this,50L) }}
     override fun onBind(intent:Intent?)=null
     override fun onStartCommand(intent:Intent?,flags:Int,startId:Int):Int {
         try {
@@ -192,6 +194,7 @@ class ManualStallServiceV130 : Service() {
                     kind=runCatching { ManualStallKindV130.valueOf(intent.getStringExtra(EXTRA_KIND).orEmpty()) }.getOrDefault(ManualStallKindV130.LIVE)
                     role=intent.getStringExtra(EXTRA_ROLE).orEmpty().ifBlank { "DUT1" }; task=intent.getStringExtra(EXTRA_TASK).orEmpty().ifBlank{kind.label}
                     operator=intent.getStringExtra(EXTRA_OPERATOR).orEmpty();rat=intent.getStringExtra(EXTRA_RAT).orEmpty();band=intent.getStringExtra(EXTRA_BAND).orEmpty();pci=intent.getStringExtra(EXTRA_PCI).orEmpty();rsrp=intent.getStringExtra(EXTRA_RSRP).orEmpty();sinr=intent.getStringExtra(EXTRA_SINR).orEmpty();version=intent.getStringExtra(EXTRA_VERSION).orEmpty()
+                    ownsScreenRecording=intent.getBooleanExtra(EXTRA_OWN_RECORDING,false)
                     startMs=System.currentTimeMillis();startedElapsed=SystemClock.elapsedRealtime()
                     showNotification();addOverlay();publish("Recording · use START STALL when buffering begins")
                     handler.post(ticker)
@@ -207,6 +210,10 @@ class ManualStallServiceV130 : Service() {
                     // An unfinished interval is never silently counted as a valid stall.
                     val discarded=openAtMs!=null;openAtMs=null;openElapsed=null
                     val actualEnd=System.currentTimeMillis()
+                    if (ownsScreenRecording) {
+                        startService(Intent(this,TestScreenRecordingService::class.java).apply { action=TestScreenRecordingService.STOP })
+                        ownsScreenRecording=false
+                    }
                     val finalized=events.toList()
                     publish("Saving CSV + Excel…")
                     work.launch {
@@ -224,7 +231,12 @@ class ManualStallServiceV130 : Service() {
                         }
                     }
                 }
-                ACTION_CANCEL -> if(!saving) { publish("Test cancelled; no report saved",running=false);close() }
+                ACTION_CANCEL -> if(!saving) {
+                    if (ownsScreenRecording) {
+                        startService(Intent(this,TestScreenRecordingService::class.java).apply { action=TestScreenRecordingService.STOP })
+                        ownsScreenRecording=false
+                    }
+                    publish("Test cancelled; no report saved",running=false);close() }
             }
         } catch (e:Exception) { publish("Error: ${e.message}"); if(startMs>0L)drawStatus() }
         return START_NOT_STICKY
@@ -244,9 +256,9 @@ class ManualStallServiceV130 : Service() {
         ManualStallStatusV130.state.value=ManualStallProgressV130(running,kind,events.size,events.sumOf{it.durationMs},openAtMs,message,lastReport)
     }
     private fun drawStatus() {
-        val elapsed=(SystemClock.elapsedRealtime()-startedElapsed).coerceAtLeast(0L)/1000L
+        val elapsed=(SystemClock.elapsedRealtime()-startedElapsed).coerceAtLeast(0L)
         val sum=events.sumOf{it.durationMs} + if(openElapsed!=null)(SystemClock.elapsedRealtime()-openElapsed!!).coerceAtLeast(0L) else 0L
-        statusText?.text="${kind.application}  ${elapsed/60}:${(elapsed%60).toString().padStart(2,'0')}\nStalls ${events.size} · ${String.format(Locale.US,"%.1f",sum/1000.0)}s"
+        statusText?.text="${kind.application}  ${elapsed/60000}:${((elapsed/1000)%60).toString().padStart(2,'0')}.${(elapsed%1000).toString().padStart(3,'0')}\nStalls ${events.size} · ${String.format(Locale.US,"%.3f",sum/1000.0)}s"
         toggleButton?.text=if(openAtMs!=null)"END" else "START"
     }
     private fun addOverlay() {
@@ -257,9 +269,16 @@ class ManualStallServiceV130 : Service() {
         val header=TextView(this).apply {text="⋮⋮  CellTracker · Move";textSize=12f;setTextColor(OverlayStyleV130.secondaryTextColor(this@ManualStallServiceV130));setPadding(px(3),0,px(3),px(5))}
         val text=TextView(this).apply {textSize=13f;setTextColor(OverlayStyleV130.textColor(this@ManualStallServiceV130));setPadding(px(3),0,px(3),px(7))};statusText=text
         val toggle=Button(this).apply {this.text="START";this.isAllCaps=false;this.textSize=12f;this.setSingleLine(true);OverlayStyleV130.button(this@ManualStallServiceV130,this);setOnClickListener { command(this@ManualStallServiceV130,ACTION_TOGGLE) }};toggleButton=toggle
-        val finish=Button(this).apply{this.text="FINISH";this.isAllCaps=false;this.textSize=12f;this.setSingleLine(true);OverlayStyleV130.button(this@ManualStallServiceV130,this,true);setOnClickListener{command(this@ManualStallServiceV130,ACTION_FINISH)}}
-        val buttons=LinearLayout(this).apply {orientation=LinearLayout.HORIZONTAL;addView(toggle,LinearLayout.LayoutParams(0,px(44),1f));addView(finish,LinearLayout.LayoutParams(0,px(44),1f))}
-        root.addView(header);root.addView(text);root.addView(buttons)
+        val finish=Button(this).apply{this.text="FINISH";this.isAllCaps=false;this.textSize=12f;this.setSingleLine(true);OverlayStyleV130.button(this@ManualStallServiceV130,this,true)}
+        val confirmPanel=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL;visibility=View.GONE }
+        val confirmText=TextView(this).apply {text="Finish this test? Recording will stop.";textSize=12f;setTextColor(OverlayStyleV130.textColor(this@ManualStallServiceV130))}
+        val cancel=Button(this).apply {text="CANCEL";isAllCaps=false;setSingleLine(true);OverlayStyleV130.button(this@ManualStallServiceV130,this);setOnClickListener{confirmPanel.visibility=View.GONE}}
+        val confirm=Button(this).apply {text="CONFIRM";isAllCaps=false;setSingleLine(true);OverlayStyleV130.button(this@ManualStallServiceV130,this,true);setOnClickListener{confirmPanel.visibility=View.GONE;command(this@ManualStallServiceV130,ACTION_FINISH)}}
+        val confirmButtons=LinearLayout(this).apply {orientation=LinearLayout.HORIZONTAL;addView(cancel,LinearLayout.LayoutParams(0,px(44),1f));addView(confirm,LinearLayout.LayoutParams(0,px(44),1f))}
+        confirmPanel.addView(confirmText);confirmPanel.addView(confirmButtons)
+        finish.setOnClickListener{confirmText.text=if(openAtMs!=null)"A stall is still open and will be excluded. Finish test?" else "Finish this test? Recording will stop.";confirmPanel.visibility=View.VISIBLE}
+        val buttons=LinearLayout(this).apply {orientation=LinearLayout.HORIZONTAL;addView(toggle,LinearLayout.LayoutParams(0,px(44),1f));addView(View(this@ManualStallServiceV130),LinearLayout.LayoutParams(px(12),px(1)));addView(finish,LinearLayout.LayoutParams(0,px(44),1f))}
+        root.addView(header);root.addView(text);root.addView(buttons);root.addView(confirmPanel)
         val lp=WindowManager.LayoutParams(px(285),WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,PixelFormat.TRANSLUCENT).apply {gravity=Gravity.TOP or Gravity.START;x=px(15);y=px(110)}
         var initialX=0;var initialY=0;var downX=0f;var downY=0f
@@ -292,6 +311,7 @@ fun ManualStallScreenV130(kind: ManualStallKindV130, liveState: AppState, onBack
     var version by remember(kind){mutableStateOf(ManualStallReportV130.installed(context,kind)?.second)}
     var history by remember(kind){mutableStateOf(ManualStallReportV130.history(context,kind))}
     val progress by ManualStallStatusV130.state.collectAsState()
+    var showFinishConfirmation by remember { mutableStateOf(false) }
     val active=progress.running && progress.kind==kind
     val scopeReady=android.provider.Settings.canDrawOverlays(context)
     var permissionReady by remember {mutableStateOf(scopeReady)}
@@ -299,6 +319,8 @@ fun ManualStallScreenV130(kind: ManualStallKindV130, liveState: AppState, onBack
         permissionReady=android.provider.Settings.canDrawOverlays(context)
     }
     var recordingOnly by rememberSaveable(kind) { mutableStateOf(false) }
+    var recordWithOverlay by rememberSaveable(kind) { mutableStateOf(true) }
+    var pendingOverlayStart by remember { mutableStateOf(false) }
     var videoActive by remember { mutableStateOf(TestScreenRecordingService.isRecording) }
     var lastVideoAvailable by remember { mutableStateOf(RecordingTimelineV130.last(context) != null) }
     val sessionPrefs = remember(context) { context.getSharedPreferences("ct_external_recording_session", Context.MODE_PRIVATE) }
@@ -349,6 +371,7 @@ fun ManualStallScreenV130(kind: ManualStallKindV130, liveState: AppState, onBack
             delay(900L)
         }
     }
+    val startOverlayHolder = remember { arrayOf<(Boolean)->Unit>({}) }
     val videoConsent = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val data = result.data
         if (result.resultCode == Activity.RESULT_OK && data != null) {
@@ -370,13 +393,27 @@ fun ManualStallScreenV130(kind: ManualStallKindV130, liveState: AppState, onBack
                 putExtra(TestScreenRecordingService.REVIEW_RSRP,captureCell?.rsrp.orEmpty())
                 putExtra(TestScreenRecordingService.REVIEW_SINR,captureCell?.sinr.orEmpty())
             })
-            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                ManualStallReportV130.openOrInstall(context, kind)
-            }, 850L)
-        } else Toast.makeText(context,"Recording permission cancelled",Toast.LENGTH_SHORT).show()
+            if (pendingOverlayStart) {
+                pendingOverlayStart=false
+                // The overlay test owns this recording and stops it on FINISH/CANCEL.
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    startOverlayHolder[0](true)
+                    ManualStallReportV130.openOrInstall(context,kind)
+                }, 650L)
+            } else {
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    ManualStallReportV130.openOrInstall(context,kind)
+                }, 850L)
+            }
+        } else {
+            if (pendingOverlayStart) {
+                pendingOverlayStart=false
+                Toast.makeText(context,"Screen recording not authorized; manual overlay not started",Toast.LENGTH_LONG).show()
+            } else Toast.makeText(context,"Recording permission cancelled",Toast.LENGTH_SHORT).show()
+        }
     }
     val cell=liveState.sims.firstOrNull { it.subscriptionId==liveState.selectedSubscriptionId }?.servingCell ?: liveState.sims.firstOrNull()?.servingCell
-    fun start() {
+    startOverlayHolder[0] = { ownsRecording ->
         if(!permissionReady) {
             permissionLauncher.launch(Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,Uri.parse("package:${context.packageName}")))
             return
@@ -386,13 +423,35 @@ fun ManualStallScreenV130(kind: ManualStallKindV130, liveState: AppState, onBack
             putExtra(ManualStallServiceV130.EXTRA_KIND,kind.name);putExtra(ManualStallServiceV130.EXTRA_ROLE,role);putExtra(ManualStallServiceV130.EXTRA_TASK,task.trim())
             putExtra(ManualStallServiceV130.EXTRA_OPERATOR,cell?.operator.orEmpty());putExtra(ManualStallServiceV130.EXTRA_RAT,cell?.displayRat.orEmpty());putExtra(ManualStallServiceV130.EXTRA_BAND,cell?.band.orEmpty());putExtra(ManualStallServiceV130.EXTRA_PCI,cell?.pci.orEmpty());putExtra(ManualStallServiceV130.EXTRA_RSRP,cell?.rsrp.orEmpty());putExtra(ManualStallServiceV130.EXTRA_SINR,cell?.sinr.orEmpty())
             putExtra(ManualStallServiceV130.EXTRA_VERSION,version.orEmpty())
+            putExtra(ManualStallServiceV130.EXTRA_OWN_RECORDING,ownsRecording)
         }
         ContextCompat.startForegroundService(context,intent)
     }
+    fun startManualTest() {
+        if (!permissionReady) {
+            permissionLauncher.launch(Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,Uri.parse("package:${context.packageName}")))
+            return
+        }
+        if (recordWithOverlay) {
+            pendingOverlayStart=true
+            val mgr=context.getSystemService(android.media.projection.MediaProjectionManager::class.java)
+            videoConsent.launch(mgr.createScreenCaptureIntent())
+        } else {
+            startOverlayHolder[0](false)
+            ManualStallReportV130.openOrInstall(context,kind)
+        }
+    }
+    if(showFinishConfirmation) AlertDialog(
+        onDismissRequest={showFinishConfirmation=false},
+        title={Text("Finish ${kind.application} test?")},
+        text={Text(if(progress.stallStartedMs!=null) "The current stall has not ended and will be excluded. Stop and save?" else "Stop the test and save its report?")},
+        confirmButton={TextButton(onClick={showFinishConfirmation=false;ManualStallServiceV130.command(context,ManualStallServiceV130.ACTION_FINISH)}){Text("FINISH TEST")}},
+        dismissButton={TextButton(onClick={showFinishConfirmation=false}){Text("CANCEL")}}
+    )
     Scaffold(topBar={TopAppBar(title={Text(kind.label)},navigationIcon={TextButton(onClick=onBack){Text("‹ Back")}})}) { pad ->
         Column(Modifier.fillMaxSize().background(bunnyScreenBrush()).padding(pad).verticalScroll(rememberScrollState()).padding(16.dp),verticalArrangement=Arrangement.spacedBy(14.dp)) {
             Text("Manual Data Experience Test",style=MaterialTheme.typography.titleLarge)
-            Text("Choose manual stall markers, or recording-only mode without an overlay. Video-only mode creates an MP4 + per-second wall-clock timeline; it does not claim to detect stalls automatically.",style=MaterialTheme.typography.bodySmall)
+            Text("Manual overlay can record the screen and mark stalls at the same time. Video-only mode allows post-test review without a floating window.",style=MaterialTheme.typography.bodySmall)
             Card(shape=RoundedCornerShape(25.dp),colors=CardDefaults.cardColors(containerColor=androidx.compose.ui.graphics.Color.Transparent)) {Column(Modifier.background(gradientCardBrushV130()).padding(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(task,{task=it},label={Text("Task name")},singleLine=true,enabled=!active,modifier=Modifier.fillMaxWidth())
                 Text("Device role",style=MaterialTheme.typography.labelLarge)
@@ -478,8 +537,10 @@ fun ManualStallScreenV130(kind: ManualStallKindV130, liveState: AppState, onBack
                     if(externalStatus.isNotBlank()) Text(externalStatus,style=MaterialTheme.typography.bodySmall)
                     Text("After recording, open Reports → ${kind.label} → Latest recording to review the video and mark stalls. The original MP4, CSV and SRT remain unchanged.",style=MaterialTheme.typography.bodySmall)
                 } else {
+                    androidx.compose.material3.Checkbox(checked=recordWithOverlay,onCheckedChange={recordWithOverlay=it},enabled=!active && !videoActive)
+                    Text(if(recordWithOverlay) "Auto Screen Recording ON · floating START/END controls remain available. FINISH stops both and saves the test." else "Screen Recording OFF · manual stall markers only.",style=MaterialTheme.typography.bodySmall)
                     if(!permissionReady) Text("Overlay permission required to mark stalls while using ${kind.application}.",color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)
-                    GradientActionV130(if(permissionReady)"START MANUAL STALL TEST" else "GRANT OVERLAY PERMISSION", {start()},Modifier.fillMaxWidth(),enabled=!active && task.isNotBlank() && !videoActive && !ManualStallStatusV130.state.value.running)
+                    GradientActionV130(if(permissionReady)"START MANUAL STALL TEST" else "GRANT OVERLAY PERMISSION", {startManualTest()},Modifier.fillMaxWidth(),enabled=!active && task.isNotBlank() && !videoActive && !ManualStallStatusV130.state.value.running)
                 }
             }}
             if(active) Card(shape=RoundedCornerShape(25.dp),colors=CardDefaults.cardColors(containerColor=androidx.compose.ui.graphics.Color.Transparent)) {Column(Modifier.background(gradientCardBrushV130()).padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
@@ -488,7 +549,7 @@ fun ManualStallScreenV130(kind: ManualStallKindV130, liveState: AppState, onBack
                 Text(if(progress.stallStartedMs!=null)"STALL IN PROGRESS" else "Waiting for a stall",color=MaterialTheme.colorScheme.primary)
                 Row(horizontalArrangement=Arrangement.spacedBy(6.dp)) {
                     Button(onClick={ManualStallServiceV130.command(context,ManualStallServiceV130.ACTION_TOGGLE)},modifier=Modifier.weight(1f)){Text(if(progress.stallStartedMs==null)"START STALL" else "END STALL")}
-                    OutlinedButton(onClick={ManualStallServiceV130.command(context,ManualStallServiceV130.ACTION_FINISH)},modifier=Modifier.weight(1f)){Text("FINISH")}
+                    OutlinedButton(onClick={showFinishConfirmation=true},modifier=Modifier.weight(1f)){Text("FINISH")}
                 }
                 Text("Use the floating controls during playback; avoid keeping the test screen foreground.",style=MaterialTheme.typography.bodySmall)
             }}

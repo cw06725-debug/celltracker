@@ -214,3 +214,8 @@ Only `README.md` and `CHANGELOG.md` are intentionally included as root Markdown 
 
 
 Preview 12: stable app-owned bottom navigation icons and Settings horizontal slide fixes. Verify on a device with fast Home/Reports/Settings switching and Settings subpage back/forward; full Gradle build required.
+
+
+Preview 24: Manual stall overlay millisecond display and finish confirmation; PUBG/Tamasha setup modal. Other test setup dialog gradients pending unified component migration. Full Android Gradle build and device tests not performed in this environment.
+
+Preview 25 test note: Manual Overlay on PUBG/Tamasha defaults to Auto Screen Recording ON. Grant overlay permission and the per-session Android screen capture consent, then verify MP4/TimeMap/SRT and stall XLSX/CSV after FINISH. Review video stalls, CONFIRM REVIEW, then EXPORT REPORT. Test cancellation, no recording permission, and both apps on real devices. This is a preview and is not claimed as Gradle- or device-verified.

@@ -196,7 +196,9 @@ class RecordingTimelinePlayerV130 : Activity() {
         val status=smallText("",12.5f).apply {setPadding(0,d(8),0,d(12))}
         reviewCard.addView(status)
         base.addView(reviewCard,LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT).apply{topMargin=d(14)})
+        var reviewConfirmed=false
         fun persist() {
+            reviewConfirmed=false
             val arr=JSONArray()
             events.forEach { (a,b)->arr.put(JSONObject().put("start",a).put("end",b)) }
             prefs.edit().putString("reviewedEvents",arr.toString()).apply()
@@ -234,10 +236,21 @@ class RecordingTimelinePlayerV130 : Activity() {
             refresh()
         }
         reviewCard.addView(row,LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,d(48)).apply{bottomMargin=d(12)})
+        val confirmReviewButton=button("CONFIRM REVIEW",primary=false) {
+            if (events.isEmpty() || markedStart!=null) {
+                Toast.makeText(this,"Finish all stall markers before confirming",Toast.LENGTH_SHORT).show()
+            } else {
+                reviewConfirmed=true
+                refresh("${events.size} stalls confirmed · ready to export")
+            }
+        }
+        reviewCard.addView(confirmReviewButton,LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,d(50)).apply{bottomMargin=d(9)})
         lateinit var exportButton: Button
         exportButton=button("EXPORT REPORT",primary=true) {
             if(saving || events.isEmpty()) {
                 if(events.isEmpty())Toast.makeText(this,"Mark at least one complete stall first",Toast.LENGTH_SHORT).show()
+            } else if (!reviewConfirmed) {
+                Toast.makeText(this,"Confirm the reviewed stalls before export",Toast.LENGTH_SHORT).show()
             } else if (!reviewEnabled) {
                 Toast.makeText(this,"Only PUBG/Tamasha recordings support stall report export",Toast.LENGTH_LONG).show()
             } else {
