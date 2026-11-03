@@ -1,3 +1,10 @@
+## Preview 28 (versionCode 279) — Per-event video review sync
+
+- Report event Review Video now passes report identity and event index to the player. START/END adjusts that event's T0/T1, and CONFIRM REVIEW writes changes to the report-specific review store, not the unrelated video-only marker list.
+- Returning to Summary reloads saved edits on lifecycle resume and refreshes reviewed totals in the summary.
+- Video player's EXPORT REPORT is hidden when reviewing a report event. Confirm all events and export once from the Summary screen; original XLSX remains unchanged.
+- PREVIEW: Android Gradle build and real-device verification remain pending. Timeline is estimated.
+
 Preview 27: PUBG/Tamasha per-event review with manual millisecond T0/T1 edits, invalidation, confirmation and audited export. Full Gradle build and device validation pending.
 
 ## Preview 20 (versionCode 271) — Reports-first review and smooth video clock

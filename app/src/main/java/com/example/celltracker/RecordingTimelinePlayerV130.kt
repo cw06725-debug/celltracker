@@ -24,6 +24,7 @@ import android.net.Uri
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Locale
+import java.security.MessageDigest
 
 /** Post-test frame review never changes the original MP4 or displays an overlay during the test.
  *  All wall-clock mappings remain explicitly ESTIMATED until first-frame PTS calibration exists.
@@ -42,6 +43,18 @@ class RecordingTimelinePlayerV130 : Activity() {
         }
         val (uri, session) = record
         val prefs = getSharedPreferences("ct_recording_timeline", MODE_PRIVATE)
+        val reportReviewKey = intent.getStringExtra("report_review_key")
+        val reportEventIndex = intent.getIntExtra("report_event_index", -1)
+        val reportMode = !reportReviewKey.isNullOrBlank() && reportEventIndex >= 0
+        val reportPrefs = getSharedPreferences("ct_manual_stall_reviews_v130", MODE_PRIVATE)
+        val reportSaved = if(reportMode) runCatching { JSONObject(reportPrefs.getString(reportReviewKey, "{}") ?: "{}") }.getOrDefault(JSONObject()) else JSONObject()
+        val reportEvent = reportSaved.optJSONArray("events")?.optJSONObject(reportEventIndex)
+        if(reportMode && reportEvent == null) {
+            Toast.makeText(this,"Report event not found; reopen the summary",Toast.LENGTH_LONG).show()
+            finish();return
+        }
+        var reportStart = reportEvent?.optLong("start", -1L) ?: -1L
+        var reportEnd = reportEvent?.optLong("end", -1L) ?: -1L
         val reviewEnabled = prefs.getString("reviewVideoUri", "") == uri.toString() &&
             prefs.getString("reviewKind", "") in setOf("LIVE", "GAME")
         val isExternalVideo = prefs.getString("mappingProvenance", "").orEmpty().startsWith("EXTERNAL_VIDEO_")
@@ -58,6 +71,8 @@ class RecordingTimelinePlayerV130 : Activity() {
             }
         }
         var markedStart: Long? = null
+        var reportStartChanged=false
+        var reportEndChanged=false
         var saving = false
         val density=resources.displayMetrics.density
         fun d(v:Int)=(v*density).toInt()
@@ -205,7 +220,7 @@ class RecordingTimelinePlayerV130 : Activity() {
         }
         fun currentMs(): Long=videoView.currentPosition.toLong().coerceIn(0L,session.videoDurationMs)
         fun refresh(note: String = "") {
-            val prefix=if(markedStart!=null) "Stall started at ${RecordingTimelineV130.subtitleTime(markedStart!!)} · mark END" else "${events.size} marked stalls"
+            val prefix=if(reportMode) "Report stall #${reportEventIndex+1} · T0 ${RecordingTimelineV130.clockFormat(reportStart)} · T1 ${RecordingTimelineV130.clockFormat(reportEnd)}" else if(markedStart!=null) "Stall started at ${RecordingTimelineV130.subtitleTime(markedStart!!)} · mark END" else "${events.size} marked stalls"
             status.text=if(note.isEmpty())prefix else "$prefix\n$note"
         }
         val row=LinearLayout(this).apply {orientation=LinearLayout.HORIZONTAL}
@@ -215,11 +230,16 @@ class RecordingTimelinePlayerV130 : Activity() {
         }
         addAction("START",1f,1) {
             videoView.pause()
-            markedStart=currentMs()
-            refresh("Start ${RecordingTimelineV130.clockFormat(session.wallAt(markedStart!!))} · estimated")
+            if(reportMode) { reportStart=session.wallAt(currentMs());reportStartChanged=true;reviewConfirmed=false }
+            else markedStart=currentMs()
+            refresh(if(reportMode) "T0 adjusted · confirm after setting T1" else "Start ${RecordingTimelineV130.clockFormat(session.wallAt(markedStart!!))} · estimated")
         }
         addAction("END",1f,2) {
             videoView.pause()
+            if(reportMode) {
+                reportEnd=session.wallAt(currentMs());reportEndChanged=true;reviewConfirmed=false
+                refresh("T1 adjusted · confirm to save this event")
+            } else {
             val a=markedStart
             val b=currentMs()
             if(a==null || b<=a)Toast.makeText(this,"Set a start first, then seek forward to end",Toast.LENGTH_SHORT).show()
@@ -229,15 +249,35 @@ class RecordingTimelinePlayerV130 : Activity() {
                 persist()
                 refresh("Saved event #${events.size}: %.2fs · ESTIMATED".format(Locale.US,(b-a)/1000.0))
             }
+            }
         }
         addAction("UNDO",.85f,3) {
-            if(markedStart!=null)markedStart=null
+            if(reportMode) {
+                reportStart=reportEvent!!.optLong("start");reportEnd=reportEvent.optLong("end")
+                reportStartChanged=false;reportEndChanged=false;reviewConfirmed=false
+            } else if(markedStart!=null)markedStart=null
             else if(events.isNotEmpty()){events.removeAt(events.lastIndex);persist()}
             refresh()
         }
         reviewCard.addView(row,LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,d(48)).apply{bottomMargin=d(12)})
         val confirmReviewButton=button("CONFIRM REVIEW",primary=false) {
-            if (events.isEmpty() || markedStart!=null) {
+            if(reportMode) {
+                if(reportEnd<=reportStart || reportStart<session.wallAt(0L) || reportEnd>session.wallAt(session.videoDurationMs)) {
+                    Toast.makeText(this,"Invalid T0/T1 or outside recording",Toast.LENGTH_LONG).show()
+                } else {
+                    val arr=reportSaved.optJSONArray("events") ?: JSONArray()
+                    val event=arr.optJSONObject(reportEventIndex)
+                    if(event==null) Toast.makeText(this,"Event missing",Toast.LENGTH_SHORT).show()
+                    else {
+                        event.put("start",reportStart);event.put("end",reportEnd)
+                        reportSaved.put("confirmed",false) // All-event confirmation stays on the summary screen.
+                        reportPrefs.edit().putString(reportReviewKey!!,reportSaved.toString()).commit()
+                        reviewConfirmed=true
+                        refresh("Event saved to report. Return to Summary to confirm all events and export.")
+                        Toast.makeText(this,"Stall #${reportEventIndex+1} saved to report",Toast.LENGTH_SHORT).show()
+                    }
+                }
+            } else if (events.isEmpty() || markedStart!=null) {
                 Toast.makeText(this,"Finish all stall markers before confirming",Toast.LENGTH_SHORT).show()
             } else {
                 reviewConfirmed=true
@@ -290,11 +330,12 @@ class RecordingTimelinePlayerV130 : Activity() {
                 }
             }
         }
-        reviewCard.addView(exportButton,LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,d(54)))
+        if(!reportMode) reviewCard.addView(exportButton,LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,d(54)))
+        else reviewCard.addView(smallText("Export is available only after reviewing and confirming all events in the report summary.",12f))
         base.addView(smallText("Original MP4 is never modified. Exported event times remain ESTIMATED.",11f),
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT).apply{topMargin=d(10)})
         setContentView(scroll)
-        refresh(if(reviewEnabled) "Pause or seek, then mark START and END. ${if(isExternalVideo)"External video" else "CellTracker video"} · estimated clock." else "Timestamp playback only; no PUBG/Tamasha metadata available for event export")
+        refresh(if(reportMode) "Adjust T0/T1 with START and END, then CONFIRM REVIEW. Return to Summary for final export." else if(reviewEnabled) "Pause or seek, then mark START and END. ${if(isExternalVideo)"External video" else "CellTracker video"} · estimated clock." else "Timestamp playback only; no PUBG/Tamasha metadata available for event export")
         VideoDiagnosticLogV130.event(this,"Review opened durationMs=${session.videoDurationMs} external=$isExternalVideo")
         var isSeeking=false
         seekBar.setOnSeekBarChangeListener(object:SeekBar.OnSeekBarChangeListener {
@@ -368,9 +409,11 @@ class RecordingTimelinePlayerV130 : Activity() {
         super.onDestroy()
     }
     companion object {
-        fun open(context: Context, eventStartWallMs: Long? = null) {
+        fun open(context: Context, eventStartWallMs: Long? = null, reportReviewKey: String? = null, reportEventIndex: Int = -1) {
             context.startActivity(Intent(context,RecordingTimelinePlayerV130::class.java).apply {
                 eventStartWallMs?.let { putExtra("review_event_start_wall_ms",it) }
+                reportReviewKey?.let { putExtra("report_review_key",it) }
+                if(reportEventIndex>=0)putExtra("report_event_index",reportEventIndex)
             })
         }
     }

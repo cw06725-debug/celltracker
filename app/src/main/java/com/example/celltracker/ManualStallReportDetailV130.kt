@@ -16,6 +16,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -131,7 +134,14 @@ internal fun ManualStallReportDetailScreenV130(
     val clockFormat = remember { SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault()) }
     fun parseEventTime(text: String): Long? = runCatching { clockFormat.parse(text.trim())?.time }.getOrNull()
     fun displayEventTime(ms: Long): String = clockFormat.format(Date(ms))
-    LaunchedEffect(uri, result) {
+    val lifecycleOwner=LocalLifecycleOwner.current
+    var resumeCounter by remember(uri) { mutableIntStateOf(0) }
+    DisposableEffect(lifecycleOwner) {
+        val observer=LifecycleEventObserver { _,event -> if(event==Lifecycle.Event.ON_RESUME)resumeCounter++ }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    LaunchedEffect(uri, result, resumeCounter) {
         val detail = result?.getOrNull() ?: return@LaunchedEffect
         edits.clear()
         val saved = runCatching { JSONObject(reviewPrefs.getString(reviewKey, "{}") ?: "{}") }.getOrDefault(JSONObject())
@@ -196,14 +206,18 @@ internal fun ManualStallReportDetailScreenV130(
                         Text("Summary unavailable: ${result?.exceptionOrNull()?.message.orEmpty()}",color=MaterialTheme.colorScheme.error)
                         Text("The original XLSX is preserved; open it with an Excel viewer.",style=MaterialTheme.typography.bodySmall)
                     }
+                    val currentValid = edits.values.filter { it.valid && it.end > it.start }
+                    val currentTotalMs = currentValid.sumOf { it.end - it.start }
+                    val currentDurationMs = ((fields["Test End (ms)"]?.toLongOrNull() ?: 0L) - (fields["Test Start (ms)"]?.toLongOrNull() ?: 0L)).coerceAtLeast(1L)
+                    val hasReview = !isPending && edits.isNotEmpty()
                     val overview = listOf(
                         "Task" to (if(isPending) prefs.getString("reviewTask",kind.label).orEmpty() else fields["Task"].orEmpty()),
                         "Device Role" to (if(isPending) prefs.getString("reviewRole","").orEmpty() else fields["Device Role"].orEmpty()),
                         "Start Time" to startText,
                         "Duration" to duration.takeIf { it.isNotBlank() }?.let { "$it s" }.orEmpty(),
-                        "Stall Count" to (if(isPending) "Not reviewed" else fields["Stall Count"].orEmpty()),
-                        "Total Stall Duration" to (if(isPending) "—" else fields["Total Stall Duration (s)"]?.let { "$it s" }.orEmpty()),
-                        "Stall Ratio" to (if(isPending) "—" else fields["Stall Ratio (%)"]?.let { "$it%" }.orEmpty()),
+                        "Stall Count" to (if(isPending) "Not reviewed" else if(hasReview) currentValid.size.toString() else fields["Stall Count"].orEmpty()),
+                        "Total Stall Duration" to (if(isPending) "—" else if(hasReview) "%.3f s".format(Locale.US,currentTotalMs/1000.0) else fields["Total Stall Duration (s)"]?.let { "$it s" }.orEmpty()),
+                        "Stall Ratio" to (if(isPending) "—" else if(hasReview) "%.3f%%".format(Locale.US,100.0*currentTotalMs/currentDurationMs) else fields["Stall Ratio (%)"]?.let { "$it%" }.orEmpty()),
                         "Operator" to (if(isPending) prefs.getString("reviewOperator","").orEmpty() else fields["Operator"].orEmpty()),
                         "RAT / Band" to (if(isPending) listOf(prefs.getString("reviewRat","").orEmpty(),prefs.getString("reviewBand","").orEmpty()).joinToString(" / ") else listOf(fields["RAT"].orEmpty(),fields["Band"].orEmpty()).joinToString(" / ")),
                         "Source" to (if(isPending) "VIDEO_REVIEW_PENDING · ESTIMATED" else fields["Source"].orEmpty())
@@ -236,7 +250,7 @@ internal fun ManualStallReportDetailScreenV130(
                                 Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                                     Box(Modifier.weight(1f)) { GradientActionV130("REVIEW VIDEO",{
                                         // The player uses the recording currently linked to this report.
-                                        RecordingTimelinePlayerV130.open(context,e.start)
+                                        persistReview(reviewConfirmed);RecordingTimelinePlayerV130.open(context,e.start,reviewKey,index)
                                     },Modifier.fillMaxWidth(),primary=false) }
                                     Box(Modifier.weight(1f)) { GradientActionV130("EDIT T0/T1",{
                                         editingIndex=index;editingStart=displayEventTime(e.start);editingEnd=displayEventTime(e.end)
