@@ -1143,7 +1143,12 @@ private fun ReportsHome(
             kind = kind, report = chosen,
             pendingRecording = if (associated) latest else null,
             canReviewVideo = associated,
-            onBack = { selectedPath = null; reloadReports() }
+            onBack = { selectedPath = null; reloadReports() },
+            onDelete = { item ->
+                val deleted = runCatching { ManualStallReportV130.delete(context, item) }.getOrDefault(false)
+                Toast.makeText(context, if (deleted) "Report deleted" else "Unable to delete report", Toast.LENGTH_SHORT).show()
+                if (deleted) { selectedPath = null; reloadReports() }
+            }
         )
         return
     }

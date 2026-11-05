@@ -95,7 +95,8 @@ internal fun ManualStallReportDetailScreenV130(
     report: ManualStallReportV130.Stored?,
     pendingRecording: Pair<Uri, RecordingTimelineV130.Session>?,
     canReviewVideo: Boolean,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onDelete: (ManualStallReportV130.Stored) -> Unit
 ) {
     val context = LocalContext.current
     val uri = report?.uri
@@ -131,6 +132,7 @@ internal fun ManualStallReportDetailScreenV130(
     var editingStart by remember(uri) { mutableStateOf("") }
     var editingEnd by remember(uri) { mutableStateOf("") }
     var exportBusy by remember(uri) { mutableStateOf(false) }
+    var showDeleteConfirm by remember(uri) { mutableStateOf(false) }
     val clockFormat = remember { SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault()) }
     fun parseEventTime(text: String): Long? = runCatching { clockFormat.parse(text.trim())?.time }.getOrNull()
     fun displayEventTime(ms: Long): String = clockFormat.format(Date(ms))
@@ -199,7 +201,7 @@ internal fun ManualStallReportDetailScreenV130(
                     verticalArrangement=Arrangement.spacedBy(9.dp)) {
                     Text(if(isPending) "Recording ready for review" else "Test Summary",style=MaterialTheme.typography.titleLarge)
                     if(isPending) {
-                        Text("The recording has not been reviewed/exported as a stall report. Review it, mark START/END and then export CSV + XLSX.",style=MaterialTheme.typography.bodySmall)
+                        Text("The recording has not been reviewed/exported as a lag report. Review it, mark START/END and then export CSV + XLSX.",style=MaterialTheme.typography.bodySmall)
                     } else if (result == null) {
                         CircularProgressIndicator()
                     } else if (result?.isFailure == true) {
@@ -215,9 +217,9 @@ internal fun ManualStallReportDetailScreenV130(
                         "Device Role" to (if(isPending) prefs.getString("reviewRole","").orEmpty() else fields["Device Role"].orEmpty()),
                         "Start Time" to startText,
                         "Duration" to duration.takeIf { it.isNotBlank() }?.let { "$it s" }.orEmpty(),
-                        "Stall Count" to (if(isPending) "Not reviewed" else if(hasReview) currentValid.size.toString() else fields["Stall Count"].orEmpty()),
-                        "Total Stall Duration" to (if(isPending) "—" else if(hasReview) "%.3f s".format(Locale.US,currentTotalMs/1000.0) else fields["Total Stall Duration (s)"]?.let { "$it s" }.orEmpty()),
-                        "Stall Ratio" to (if(isPending) "—" else if(hasReview) "%.3f%%".format(Locale.US,100.0*currentTotalMs/currentDurationMs) else fields["Stall Ratio (%)"]?.let { "$it%" }.orEmpty()),
+                        "Lag Count" to (if(isPending) "Not reviewed" else if(hasReview) currentValid.size.toString() else fields["Stall Count"].orEmpty()),
+                        "Total Lag Duration" to (if(isPending) "—" else if(hasReview) "%.3f s".format(Locale.US,currentTotalMs/1000.0) else fields["Total Stall Duration (s)"]?.let { "$it s" }.orEmpty()),
+                        "Lag Ratio" to (if(isPending) "—" else if(hasReview) "%.3f%%".format(Locale.US,100.0*currentTotalMs/currentDurationMs) else fields["Stall Ratio (%)"]?.let { "$it%" }.orEmpty()),
                         "Operator" to (if(isPending) prefs.getString("reviewOperator","").orEmpty() else fields["Operator"].orEmpty()),
                         "RAT / Band" to (if(isPending) listOf(prefs.getString("reviewRat","").orEmpty(),prefs.getString("reviewBand","").orEmpty()).joinToString(" / ") else listOf(fields["RAT"].orEmpty(),fields["Band"].orEmpty()).joinToString(" / ")),
                         "Source" to (if(isPending) "VIDEO_REVIEW_PENDING · ESTIMATED" else fields["Source"].orEmpty())
@@ -237,12 +239,12 @@ internal fun ManualStallReportDetailScreenV130(
                 val testDuration = ((fields["Test End (ms)"]?.toLongOrNull() ?: 0L) - (fields["Test Start (ms)"]?.toLongOrNull() ?: 0L)).coerceAtLeast(1L)
                 Card(shape=RoundedCornerShape(25.dp),colors=CardDefaults.cardColors(containerColor=androidx.compose.ui.graphics.Color.Transparent)) {
                     Column(Modifier.fillMaxWidth().background(gradientCardBrushV130()).padding(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
-                        Text("Stall Event Review",style=MaterialTheme.typography.titleMedium)
-                        Text("Original: ${originalEvents.size} stalls · Reviewed: ${validEvents.size} stalls · ${"%.3f".format(Locale.US,total/1000.0)} s · ${"%.3f".format(Locale.US,100.0*total/testDuration)}%",style=MaterialTheme.typography.bodySmall)
+                        Text("Lag Event Review",style=MaterialTheme.typography.titleMedium)
+                        Text("Original: ${originalEvents.size} lag events · Reviewed: ${validEvents.size} lag events · ${"%.3f".format(Locale.US,total/1000.0)} s · ${"%.3f".format(Locale.US,100.0*total/testDuration)}%",style=MaterialTheme.typography.bodySmall)
                         originalEvents.forEachIndexed { index, _ ->
                             val e = edits[index] ?: return@forEachIndexed
                             Column(Modifier.fillMaxWidth().background(gradientCardBrushV130(),RoundedCornerShape(18.dp)).padding(12.dp),verticalArrangement=Arrangement.spacedBy(7.dp)) {
-                                Text("Stall #${index+1} · ${if(e.valid) "Valid" else "Invalid"}",style=MaterialTheme.typography.titleSmall)
+                                Text("Lag #${index+1} · ${if(e.valid) "Valid" else "Invalid"}",style=MaterialTheme.typography.titleSmall)
                                 Text("Original T0 → T1",style=MaterialTheme.typography.labelSmall)
                                 Text("${displayEventTime(e.originalStart)} → ${displayEventTime(e.originalEnd)}",style=MaterialTheme.typography.bodySmall)
                                 Text("Reviewed T0 → T1",style=MaterialTheme.typography.labelSmall)
@@ -290,7 +292,7 @@ internal fun ManualStallReportDetailScreenV130(
                     }
                 }
                 if(editingIndex>=0) {
-                    AlertDialog(onDismissRequest={editingIndex=-1},title={Text("Edit Stall #${editingIndex+1}")},
+                    AlertDialog(onDismissRequest={editingIndex=-1},title={Text("Edit Lag #${editingIndex+1}")},
                         text={Column(verticalArrangement=Arrangement.spacedBy(10.dp)) {
                             Text("Format: yyyy-MM-dd HH:mm:ss.SSS",style=MaterialTheme.typography.bodySmall)
                             OutlinedTextField(editingStart,{editingStart=it},label={Text("T0 · Start")},singleLine=true)
@@ -309,8 +311,8 @@ internal fun ManualStallReportDetailScreenV130(
                     verticalArrangement=Arrangement.spacedBy(10.dp)) {
                     Text("Recording",style=MaterialTheme.typography.titleMedium)
                     if(linkedVideo) {
-                        GradientActionV130("PLAY / REVIEW RECORDING",{RecordingTimelinePlayerV130.open(context)},Modifier.fillMaxWidth())
-                        Text("Review stalls and export an updated report. Video time remains ESTIMATED.",style=MaterialTheme.typography.bodySmall)
+                        Text("Use REVIEW VIDEO on an individual Lag event to adjust T0/T1. New lag events should be marked from the pending recording before first export.",style=MaterialTheme.typography.bodySmall)
+                        Text("Review lag events, confirm, then export an updated report. Video time remains ESTIMATED.",style=MaterialTheme.typography.bodySmall)
                     } else {
                         Text("No verified recording linked to this report. Select the correct MP4 to review it; existing reports are not automatically linked to the latest recording.",style=MaterialTheme.typography.bodySmall)
                     }
@@ -343,6 +345,19 @@ internal fun ManualStallReportDetailScreenV130(
             }
             if (report != null) {
                 GradientActionV130("OPEN EXCEL REPORT",{viewXlsx()},Modifier.fillMaxWidth(),primary=false)
+                GradientActionV130("DELETE REPORT",{showDeleteConfirm=true},Modifier.fillMaxWidth(),primary=false)
+            }
+            if (showDeleteConfirm && report != null) {
+                AlertDialog(
+                    onDismissRequest = { showDeleteConfirm=false },
+                    title = { Text("Delete report?") },
+                    text = { Text("Delete this PUBG/Tamasha report and its paired CSV? The original recording will be kept. This cannot be undone.") },
+                    confirmButton = { TextButton(onClick = {
+                        showDeleteConfirm=false
+                        onDelete(report)
+                    }) { Text("DELETE") } },
+                    dismissButton = { TextButton(onClick = { showDeleteConfirm=false }) { Text("CANCEL") } }
+                )
             }
         }
     }

@@ -94,7 +94,7 @@ object ManualStallReportV130 {
         }
         sheets.forEachIndexed { index, sheet ->
             files += "xl/worksheets/sheet${index+1}.xml" to buildString {
-                append("""<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>""")
+                append("""<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><cols><col min="1" max="1" width="25" customWidth="1"/><col min="2" max="2" width="34" customWidth="1"/><col min="3" max="10" width="26" customWidth="1"/></cols><sheetData>""")
                 sheet.second.forEachIndexed { rowIndex, row ->
                     append("<row r=\"${rowIndex+1}\">")
                     row.forEachIndexed { col, cell ->
@@ -129,11 +129,15 @@ object ManualStallReportV130 {
             String.format(Locale.US,"%.3f",100.0*total/durationMs),operator,rat,band,pci,rsrp,sinr,device,appVersion,origin)
         val rows = listOf(headers, row("SUMMARY",startMs,endMs,durationMs,events.size,totalMs)) + events.map { row("EVENT",it.startMs,it.endMs,it.durationMs,1,it.durationMs) }
         val csv = rows.joinToString("\n") { it.joinToString(",", transform=::csvCell) }.toByteArray(Charsets.UTF_8)
-        val summary = listOf(listOf("Field","Value"), listOf("Scenario",kind.label), listOf("Task",task),listOf("Device Role",role), listOf("Device Model",device), listOf("App Version",appVersion),listOf("Test Start (ms)",startMs.toString()),listOf("Test End (ms)",endMs.toString()),listOf("Test Duration (s)",String.format(Locale.US,"%.3f",durationMs/1000.0)),listOf("Stall Count",events.size.toString()),listOf("Total Stall Duration (s)",String.format(Locale.US,"%.3f",totalMs/1000.0)),listOf("Stall Ratio (%)",String.format(Locale.US,"%.3f",totalMs*100.0/durationMs)),listOf("Operator",operator),listOf("RAT",rat), listOf("Band",band),listOf("PCI",pci),listOf("RSRP",rsrp),listOf("SINR",sinr),listOf("Source",origin))
-        val raw = listOf(listOf("Event","StartMs","EndMs","DurationMs","DurationSec")) + events.mapIndexed { i,e -> listOf((i+1).toString(),e.startMs.toString(),e.endMs.toString(),e.durationMs.toString(),String.format(Locale.US,"%.3f",e.durationMs/1000.0)) }
+        val readableClock = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault())
+        fun readable(ms: Long) = readableClock.format(Date(ms))
+        val summary = listOf(listOf("Field","Value"), listOf("Scenario",kind.label), listOf("Task",task),listOf("Device Role",role), listOf("Device Model",device), listOf("App Version",appVersion),listOf("Test Start (ms)",startMs.toString()),listOf("Test Start",readable(startMs)),listOf("Test End (ms)",endMs.toString()),listOf("Test End",readable(endMs)),listOf("Test Duration (s)",String.format(Locale.US,"%.3f",durationMs/1000.0)),listOf("Stall Count",events.size.toString()),listOf("Lag Count",events.size.toString()),listOf("Total Stall Duration (s)",String.format(Locale.US,"%.3f",totalMs/1000.0)),listOf("Stall Ratio (%)",String.format(Locale.US,"%.3f",totalMs*100.0/durationMs)),listOf("Lag Ratio (%)",String.format(Locale.US,"%.3f",totalMs*100.0/durationMs)),listOf("Operator",operator),listOf("RAT",rat), listOf("Band",band),listOf("PCI",pci),listOf("RSRP",rsrp),listOf("SINR",sinr),listOf("Source",origin))
+        val raw = listOf(listOf("Event","StartMs","EndMs","DurationMs","DurationSec","T0 Local","T1 Local")) + events.mapIndexed { i,e -> listOf((i+1).toString(),e.startMs.toString(),e.endMs.toString(),e.durationMs.toString(),String.format(Locale.US,"%.3f",e.durationMs/1000.0),readable(e.startMs),readable(e.endMs)) }
         val auditSheets = if (reviewAudit.isEmpty()) emptyList() else listOf("Review Audit" to
-            (listOf(listOf("Event", "Original T0 ms", "Original T1 ms", "Reviewed T0 ms", "Reviewed T1 ms", "Status")) + reviewAudit))
-        val xlsx = workbook(listOf("Summary" to summary, "Stall Events" to raw) + auditSheets)
+            (listOf(listOf("Event", "Original T0 ms", "Original T1 ms", "Reviewed T0 ms", "Reviewed T1 ms", "Status", "Original T0 Local", "Original T1 Local", "Reviewed T0 Local", "Reviewed T1 Local")) + reviewAudit.map { cells ->
+                cells + listOf(1,2,3,4).map { i -> cells.getOrNull(i)?.toLongOrNull()?.let(::readable).orEmpty() }
+            }))
+        val xlsx = workbook(listOf("Summary" to summary, "Lag Events" to raw) + auditSheets)
         val content = listOf(Triple("$base.csv","text/csv",csv), Triple("$base.xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",xlsx))
         val result = mutableListOf<Uri>()
         try {
@@ -150,6 +154,29 @@ object ManualStallReportV130 {
             }
         } catch(e:Exception) { result.forEach { runCatching { context.contentResolver.delete(it,null,null) } };throw e }
         return result
+    }
+    /** Delete only the selected report pair, not the linked MP4 or unrelated test data. */
+    fun delete(context: Context, stored: Stored): Boolean {
+        val base = stored.name.removeSuffix(".xlsx")
+        val parent = runCatching {
+            context.contentResolver.query(stored.uri, arrayOf(MediaStore.Downloads.RELATIVE_PATH), null, null, null)?.use {
+                if (it.moveToFirst()) it.getString(0) else null
+            }
+        }.getOrNull() ?: return false
+        if (!base.startsWith("Stall_") || !parent.contains("/ManualStall")) return false
+        val projection = arrayOf(MediaStore.Downloads._ID, MediaStore.Downloads.DISPLAY_NAME, MediaStore.Downloads.RELATIVE_PATH)
+        val targets = mutableListOf<Uri>()
+        context.contentResolver.query(MediaStore.Downloads.EXTERNAL_CONTENT_URI, projection, null, null, null)?.use { cursor ->
+            while (cursor.moveToNext()) {
+                val name = cursor.getString(1).orEmpty()
+                val folder = cursor.getString(2).orEmpty()
+                if (folder == parent && (name == "$base.xlsx" || name == "$base.csv")) {
+                    targets += android.content.ContentUris.withAppendedId(MediaStore.Downloads.EXTERNAL_CONTENT_URI, cursor.getLong(0))
+                }
+            }
+        }
+        if (targets.none { it == stored.uri }) return false
+        return targets.all { runCatching { context.contentResolver.delete(it, null, null) > 0 }.getOrDefault(false) }
     }
     fun history(context: Context, kind: ManualStallKindV130? = null): List<Stored> {
         val found = mutableListOf<Stored>()

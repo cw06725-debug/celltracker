@@ -204,7 +204,7 @@ class RecordingTimelinePlayerV130 : Activity() {
             orientation=LinearLayout.VERTICAL;setPadding(d(12),d(14),d(12),d(15));background=roundedGradient()
         }
         val reviewTitle=TextView(this).apply {
-            text="Stall annotations";textSize=17f;setTextColor(darkText)
+            text="Lag annotations";textSize=17f;setTextColor(darkText)
             typeface=android.graphics.Typeface.DEFAULT_BOLD
         }
         reviewCard.addView(reviewTitle)
@@ -220,7 +220,7 @@ class RecordingTimelinePlayerV130 : Activity() {
         }
         fun currentMs(): Long=videoView.currentPosition.toLong().coerceIn(0L,session.videoDurationMs)
         fun refresh(note: String = "") {
-            val prefix=if(reportMode) "Report stall #${reportEventIndex+1} · T0 ${RecordingTimelineV130.clockFormat(reportStart)} · T1 ${RecordingTimelineV130.clockFormat(reportEnd)}" else if(markedStart!=null) "Stall started at ${RecordingTimelineV130.subtitleTime(markedStart!!)} · mark END" else "${events.size} marked stalls"
+            val prefix=if(reportMode) "Report lag #${reportEventIndex+1} · T0 ${RecordingTimelineV130.clockFormat(reportStart)} · T1 ${RecordingTimelineV130.clockFormat(reportEnd)}" else if(markedStart!=null) "Lag started at ${RecordingTimelineV130.subtitleTime(markedStart!!)} · mark END" else "${events.size} marked lag events"
             status.text=if(note.isEmpty())prefix else "$prefix\n$note"
         }
         val row=LinearLayout(this).apply {orientation=LinearLayout.HORIZONTAL}
@@ -274,11 +274,11 @@ class RecordingTimelinePlayerV130 : Activity() {
                         reportPrefs.edit().putString(reportReviewKey!!,reportSaved.toString()).commit()
                         reviewConfirmed=true
                         refresh("Event saved to report. Return to Summary to confirm all events and export.")
-                        Toast.makeText(this,"Stall #${reportEventIndex+1} saved to report",Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this,"Lag #${reportEventIndex+1} saved to report",Toast.LENGTH_SHORT).show()
                     }
                 }
             } else if (events.isEmpty() || markedStart!=null) {
-                Toast.makeText(this,"Finish all stall markers before confirming",Toast.LENGTH_SHORT).show()
+                Toast.makeText(this,"Finish all lag markers before confirming",Toast.LENGTH_SHORT).show()
             } else {
                 reviewConfirmed=true
                 refresh("${events.size} stalls confirmed · ready to export")
@@ -290,9 +290,9 @@ class RecordingTimelinePlayerV130 : Activity() {
             if(saving || events.isEmpty()) {
                 if(events.isEmpty())Toast.makeText(this,"Mark at least one complete stall first",Toast.LENGTH_SHORT).show()
             } else if (!reviewConfirmed) {
-                Toast.makeText(this,"Confirm the reviewed stalls before export",Toast.LENGTH_SHORT).show()
+                Toast.makeText(this,"Confirm the reviewed lag events before export",Toast.LENGTH_SHORT).show()
             } else if (!reviewEnabled) {
-                Toast.makeText(this,"Only PUBG/Tamasha recordings support stall report export",Toast.LENGTH_LONG).show()
+                Toast.makeText(this,"Only PUBG/Tamasha recordings support lag report export",Toast.LENGTH_LONG).show()
             } else {
                 val kind=runCatching {ManualStallKindV130.valueOf(prefs.getString("reviewKind","").orEmpty())}.getOrNull()
                 if(kind==null)Toast.makeText(this,"Recording test type missing",Toast.LENGTH_LONG).show()

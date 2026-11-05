@@ -1,12 +1,3 @@
-## Preview 28 (versionCode 279) — Per-event video review sync
-
-- Report event Review Video now passes report identity and event index to the player. START/END adjusts that event's T0/T1, and CONFIRM REVIEW writes changes to the report-specific review store, not the unrelated video-only marker list.
-- Returning to Summary reloads saved edits on lifecycle resume and refreshes reviewed totals in the summary.
-- Video player's EXPORT REPORT is hidden when reviewing a report event. Confirm all events and export once from the Summary screen; original XLSX remains unchanged.
-- PREVIEW: Android Gradle build and real-device verification remain pending. Timeline is estimated.
-
-Preview 27: PUBG/Tamasha per-event review with manual millisecond T0/T1 edits, invalidation, confirmation and audited export. Full Gradle build and device validation pending.
-
 ## Preview 20 (versionCode 271) — Reports-first review and smooth video clock
 
 From Reports → PUBG Gaming / Tamasha Live Streaming, select an exported report to view its **in-app Summary** and per-stall times before choosing REVIEW RECORDING (for its associated latest video) or OPEN EXCEL REPORT. Pending latest video without exported results appears as **Latest recording · Review pending** under its test category. The generic **Reports → Screen Recordings · Timeline** route also starts with a summary instead of immediately playing the video. The test setup page no longer contains a recording-review launcher or a direct-XLSX saved-report list.
