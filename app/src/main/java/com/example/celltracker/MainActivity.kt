@@ -1595,27 +1595,39 @@ private fun ReportsHome(
     if (category == "MANUAL_LIVE" || category == "MANUAL_GAME") {
         val kind = if (category == "MANUAL_LIVE") ManualStallKindV130.LIVE else ManualStallKindV130.GAME
         val files = if (kind == ManualStallKindV130.LIVE) manualLiveReports else manualGameReports
-        val prefs = context.getSharedPreferences("ct_recording_timeline", Context.MODE_PRIVATE)
-        val latest = RecordingTimelineV130.last(context)
-        val pendingForKind = prefs.getString("reviewKind", "") == kind.name && latest != null &&
-            prefs.getString("reviewVideoUri", "") == latest.first.toString()
         SoftPageRevealV130(revealKey = "manual-report-${kind.name}", modifier = Modifier.fillMaxSize()) {
             Column(modifier.fillMaxSize().background(bunnyScreenBrush())) {
-                TopAppBar(title = { Text("${kind.label} Reports") }, navigationIcon = { TextButton(onClick = { category = null }) { Text("‹ Back") } },
+                TopAppBar(title = { Text("${kind.label} Reports") },
+                    navigationIcon = { TextButton(onClick = { category = null }) { Text("‹ Back") } },
                     actions = { TextButton(onClick = { reloadReports() }) { Text("Refresh") } })
-                LazyColumn(Modifier.fillMaxSize().padding(16.dp),verticalArrangement=Arrangement.spacedBy(9.dp)) {
-                    item { Text("Select a test to view its Summary, then Review recording or open Excel.") }
-                    if(pendingForKind && latest != null) {
-                        item("pending_${kind.name}") {
-                            val label=SimpleDateFormat("yyyy-MM-dd HH:mm",Locale.getDefault()).format(Date(latest.second.wallAt(0L)))
-                            ReportListCard("Latest recording · Review pending", "$label · ${latest.second.videoDurationMs/1000}s · ESTIMATED",
-                                onClick = { selectedPath = "__PENDING_VIDEO__" })
+                val dateFormat = remember { SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()) }
+                val timeFormat = remember { SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()) }
+                val runFormat = remember { SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US) }
+                val groups = files.groupBy { item ->
+                    val match = Regex("_(\\d{8}_\\d{6})\\.xlsx$", RegexOption.IGNORE_CASE).find(item.name)
+                    val stamp = match?.groupValues?.getOrNull(1)?.let { runCatching { runFormat.parse(it)?.time }.getOrNull() }
+                    dateFormat.format(Date(stamp ?: item.timestamp))
+                }.toSortedMap(compareByDescending { it })
+                LazyColumn(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    item { Text("${files.size} test reports", style = MaterialTheme.typography.titleMedium) }
+                    item { Text("Tap a test to view its summary, lag review and linked recording.", style = MaterialTheme.typography.bodySmall) }
+                    groups.forEach { (date, reportsForDate) ->
+                        item("header_$date") {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text(date, style = MaterialTheme.typography.titleMedium)
+                                Text("${reportsForDate.size} ${if(reportsForDate.size == 1) "report" else "reports"}", style = MaterialTheme.typography.bodySmall)
+                            }
                         }
-                    }
-                    items(files,key={it.uri.toString()}) { file ->
-                        ReportListCard(file.name.substringBeforeLast(".xlsx"),
-                            SimpleDateFormat("yyyy-MM-dd HH:mm",Locale.US).format(Date(file.timestamp)),
-                            onClick = { selectedPath = file.uri.toString() })
+                        items(reportsForDate, key = { it.uri.toString() }) { file ->
+                            val match = Regex("_(\\d{8}_\\d{6})\\.xlsx$", RegexOption.IGNORE_CASE).find(file.name)
+                            val stamp = match?.groupValues?.getOrNull(1)?.let { runCatching { runFormat.parse(it)?.time }.getOrNull() }
+                            val prefix = "Stall_${kind.name}_"
+                            val withoutStamp = file.name.removeSuffix(".xlsx").removePrefix(prefix)
+                                .let { if (match != null) it.removeSuffix("_${match.groupValues[1]}") else it }
+                            val task = withoutStamp.substringAfter('_', withoutStamp).replace('_', ' ').ifBlank { kind.label }
+                            ReportListCard(task, "${timeFormat.format(Date(stamp ?: file.timestamp))} · ${kind.label}",
+                                onClick = { selectedPath = file.uri.toString() })
+                        }
                     }
                 }
             }

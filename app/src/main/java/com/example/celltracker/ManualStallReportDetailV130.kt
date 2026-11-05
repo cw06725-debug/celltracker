@@ -311,11 +311,12 @@ internal fun ManualStallReportDetailScreenV130(
                     verticalArrangement=Arrangement.spacedBy(10.dp)) {
                     Text("Recording",style=MaterialTheme.typography.titleMedium)
                     if(linkedVideo) {
-                        Text("Use REVIEW VIDEO on an individual Lag event to adjust T0/T1. New lag events should be marked from the pending recording before first export.",style=MaterialTheme.typography.bodySmall)
+                        Text("CellTracker recording matched to this test. Preview the video or review individual Lag events.",style=MaterialTheme.typography.bodySmall)
                         Text("Review lag events, confirm, then export an updated report. Video time remains ESTIMATED.",style=MaterialTheme.typography.bodySmall)
                     } else {
                         Text("No verified recording linked to this report. Select the correct MP4 to review it; existing reports are not automatically linked to the latest recording.",style=MaterialTheme.typography.bodySmall)
                     }
+                    if(linkedVideo) GradientActionV130("PREVIEW RECORDING",{ RecordingTimelinePlayerV130.open(context) },Modifier.fillMaxWidth())
                     GradientActionV130(if(linkedVideo) "CHANGE LINKED VIDEO" else "SELECT RECORDING",
                         {picker.launch(arrayOf("video/mp4","video/*"))},Modifier.fillMaxWidth(),primary=false)
                     if(pickedVideo!=null) {

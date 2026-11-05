@@ -1,9 +1,3 @@
-## Preview 32 — Test Setup Controls (versionCode 283)
-- TikTok: themed operator chips, radio controls, screen-recording switch, gradient START TEST.
-- YouTube: gradient Visual AI action and unified checkboxes.
-- Shared pastel selection controls with consistent selected/disabled states.
-- No test business logic changes; Android Gradle and device validation pending.
-
 ## Preview 31 — Test Setup Crash & UI Fix (versionCode 282)
 
 - Remove nested vertical scrolling in both TikTok setup dialogs to avoid infinite-height Compose layout crashes.
@@ -1700,3 +1694,9 @@ Build note: local assembleDebug could not run because this environment cannot re
 - TikTok Video Lag and TikTok Upload (Home and quick-launch flows) use the shared gradient dialog container, while preserving original controls, permissions, and start actions.
 - Added a reusable gradient action component for subsequent screen migrations.
 - This is a partial UI pass; report screens, legacy setup controls and all button variants are not yet fully migrated. Android Gradle build and device validation remain pending.
+
+## Preview 33 (284)
+- Group PUBG/Tamasha report lists by test date and display readable task labels instead of raw XLSX filenames.
+- Remove misleading latest-recording pending item from report history.
+- Add direct preview button when latest CellTracker recording is positively matched to the report; otherwise retain manual selection for older/unmatched videos.
+- Keep existing reports and recordings unchanged.
