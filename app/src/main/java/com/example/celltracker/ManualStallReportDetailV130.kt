@@ -149,8 +149,14 @@ internal fun ManualStallReportDetailScreenV130(
         val saved = runCatching { JSONObject(reviewPrefs.getString(reviewKey, "{}") ?: "{}") }.getOrDefault(JSONObject())
         val savedItems = saved.optJSONArray("events")
         detail.events.forEachIndexed { index, cells ->
-            val a = cells.getOrNull(1)?.toLongOrNull() ?: return@forEachIndexed
-            val b = cells.getOrNull(2)?.toLongOrNull() ?: return@forEachIndexed
+            // Lag Events stores readable T0/T1 in columns 2/3 and raw epoch in 6/7.
+            // Read both formats to support reports created by older versions.
+            val a = cells.getOrNull(5)?.toLongOrNull()
+                ?: cells.getOrNull(1)?.toLongOrNull()
+                ?: cells.getOrNull(1)?.let(::parseEventTime) ?: return@forEachIndexed
+            val b = cells.getOrNull(6)?.toLongOrNull()
+                ?: cells.getOrNull(2)?.toLongOrNull()
+                ?: cells.getOrNull(2)?.let(::parseEventTime) ?: return@forEachIndexed
             val stored = savedItems?.optJSONObject(index)
             edits[index] = if (stored != null && stored.optLong("originalStart") == a && stored.optLong("originalEnd") == b) {
                 EventEdit(a, b, stored.optLong("start", a), stored.optLong("end", b), stored.optBoolean("valid", true))
@@ -174,7 +180,7 @@ internal fun ManualStallReportDetailScreenV130(
     val recordingDuration = pendingRecording?.second?.videoDurationMs ?: 0L
     val startText = if (isPending && recordedStart > 0L) {
         SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(recordedStart))
-    } else fields["Test Start (ms)"]?.toLongOrNull()?.let {
+    } else (fields["Test Start (ms)"]?.toLongOrNull() ?: fields["Test Start"]?.let(::parseEventTime))?.let {
         SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(it))
     }.orEmpty()
     val duration = if(isPending) "%.2f".format(Locale.US,recordingDuration/1000.0)
@@ -210,7 +216,7 @@ internal fun ManualStallReportDetailScreenV130(
                     }
                     val currentValid = edits.values.filter { it.valid && it.end > it.start }
                     val currentTotalMs = currentValid.sumOf { it.end - it.start }
-                    val currentDurationMs = ((fields["Test End (ms)"]?.toLongOrNull() ?: 0L) - (fields["Test Start (ms)"]?.toLongOrNull() ?: 0L)).coerceAtLeast(1L)
+                    val currentDurationMs = ((fields["Test End (ms)"]?.toLongOrNull() ?: fields["Test End"]?.let(::parseEventTime) ?: 0L) - (fields["Test Start (ms)"]?.toLongOrNull() ?: fields["Test Start"]?.let(::parseEventTime) ?: 0L)).coerceAtLeast(1L)
                     val hasReview = !isPending && edits.isNotEmpty()
                     val overview = listOf(
                         "Task" to (if(isPending) prefs.getString("reviewTask",kind.label).orEmpty() else fields["Task"].orEmpty()),
@@ -236,7 +242,7 @@ internal fun ManualStallReportDetailScreenV130(
                 val originalEvents = result?.getOrNull()?.events.orEmpty()
                 val validEvents = edits.values.filter { it.valid && it.end > it.start }
                 val total = validEvents.sumOf { it.end - it.start }
-                val testDuration = ((fields["Test End (ms)"]?.toLongOrNull() ?: 0L) - (fields["Test Start (ms)"]?.toLongOrNull() ?: 0L)).coerceAtLeast(1L)
+                val testDuration = ((fields["Test End (ms)"]?.toLongOrNull() ?: fields["Test End"]?.let(::parseEventTime) ?: 0L) - (fields["Test Start (ms)"]?.toLongOrNull() ?: fields["Test Start"]?.let(::parseEventTime) ?: 0L)).coerceAtLeast(1L)
                 Card(shape=RoundedCornerShape(25.dp),colors=CardDefaults.cardColors(containerColor=androidx.compose.ui.graphics.Color.Transparent)) {
                     Column(Modifier.fillMaxWidth().background(gradientCardBrushV130()).padding(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
                         Text("Lag Event Review",style=MaterialTheme.typography.titleMedium)
@@ -265,14 +271,14 @@ internal fun ManualStallReportDetailScreenV130(
                         }
                         GradientActionV130(if(reviewConfirmed) "REVIEW CONFIRMED" else "CONFIRM REVIEW",{
                             if(edits.size==originalEvents.size && edits.values.all { it.end>it.start }) {
-                                persistReview(true);reviewMessage="Review confirmed. Export will create new reviewed files; originals remain unchanged."
+                                persistReview(true);reviewMessage="Review confirmed. Export updates this report without adding another history entry."
                             } else reviewMessage="Some events have invalid time ranges."
                         },Modifier.fillMaxWidth())
                         GradientActionV130(if(exportBusy) "EXPORTING..." else "EXPORT REVIEWED REPORT",{
                             if(!reviewConfirmed || exportBusy) { reviewMessage="Confirm review before exporting." }
                             else {
-                                val from=fields["Test Start (ms)"]?.toLongOrNull()
-                                val to=fields["Test End (ms)"]?.toLongOrNull()
+                                val from=fields["Test Start (ms)"]?.toLongOrNull() ?: fields["Test Start"]?.let(::parseEventTime)
+                                val to=fields["Test End (ms)"]?.toLongOrNull() ?: fields["Test End"]?.let(::parseEventTime)
                                 if(from==null || to==null || to<=from) reviewMessage="Invalid test time range."
                                 else {
                                     exportBusy=true
@@ -281,8 +287,8 @@ internal fun ManualStallReportDetailScreenV130(
                                         ManualStallReportV130.save(context,kind,fields["Task"].orEmpty(),fields["Device Role"].orEmpty(),from,to,valid,
                                             fields["Operator"].orEmpty(),fields["RAT"].orEmpty(),fields["Band"].orEmpty(),fields["PCI"].orEmpty(),
                                             fields["RSRP"].orEmpty(),fields["SINR"].orEmpty(),fields["App Version"].orEmpty(),"MANUAL_REVIEW_CORRECTED",
-                                            edits.toSortedMap().map { (i,e) -> listOf((i+1).toString(),e.originalStart.toString(),e.originalEnd.toString(),e.start.toString(),e.end.toString(),if(e.valid) "VALID" else "INVALID") })
-                                    }.onSuccess { reviewMessage="Reviewed CSV + XLSX exported. Original files preserved." }
+                                            edits.toSortedMap().map { (i,e) -> listOf((i+1).toString(),e.originalStart.toString(),e.originalEnd.toString(),e.start.toString(),e.end.toString(),if(e.valid) "VALID" else "INVALID") }, replaceReport = report)
+                                    }.onSuccess { reviewMessage="Reviewed CSV + XLSX updated. History contains one entry per test." }
                                         .onFailure { reviewMessage="Export failed: ${it.message}" }
                                     exportBusy=false
                                 }

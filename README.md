@@ -1,3 +1,10 @@
+# Preview 36 — Lag review persistence and report deduplication (partial)
+
+- Fixed Lag Events T0/T1 parsing: supports readable timestamps and raw millisecond columns, so previously exported events load for editing.
+- Review export updates the selected XLSX/CSV in place instead of inserting another test into report history. Original report bytes are backed up in memory for rollback on write error.
+- Existing Preview 35 overlay millisecond clock and recording-setup label fixes retained.
+- NOT YET COMPLETE: durable per-test MP4 association across historical sessions; all Ping/ADB/Network Recording UI harmonization; full Android Gradle compilation and device testing. Do not publish as stable.
+
 ## Preview 28 (versionCode 279) — Per-event video review sync
 
 - Report event Review Video now passes report identity and event index to the player. START/END adjusts that event's T0/T1, and CONFIRM REVIEW writes changes to the report-specific review store, not the unrelated video-only marker list.

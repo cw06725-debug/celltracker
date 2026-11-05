@@ -1,3 +1,10 @@
+# Preview 36 — Lag review persistence and report deduplication (partial)
+
+- Fixed Lag Events T0/T1 parsing: supports readable timestamps and raw millisecond columns, so previously exported events load for editing.
+- Review export updates the selected XLSX/CSV in place instead of inserting another test into report history. Original report bytes are backed up in memory for rollback on write error.
+- Existing Preview 35 overlay millisecond clock and recording-setup label fixes retained.
+- NOT YET COMPLETE: durable per-test MP4 association across historical sessions; all Ping/ADB/Network Recording UI harmonization; full Android Gradle compilation and device testing. Do not publish as stable.
+
 ## Preview 35 (versionCode 286) — Manual Overlay Clock & Recording Toggle UI
 
 - PUBG and Tamasha manual overlays now show a live local HH:mm:ss.SSS clock and a separate monotonic REC timer with Lag totals.

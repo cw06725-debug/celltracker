@@ -120,7 +120,7 @@ object ManualStallReportV130 {
     }
     fun save(context: Context, kind: ManualStallKindV130, task: String, role: String, startMs: Long,
              endMs: Long, events: List<ManualStallEventV130>, operator: String, rat: String, band: String,
-             pci: String, rsrp: String, sinr: String, appVersion: String, origin: String = "MANUAL_STALL_TAP", reviewAudit: List<List<String>> = emptyList()): List<Uri> {
+             pci: String, rsrp: String, sinr: String, appVersion: String, origin: String = "MANUAL_STALL_TAP", reviewAudit: List<List<String>> = emptyList(), replaceReport: Stored? = null): List<Uri> {
         val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date(startMs))
         val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(startMs))
         val cleanTask = task.replace(Regex("[^A-Za-z0-9_-]"), "_").take(48).ifBlank { "Test" }
@@ -144,6 +144,43 @@ object ManualStallReportV130 {
             }))
         val xlsx = workbook(listOf("Summary" to summary, "Lag Events" to raw) + auditSheets)
         val content = listOf(Triple("$base.csv","text/csv",csv), Triple("$base.xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",xlsx))
+        // Updating a confirmed review must not create a second history entry.
+        // Only overwrite the exact report selected by the user; never match by task name.
+        if (replaceReport != null) {
+            require(replaceReport.name == "$base.xlsx") { "Selected report does not match test identity" }
+            val reportUri = replaceReport.uri
+            val csvUri = run {
+                val parent = context.contentResolver.query(reportUri, arrayOf(MediaStore.Downloads.RELATIVE_PATH), null, null, null)?.use {
+                    if (it.moveToFirst()) it.getString(0) else null
+                } ?: error("Cannot locate original report directory")
+                var found: Uri? = null
+                context.contentResolver.query(MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                    arrayOf(MediaStore.Downloads._ID, MediaStore.Downloads.DISPLAY_NAME, MediaStore.Downloads.RELATIVE_PATH), null, null, null)?.use { cursor ->
+                    while (cursor.moveToNext()) if (cursor.getString(1) == "$base.csv" && cursor.getString(2) == parent) {
+                        found = android.content.ContentUris.withAppendedId(MediaStore.Downloads.EXTERNAL_CONTENT_URI, cursor.getLong(0)); break
+                    }
+                }
+                found
+            }
+            // Prepare both payloads before mutating either document.
+            // The selected XLSX keeps its MediaStore URI and therefore its review key.
+            val oldXlsx = context.contentResolver.openInputStream(reportUri)?.use { it.readBytes() }
+                ?: error("Cannot back up original XLSX")
+            val oldCsv = csvUri?.let { context.contentResolver.openInputStream(it)?.use { stream -> stream.readBytes() } }
+            try {
+                context.contentResolver.openOutputStream(reportUri, "wt")?.use { it.write(xlsx) }
+                    ?: error("Cannot update selected XLSX")
+                if (csvUri != null) context.contentResolver.openOutputStream(csvUri, "wt")?.use { it.write(csv) }
+                    ?: error("Cannot update paired CSV")
+            } catch (error: Exception) {
+                runCatching { context.contentResolver.openOutputStream(reportUri, "wt")?.use { it.write(oldXlsx) } }
+                if (csvUri != null && oldCsv != null) runCatching {
+                    context.contentResolver.openOutputStream(csvUri, "wt")?.use { it.write(oldCsv) }
+                }
+                throw error
+            }
+            return listOfNotNull(csvUri, reportUri)
+        }
         val result = mutableListOf<Uri>()
         try {
             for ((name,mime,bytes) in content) {
