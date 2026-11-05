@@ -1,9 +1,8 @@
-# Preview 36 — Lag review persistence and report deduplication (partial)
-
-- Fixed Lag Events T0/T1 parsing: supports readable timestamps and raw millisecond columns, so previously exported events load for editing.
-- Review export updates the selected XLSX/CSV in place instead of inserting another test into report history. Original report bytes are backed up in memory for rollback on write error.
-- Existing Preview 35 overlay millisecond clock and recording-setup label fixes retained.
-- NOT YET COMPLETE: durable per-test MP4 association across historical sessions; all Ping/ADB/Network Recording UI harmonization; full Android Gradle compilation and device testing. Do not publish as stable.
+## v1.3.0 Preview 37 — Recording association and shared setup controls (experimental)
+- Save each completed CellTracker recording in a durable URI/time-range/type/role index; match PUBG/Tamasha reports by actual test start/end and role, not just the latest video. Re-activate the matched timeline before preview/review.
+- Retain backward-compatible last-video matching only with validated type, role and overlapping time range.
+- Reuse shared gradient-style setup toggle rows in Ping, YouTube and WhatsApp; update ADB Tools screen background and PUBG/Tamasha setup labels.
+- Build/real-device verification still required. Network Recording and all remaining button styles have not yet been fully audited.
 
 ## Preview 35 (versionCode 286) — Manual Overlay Clock & Recording Toggle UI
 

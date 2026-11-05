@@ -525,8 +525,8 @@ fun ManualStallScreenV130(kind: ManualStallKindV130, liveState: AppState, onBack
     )
     Scaffold(topBar={TopAppBar(title={Text(kind.label)},navigationIcon={TextButton(onClick=onBack){Text("‹ Back")}})}) { pad ->
         Column(Modifier.fillMaxSize().background(bunnyScreenBrush()).padding(pad).verticalScroll(rememberScrollState()).padding(16.dp),verticalArrangement=Arrangement.spacedBy(14.dp)) {
-            Text("Manual Data Experience Test",style=MaterialTheme.typography.titleLarge)
-            Text("Manual overlay can record the screen and mark stalls at the same time. Video-only mode allows post-test review without a floating window.",style=MaterialTheme.typography.bodySmall)
+            Text("Test setup",style=MaterialTheme.typography.titleMedium)
+            Text("Manual overlay records video and marks Lag events together. Video-only supports review after recording.",style=MaterialTheme.typography.bodySmall)
             Card(shape=RoundedCornerShape(25.dp),colors=CardDefaults.cardColors(containerColor=androidx.compose.ui.graphics.Color.Transparent)) {Column(Modifier.background(gradientCardBrushV130()).padding(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(task,{task=it},label={Text("Task name")},singleLine=true,enabled=!active,modifier=Modifier.fillMaxWidth())
                 Text("Device role",style=MaterialTheme.typography.labelLarge)
@@ -538,7 +538,7 @@ fun ManualStallScreenV130(kind: ManualStallKindV130, liveState: AppState, onBack
                 Text("Capture mode",style=MaterialTheme.typography.labelLarge)
                 Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                     FilterChip(selected=!recordingOnly,onClick={recordingOnly=false},enabled=!active && !videoActive,label={Text("Manual overlay")})
-                    FilterChip(selected=recordingOnly,onClick={recordingOnly=true},enabled=!active && !videoActive,label={Text("Video only · no overlay")})
+                    FilterChip(selected=recordingOnly,onClick={recordingOnly=true},enabled=!active && !videoActive,label={Text("Video only")})
                 }
                 if (recordingOnly) {
                     Text("A system consent screen is required for each recording. No floating window is shown; stop from the ongoing notification or by returning here. Timeline is an estimate, not frame-exact.",style=MaterialTheme.typography.bodySmall)

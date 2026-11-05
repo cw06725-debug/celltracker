@@ -258,7 +258,7 @@ internal fun ManualStallReportDetailScreenV130(
                                 Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                                     Box(Modifier.weight(1f)) { GradientActionV130("REVIEW VIDEO",{
                                         // The player uses the recording currently linked to this report.
-                                        persistReview(reviewConfirmed);RecordingTimelinePlayerV130.open(context,e.start,reviewKey,index)
+                                        persistReview(reviewConfirmed);run { pendingRecording?.let { RecordingTimelineV130.activate(context, it, kind.name) }; RecordingTimelinePlayerV130.open(context,e.start,reviewKey,index) }
                                     },Modifier.fillMaxWidth(),primary=false) }
                                     Box(Modifier.weight(1f)) { GradientActionV130("EDIT T0/T1",{
                                         editingIndex=index;editingStart=displayEventTime(e.start);editingEnd=displayEventTime(e.end)
@@ -322,7 +322,7 @@ internal fun ManualStallReportDetailScreenV130(
                     } else {
                         Text("No verified recording linked to this report. Select the correct MP4 to review it; existing reports are not automatically linked to the latest recording.",style=MaterialTheme.typography.bodySmall)
                     }
-                    if(linkedVideo) GradientActionV130("PREVIEW RECORDING",{ RecordingTimelinePlayerV130.open(context) },Modifier.fillMaxWidth())
+                    if(linkedVideo) GradientActionV130("PREVIEW RECORDING",{ pendingRecording?.let { RecordingTimelineV130.activate(context, it, kind.name) }; RecordingTimelinePlayerV130.open(context) },Modifier.fillMaxWidth())
                     GradientActionV130(if(linkedVideo) "CHANGE LINKED VIDEO" else "SELECT RECORDING",
                         {picker.launch(arrayOf("video/mp4","video/*"))},Modifier.fillMaxWidth(),primary=false)
                     if(pickedVideo!=null) {

@@ -272,6 +272,10 @@ class TestScreenRecordingService : Service() {
                     RecordingTimelineV130.Session(anchor, recordingEnd, validMediaDuration, clockSamples.toList()),
                     recordingDirectory)
             }.onSuccess { (csv, subtitle) ->
+                runCatching { RecordingTimelineV130.indexCompleted(this, uri,
+                    RecordingTimelineV130.Session(anchor, recordingEnd, validMediaDuration, clockSamples.toList()),
+                    reviewKind, reviewRole, reviewTask) }
+
                 lastTimelineCsv = csv.toString()
                 lastTimelineSrt = subtitle.toString()
                 getSharedPreferences("ct_recording_timeline", MODE_PRIVATE).edit()

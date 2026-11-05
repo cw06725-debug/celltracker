@@ -1127,21 +1127,20 @@ private fun ReportsHome(
         val kind = if(category == "MANUAL_LIVE") ManualStallKindV130.LIVE else ManualStallKindV130.GAME
         val reports = if(kind == ManualStallKindV130.LIVE) manualLiveReports else manualGameReports
         val chosen = reports.firstOrNull { it.uri.toString() == selectedPath }
-        val preferences = context.getSharedPreferences("ct_recording_timeline", Context.MODE_PRIVATE)
-        val latest = RecordingTimelineV130.last(context)
-        val matchesKind = preferences.getString("reviewKind", "") == kind.name &&
-            latest != null && preferences.getString("reviewVideoUri", "") == latest.first.toString()
-        val latestVideoStart = latest?.second?.wallAt(0L) ?: -1L
-        val isLatestRecording = selectedPath == "__PENDING_VIDEO__"
-        // A reviewed XLSX is linked only if its filename run time matches the latest video;
-        // never open an unrelated latest recording for an older report.
-        val reportTime = chosen?.name?.let { Regex("_(\\d{8}_\\d{6})\\.xlsx$", RegexOption.IGNORE_CASE).find(it)?.groupValues?.getOrNull(1) }
-            ?.let { runCatching { SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).parse(it)?.time }.getOrNull() }
-        val associated = matchesKind && (isLatestRecording || (reportTime != null && latestVideoStart > 0L &&
-            kotlin.math.abs(reportTime - latestVideoStart) < 4_000L))
+        val isPending = selectedPath == "__PENDING_VIDEO__"
+        val details = chosen?.let { runCatching { ManualStallSummaryReaderV130.read(context, it.uri).fields }.getOrNull() }
+        val testStart = details?.get("Test Start (ms)")?.toLongOrNull() ?: 0L
+        val testEnd = details?.get("Test End (ms)")?.toLongOrNull() ?: 0L
+        val role = details?.get("Device Role").orEmpty()
+        val matched = if (isPending) {
+            val last = RecordingTimelineV130.last(context)
+            val prefs = context.getSharedPreferences("ct_recording_timeline", Context.MODE_PRIVATE)
+            last?.takeIf { prefs.getString("reviewKind", "") == kind.name }
+        } else RecordingTimelineV130.findForTest(context, kind.name, role, testStart, testEnd)
+        val associated = matched != null
         ManualStallReportDetailScreenV130(
             kind = kind, report = chosen,
-            pendingRecording = if (associated) latest else null,
+            pendingRecording = matched,
             canReviewVideo = associated,
             onBack = { selectedPath = null; reloadReports() },
             onDelete = { item ->
@@ -2649,13 +2648,8 @@ private fun PingTestScreen(
                             modifier = Modifier.weight(1f)
                         )
                     }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(checked = autoRecord, enabled = !state.isRunning, onCheckedChange = { autoRecord = it })
-                        Column {
-                            Text("Auto record network data")
-                            Text("Creates a recording named Ping_<host> and stops it when the test ends.", style = MaterialTheme.typography.bodySmall)
-                        }
-                    }
+                    SetupToggleRowV130("Auto Network Recording", autoRecord, { autoRecord = it },
+                        "Records network data until the Ping test ends.")
                     Button(onClick = {
                         showSetup = false
                         onSetupFinished()
@@ -4689,7 +4683,7 @@ private fun WhatsAppSendScreen(onBack: () -> Unit, setupOnly: Boolean = false, o
                 }
             ) {
                 Text("Open a WhatsApp chat and prepare an image. For each sample: START → ARMED → tap Send (T0) → tap SENT (T1).", style = MaterialTheme.typography.bodySmall)
-                Row(verticalAlignment = Alignment.CenterVertically) { SetupCheckboxV130(autoRecord, { autoRecord = it }); Text("Auto Network Recording") }
+                SetupToggleRowV130("Auto Network Recording", autoRecord, { autoRecord = it })
                 SetupAccessibilityCardV130("WhatsAppSendAccessibilityService") {
                     context.startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                 }
@@ -5405,10 +5399,10 @@ private fun VideoLoadingScreen(onBack: () -> Unit, onVisualAiCollector: () -> Un
                 OutlinedTextField(count, { count = it.filter(Char::isDigit) }, label = { Text("Test count (AUTO only)") }, singleLine = true, enabled = !semiAuto, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(timeout, { timeout = it.filter(Char::isDigit) }, label = { Text("Load timeout (s)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(returnWait, { returnWait = it.filter { c -> c.isDigit() || c == '.' } }, label = { Text("Return wait (s)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                Row(verticalAlignment = Alignment.CenterVertically) { SetupCheckboxV130(autoRecord, { autoRecord = it }); Text("Auto Network Recording") }
-                Row(verticalAlignment = Alignment.CenterVertically) { SetupCheckboxV130(autoScreenRecord, { autoScreenRecord = it }); Text("Auto Screen Recording") }
+                SetupToggleRowV130("Auto Network Recording", autoRecord, { autoRecord = it })
+                SetupToggleRowV130("Auto Screen Recording", autoScreenRecord, { autoScreenRecord = it })
                 Text("Android shows the system capture confirmation before the test. The MP4 is named from the test metadata and stops when the YouTube test finishes.",style=MaterialTheme.typography.bodySmall)
-                Row(verticalAlignment = Alignment.CenterVertically) { SetupCheckboxV130(semiAuto, { semiAuto = it }); Text("Semi-auto mode (START → click video → LOADED)") }
+                SetupToggleRowV130("Semi-auto mode", semiAuto, { semiAuto = it }, "START → click video → LOADED")
                 if (semiAuto) Text("Semi-auto has no fixed test count. For EACH sample: press START on the YouTube list, then tap one video; that tap is T0. CellTracker automatically detects playback start as T1. LOADED is only the manual T1 fallback if AUTO is not confirmed. Between samples you can scroll freely. Advertisements can be corrected during report review/calibration.", style = MaterialTheme.typography.bodySmall)
                 SetupAccessibilityCardV130("YouTubeLoadingAccessibilityService") {
                     context.startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -5935,7 +5929,7 @@ private fun DeviceLogsScreen(onBack: () -> Unit) {
         }
     }
     Scaffold(topBar={TopAppBar(title={Text("Device Logs / ADB Tools")},navigationIcon={TextButton(onClick=onBack){Text("Back")}})},contentWindowInsets=WindowInsets(0,0,0,0)){pad->
-        Column(Modifier.fillMaxSize().padding(pad).padding(16.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)){
+        Column(Modifier.fillMaxSize().padding(pad).background(bunnyScreenBrush()).padding(16.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)){
             GlassSection("Shizuku · Optional privileged access") {
                 Text("Use the official Shizuku app (ADB-started or rooted) as an alternative to pairing CellTracker's own Wireless ADB. On unrooted phones, Shizuku usually needs starting again after a reboot.",
                     style = MaterialTheme.typography.bodySmall)

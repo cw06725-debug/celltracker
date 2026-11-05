@@ -194,3 +194,21 @@ fun SetupChoiceChipV130(label: String, selected: Boolean, onClick: () -> Unit, m
 }
 
 
+
+/** Shared setting row for test setup dialogs; colors and touch targets match CellTracker. */
+@Composable
+fun SetupToggleRowV130(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit, description: String = "") {
+    Surface(shape = RoundedCornerShape(16.dp), color = Color.White.copy(alpha = 0.34f)) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(label, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                if (description.isNotBlank()) Text(description, style = MaterialTheme.typography.bodySmall)
+            }
+            Switch(checked = checked, onCheckedChange = onCheckedChange,
+                colors = SwitchDefaults.colors(checkedTrackColor = Color(0xFF715AB4),
+                    checkedThumbColor = Color.White, uncheckedTrackColor = Color(0xFFE9E4F1),
+                    uncheckedBorderColor = Color(0xFFBBB0CB)))
+        }
+    }
+}

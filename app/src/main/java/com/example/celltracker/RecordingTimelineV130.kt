@@ -113,6 +113,58 @@ object RecordingTimelineV130 {
             .apply()
         return csv to srt
     }
+    /** Durable per-recording index. Never match an old test against the latest unrelated video. */
+    fun indexCompleted(context: Context, uri: Uri, session: Session, kind: String, role: String, task: String) {
+        val prefs = context.getSharedPreferences("ct_recording_sessions_v130", Context.MODE_PRIVATE)
+        val key = uri.toString()
+        val anchors = JSONArray().apply { session.anchors.forEach { put(JSONObject().put("elapsed", it.elapsedMs).put("wall", it.wallMs)) } }
+        val record = JSONObject().put("uri", key).put("kind", kind).put("role", role).put("task", task)
+            .put("startElapsed", session.start.elapsedMs).put("startWall", session.start.wallMs)
+            .put("stopElapsed", session.end.elapsedMs).put("stopWall", session.end.wallMs)
+            .put("duration", session.videoDurationMs).put("anchors", anchors)
+        prefs.edit().putString(key, record.toString()).apply()
+    }
+
+    fun findForTest(context: Context, kind: String, role: String, testStart: Long, testEnd: Long): Pair<Uri, Session>? {
+        if (testStart <= 0L || testEnd < testStart || kind.isBlank()) return null
+        val prefs = context.getSharedPreferences("ct_recording_sessions_v130", Context.MODE_PRIVATE)
+        return prefs.all.values.asSequence().filterIsInstance<String>().mapNotNull { raw ->
+            runCatching {
+                val obj = JSONObject(raw)
+                if (obj.optString("kind") != kind || (role.isNotBlank() && obj.optString("role") != role)) return@runCatching null
+                val start = obj.getLong("startWall")
+                val end = obj.getLong("stopWall")
+                // The test and recorder can start a few seconds apart due to MediaProjection consent.
+                val overlaps = start <= testEnd + 3_000L && end >= testStart - 3_000L
+                if (!overlaps) return@runCatching null
+                val arr = obj.optJSONArray("anchors") ?: JSONArray()
+                val anchors = List(arr.length()) { i -> arr.getJSONObject(i).let { Anchor(it.getLong("elapsed"), it.getLong("wall")) } }
+                val session = Session(Anchor(obj.getLong("startElapsed"), start),
+                    Anchor(obj.getLong("stopElapsed"), end), obj.getLong("duration"), anchors)
+                Triple(Uri.parse(obj.getString("uri")), session, kotlin.math.abs(start - testStart))
+            }.getOrNull()
+        }.filterNotNull().minByOrNull { it.third }?.let { it.first to it.second }
+            ?: last(context)?.takeIf { candidate ->
+                val old = context.getSharedPreferences("ct_recording_timeline", Context.MODE_PRIVATE)
+                old.getString("reviewKind", "") == kind &&
+                    (role.isBlank() || old.getString("reviewRole", "") == role) &&
+                    candidate.second.start.wallMs <= testEnd + 3_000L &&
+                    candidate.second.end.wallMs >= testStart - 3_000L
+            }
+    }
+
+    /** The legacy player reads the active timeline. Restore the matched session before opening it. */
+    fun activate(context: Context, record: Pair<Uri, Session>, kind: String) {
+        val (uri, session) = record
+        val anchors = JSONArray().apply { session.anchors.forEach { put(JSONObject().put("elapsed", it.elapsedMs).put("wall", it.wallMs)) } }
+        context.getSharedPreferences("ct_recording_timeline", Context.MODE_PRIVATE).edit()
+            .putString("uri", uri.toString()).putLong("startElapsed", session.start.elapsedMs)
+            .putLong("startWall", session.start.wallMs).putLong("stopElapsed", session.end.elapsedMs)
+            .putLong("stopWall", session.end.wallMs).putLong("duration", session.videoDurationMs)
+            .putString("anchors", anchors.toString()).putString("reviewVideoUri", uri.toString())
+            .putString("reviewKind", kind).remove("reviewedEvents").apply()
+    }
+
     fun last(context: Context): Pair<Uri, Session>? {
         val prefs = context.getSharedPreferences("ct_recording_timeline", Context.MODE_PRIVATE)
         val uri = prefs.getString("uri", "")?.takeIf { it.isNotBlank() } ?: return null
