@@ -231,3 +231,5 @@ Preview 24: Manual stall overlay millisecond display and finish confirmation; PU
 The common setup dialog and TikTok setup entry points share a gradient container. Existing test behavior is unchanged. Full UI audit/migration and Gradle/device validation are still required.
 
 Preview 31: TikTok dialog nested-scroll crash fix and shared setup gradient actions; Gradle/device validation pending.
+
+Preview 32: Test Setup button, switch, radio, chip and checkbox visual alignment. Compile/device validation pending.

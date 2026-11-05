@@ -4677,7 +4677,7 @@ private fun WhatsAppSendScreen(onBack: () -> Unit, setupOnly: Boolean = false, o
                 }
             ) {
                 Text("Open a WhatsApp chat and prepare an image. For each sample: START → ARMED → tap Send (T0) → tap SENT (T1).", style = MaterialTheme.typography.bodySmall)
-                Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(autoRecord, { autoRecord = it }); Text("Auto Network Recording") }
+                Row(verticalAlignment = Alignment.CenterVertically) { SetupCheckboxV130(autoRecord, { autoRecord = it }); Text("Auto Network Recording") }
                 SetupAccessibilityCardV130("WhatsAppSendAccessibilityService") {
                     context.startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                 }
@@ -5387,16 +5387,16 @@ private fun VideoLoadingScreen(onBack: () -> Unit, onVisualAiCollector: () -> Un
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("Visual AI Collector", style = MaterialTheme.typography.titleSmall)
                         Text("Independent screen-data collection. It does NOT use PLAY/RECS auto-result logic.", style = MaterialTheme.typography.bodySmall)
-                        Button(onClick = onVisualAiCollector, modifier = Modifier.fillMaxWidth()) { Text("OPEN VISUAL AI COLLECTOR") }
+                        GradientActionButtonV130(label = "OPEN VISUAL AI COLLECTOR", onClick = onVisualAiCollector, modifier = Modifier.fillMaxWidth())
                     }
                 }
                 OutlinedTextField(count, { count = it.filter(Char::isDigit) }, label = { Text("Test count (AUTO only)") }, singleLine = true, enabled = !semiAuto, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(timeout, { timeout = it.filter(Char::isDigit) }, label = { Text("Load timeout (s)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(returnWait, { returnWait = it.filter { c -> c.isDigit() || c == '.' } }, label = { Text("Return wait (s)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(autoRecord, { autoRecord = it }); Text("Auto Network Recording") }
-                Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(autoScreenRecord, { autoScreenRecord = it }); Text("Auto Screen Recording") }
+                Row(verticalAlignment = Alignment.CenterVertically) { SetupCheckboxV130(autoRecord, { autoRecord = it }); Text("Auto Network Recording") }
+                Row(verticalAlignment = Alignment.CenterVertically) { SetupCheckboxV130(autoScreenRecord, { autoScreenRecord = it }); Text("Auto Screen Recording") }
                 Text("Android shows the system capture confirmation before the test. The MP4 is named from the test metadata and stops when the YouTube test finishes.",style=MaterialTheme.typography.bodySmall)
-                Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(semiAuto, { semiAuto = it }); Text("Semi-auto mode (START → click video → LOADED)") }
+                Row(verticalAlignment = Alignment.CenterVertically) { SetupCheckboxV130(semiAuto, { semiAuto = it }); Text("Semi-auto mode (START → click video → LOADED)") }
                 if (semiAuto) Text("Semi-auto has no fixed test count. For EACH sample: press START on the YouTube list, then tap one video; that tap is T0. CellTracker automatically detects playback start as T1. LOADED is only the manual T1 fallback if AUTO is not confirmed. Between samples you can scroll freely. Advertisements can be corrected during report review/calibration.", style = MaterialTheme.typography.bodySmall)
                 SetupAccessibilityCardV130("YouTubeLoadingAccessibilityService") {
                     context.startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -6602,10 +6602,10 @@ private fun ScenarioTestsV1(
                     listOf(listOf("Jazz","Zong"), listOf("Ufone","Telenor")).forEach { ops ->
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             ops.forEach { op ->
-                                FilterChip(
+                                SetupChoiceChipV130(
+                                    label = op,
                                     selected = tikTokOperator.equals(op,true),
                                     onClick = { tikTokOperator=op; tikTokOperatorHint="Selected manually" },
-                                    label = { Text(op, maxLines=1) },
                                     modifier = Modifier.weight(1f)
                                 )
                             }
@@ -6615,15 +6615,15 @@ private fun ScenarioTestsV1(
                         Text("Test Mode", style = MaterialTheme.typography.titleSmall)
                         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                RadioButton(selected = tikTokLagMode=="MANUAL", onClick = { tikTokLagMode="MANUAL"; tikTokAutoSwipe=false })
+                                SetupRadioV130(selected = tikTokLagMode=="MANUAL", onClick = { tikTokLagMode="MANUAL"; tikTokAutoSwipe=false })
                                 Text("Manual · manual swipe + manual events")
                             }
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                RadioButton(selected = tikTokLagMode=="SEMI", onClick = { tikTokLagMode="SEMI"; tikTokAutoSwipe=true })
+                                SetupRadioV130(selected = tikTokLagMode=="SEMI", onClick = { tikTokLagMode="SEMI"; tikTokAutoSwipe=true })
                                 Text("Semi Auto · auto swipe + manual events")
                             }
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                RadioButton(selected = tikTokLagMode=="AUTO_BETA", onClick = { tikTokLagMode="AUTO_BETA"; tikTokAutoSwipe=true })
+                                SetupRadioV130(selected = tikTokLagMode=="AUTO_BETA", onClick = { tikTokLagMode="AUTO_BETA"; tikTokAutoSwipe=true })
                                 Text("Auto Beta · auto swipe + visual detection")
                             }
                         }
@@ -6631,7 +6631,7 @@ private fun ScenarioTestsV1(
                             Text("Static/image candidates are classified first and excluded instead of being counted as lag.", style=MaterialTheme.typography.bodySmall)
                             Text("Test length", style = MaterialTheme.typography.titleSmall)
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                RadioButton(selected=tikTokAutoRunMode=="COUNT", onClick={tikTokAutoRunMode="COUNT"})
+                                SetupRadioV130(selected=tikTokAutoRunMode=="COUNT", onClick={tikTokAutoRunMode="COUNT"})
                                 Text("By videos", modifier=Modifier.width(92.dp))
                                 OutlinedTextField(
                                     value=tikTokAutoVideoCountText,
@@ -6640,7 +6640,7 @@ private fun ScenarioTestsV1(
                                 )
                             }
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                RadioButton(selected=tikTokAutoRunMode=="DURATION", onClick={tikTokAutoRunMode="DURATION"})
+                                SetupRadioV130(selected=tikTokAutoRunMode=="DURATION", onClick={tikTokAutoRunMode="DURATION"})
                                 Text("By duration", modifier=Modifier.width(92.dp))
                                 OutlinedTextField(
                                     value=tikTokAutoDurationMinutesText,
@@ -6663,13 +6663,13 @@ private fun ScenarioTestsV1(
                     } else {
                         Text("Upload Type", style = MaterialTheme.typography.titleSmall)
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            RadioButton(selected=tikTokUploadType=="Video",onClick={tikTokUploadType="Video"});Text("Video")
+                            SetupRadioV130(selected=tikTokUploadType=="Video",onClick={tikTokUploadType="Video"});Text("Video")
                             Spacer(Modifier.width(18.dp))
-                            RadioButton(selected=tikTokUploadType=="Photo",onClick={tikTokUploadType="Photo"});Text("Photo")
+                            SetupRadioV130(selected=tikTokUploadType=="Photo",onClick={tikTokUploadType="Photo"});Text("Photo")
                         }
                         Text("Tap CellTracker POST to arm timing. Your next touch in TikTok (the real TikTok Post button) becomes T0. Tap POSTED after upload succeeds to record T1.")
                     }
-                    Surface(shape=RoundedCornerShape(16.dp), color=MaterialTheme.colorScheme.surfaceVariant) { Row(Modifier.fillMaxWidth().padding(10.dp),verticalAlignment=Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text("Auto screen recording",fontWeight=FontWeight.SemiBold); Text("Starts with the test and stops at FINISH",style=MaterialTheme.typography.bodySmall) }; Switch(checked=tikTokScreenRecord,onCheckedChange={tikTokScreenRecord=it}) } }
+                    Surface(shape=RoundedCornerShape(16.dp), color=MaterialTheme.colorScheme.surfaceVariant) { Row(Modifier.fillMaxWidth().padding(10.dp),verticalAlignment=Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text("Auto screen recording",fontWeight=FontWeight.SemiBold); Text("Starts with the test and stops at FINISH",style=MaterialTheme.typography.bodySmall) }; SetupSwitchV130(checked=tikTokScreenRecord,onCheckedChange={tikTokScreenRecord=it}) } }
                     Text("Android will show the system screen-capture confirmation before the test. Recording stops with FINISH and is saved using the task name.",style=MaterialTheme.typography.bodySmall)
                     HorizontalDivider()
                     Surface(
@@ -6698,7 +6698,8 @@ private fun ScenarioTestsV1(
                 }
             },
             confirmButton = {
-                Button(
+                GradientActionButtonV130(
+                    label = "START TEST",
                     enabled = tikTokOperator.isNotBlank(),
                     onClick = {
                         if (!isCellTrackerAccessibilityEnabledV1(context)) {
@@ -6735,7 +6736,7 @@ private fun ScenarioTestsV1(
                             } else Toast.makeText(context, "TikTok is not installed or not visible", Toast.LENGTH_SHORT).show()
                         }
                     }
-                ) { Text("START TEST") }
+                )
             },
             dismissButton = { TextButton(onClick = { tikTokTool = null }) { Text("Cancel") } }
         )

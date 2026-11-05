@@ -148,3 +148,49 @@ fun GradientActionButtonV130(
         }
     }
 }
+
+
+/** Unified selection controls for the pastel Test Setup surfaces. */
+@Composable
+fun SetupSwitchV130(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    Switch(checked = checked, onCheckedChange = onCheckedChange,
+        colors = SwitchDefaults.colors(
+            checkedThumbColor = Color.White,
+            checkedTrackColor = Color(0xFF7160B3),
+            checkedBorderColor = Color.Transparent,
+            uncheckedThumbColor = Color(0xFF9D94B3),
+            uncheckedTrackColor = Color(0xFFECE7F4),
+            uncheckedBorderColor = Color(0xFFCFC5DE)))
+}
+
+@Composable
+fun SetupRadioV130(selected: Boolean, onClick: () -> Unit) {
+    RadioButton(selected = selected, onClick = onClick,
+        colors = RadioButtonDefaults.colors(
+            selectedColor = Color(0xFF715AB4),
+            unselectedColor = Color(0xFF8D849D)))
+}
+
+@Composable
+fun SetupCheckboxV130(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    Checkbox(checked = checked, onCheckedChange = onCheckedChange,
+        colors = CheckboxDefaults.colors(
+            checkedColor = Color(0xFF715AB4),
+            uncheckedColor = Color(0xFF92869F),
+            checkmarkColor = Color.White))
+}
+
+@Composable
+fun SetupChoiceChipV130(label: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Surface(onClick = onClick, modifier = modifier.heightIn(min = 44.dp),
+        shape = RoundedCornerShape(22.dp),
+        color = if (selected) Color(0xFFE4F6EF) else Color.White.copy(alpha = .32f),
+        border = BorderStroke(1.dp, if (selected) Color(0xFF9BCFC6) else Color(0xFFD9CFE3))) {
+        Box(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), contentAlignment = Alignment.Center) {
+            Text(label, maxLines = 1, color = if (selected) Color(0xFF3F716E) else Color(0xFF655C75),
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
+        }
+    }
+}
+
+

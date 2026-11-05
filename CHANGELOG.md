@@ -1,3 +1,9 @@
+## Preview 32 — Test Setup Controls (versionCode 283)
+- TikTok: themed operator chips, radio controls, screen-recording switch, gradient START TEST.
+- YouTube: gradient Visual AI action and unified checkboxes.
+- Shared pastel selection controls with consistent selected/disabled states.
+- No test business logic changes; Android Gradle and device validation pending.
+
 ## Preview 31 — Test Setup Crash & UI Fix (versionCode 282)
 
 - Remove nested vertical scrolling in both TikTok setup dialogs to avoid infinite-height Compose layout crashes.
