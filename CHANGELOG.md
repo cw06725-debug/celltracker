@@ -1,9 +1,10 @@
-## Preview 31 — Test Setup Crash & UI Fix (versionCode 282)
+## Preview 35 (versionCode 286) — Manual Overlay Clock & Recording Toggle UI
 
-- Remove nested vertical scrolling in both TikTok setup dialogs to avoid infinite-height Compose layout crashes.
-- Use shared gradient action buttons in WhatsApp, YouTube, Call, and Speedtest setup.
-- Preserve existing test setup parameters and launch callbacks.
-- Gradle and real-device verification pending.
+- PUBG and Tamasha manual overlays now show a live local HH:mm:ss.SSS clock and a separate monotonic REC timer with Lag totals.
+- Restore a visible Auto Screen Recording label, ON/OFF state, and explanatory text in the manual setup dialog.
+- Existing finish confirmation and button spacing preserved.
+- This is a scoped partial update. Session-specific video association, report deduplication, and the Ping/ADB/Network Recording UI unification are NOT implemented in this package.
+- Full Android Gradle build and real-device testing remain pending.
 
 ## Preview 28 (versionCode 279) — Per-event video review sync
 
@@ -1688,15 +1689,3 @@ Build note: local assembleDebug could not run because this environment cannot re
 - PUBG/Tamasha setup opens as a modal over Home rather than replacing the root page.
 - Existing test-specific options and reports remain intact.
 - Other test setup dialogs have NOT yet been fully standardized; this is an incremental preview.
-
-## v1.3.0 Preview 30 (versionCode 281) — UI setup consolidation (partial)
-- Shared Test Setup surface now uses the cached lavender/pink/mint gradient instead of a flat primary-container fill.
-- TikTok Video Lag and TikTok Upload (Home and quick-launch flows) use the shared gradient dialog container, while preserving original controls, permissions, and start actions.
-- Added a reusable gradient action component for subsequent screen migrations.
-- This is a partial UI pass; report screens, legacy setup controls and all button variants are not yet fully migrated. Android Gradle build and device validation remain pending.
-
-## Preview 33 (284)
-- Group PUBG/Tamasha report lists by test date and display readable task labels instead of raw XLSX filenames.
-- Remove misleading latest-recording pending item from report history.
-- Add direct preview button when latest CellTracker recording is positively matched to the report; otherwise retain manual selection for older/unmatched videos.
-- Keep existing reports and recordings unchanged.

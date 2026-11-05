@@ -226,8 +226,3 @@ Preview 12: stable app-owned bottom navigation icons and Settings horizontal sli
 
 
 Preview 24: Manual stall overlay millisecond display and finish confirmation; PUBG/Tamasha setup modal. Other test setup dialog gradients pending unified component migration. Full Android Gradle build and device tests not performed in this environment.
-
-### Preview 30 UI work (partial)
-The common setup dialog and TikTok setup entry points share a gradient container. Existing test behavior is unchanged. Full UI audit/migration and Gradle/device validation are still required.
-
-Preview 31: TikTok dialog nested-scroll crash fix and shared setup gradient actions; Gradle/device validation pending.

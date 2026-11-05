@@ -94,9 +94,14 @@ object ManualStallReportV130 {
         }
         sheets.forEachIndexed { index, sheet ->
             files += "xl/worksheets/sheet${index+1}.xml" to buildString {
-                append("""<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><cols><col min="1" max="1" width="25" customWidth="1"/><col min="2" max="2" width="34" customWidth="1"/><col min="3" max="10" width="26" customWidth="1"/></cols><sheetData>""")
+                append("""<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><cols><col min="1" max="1" width="25" customWidth="1"/><col min="2" max="2" width="34" customWidth="1"/><col min="3" max="5" width="26" customWidth="1"/>""")
+                // Raw epoch values are retained for machine analysis, but hidden in human-facing Excel views.
+                if (sheet.first == "Lag Events") append("""<col min="6" max="7" hidden="1"/>""")
+                if (sheet.first == "Review Audit") append("""<col min="6" max="6" width="20" customWidth="1"/><col min="7" max="10" hidden="1"/>""")
+                append("</cols><sheetData>")
                 sheet.second.forEachIndexed { rowIndex, row ->
-                    append("<row r=\"${rowIndex+1}\">")
+                    val hiddenEpochRow = sheet.first == "Summary" && row.firstOrNull() in listOf("Test Start (ms)", "Test End (ms)")
+                    append("<row r=\"${rowIndex+1}\"${if (hiddenEpochRow) " hidden=\"1\"" else ""}>")
                     row.forEachIndexed { col, cell ->
                         var n = col+1; var key = ""
                         while (n > 0) { key = ('A'.code + (n-1)%26).toChar() + key; n=(n-1)/26 }
@@ -132,10 +137,10 @@ object ManualStallReportV130 {
         val readableClock = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault())
         fun readable(ms: Long) = readableClock.format(Date(ms))
         val summary = listOf(listOf("Field","Value"), listOf("Scenario",kind.label), listOf("Task",task),listOf("Device Role",role), listOf("Device Model",device), listOf("App Version",appVersion),listOf("Test Start (ms)",startMs.toString()),listOf("Test Start",readable(startMs)),listOf("Test End (ms)",endMs.toString()),listOf("Test End",readable(endMs)),listOf("Test Duration (s)",String.format(Locale.US,"%.3f",durationMs/1000.0)),listOf("Stall Count",events.size.toString()),listOf("Lag Count",events.size.toString()),listOf("Total Stall Duration (s)",String.format(Locale.US,"%.3f",totalMs/1000.0)),listOf("Stall Ratio (%)",String.format(Locale.US,"%.3f",totalMs*100.0/durationMs)),listOf("Lag Ratio (%)",String.format(Locale.US,"%.3f",totalMs*100.0/durationMs)),listOf("Operator",operator),listOf("RAT",rat), listOf("Band",band),listOf("PCI",pci),listOf("RSRP",rsrp),listOf("SINR",sinr),listOf("Source",origin))
-        val raw = listOf(listOf("Event","StartMs","EndMs","DurationMs","DurationSec","T0 Local","T1 Local")) + events.mapIndexed { i,e -> listOf((i+1).toString(),e.startMs.toString(),e.endMs.toString(),e.durationMs.toString(),String.format(Locale.US,"%.3f",e.durationMs/1000.0),readable(e.startMs),readable(e.endMs)) }
+        val raw = listOf(listOf("Event", "T0", "T1", "Duration (s)", "Duration (ms)", "StartMs", "EndMs")) + events.mapIndexed { i,e -> listOf((i+1).toString(),readable(e.startMs),readable(e.endMs),String.format(Locale.US,"%.3f",e.durationMs/1000.0),e.durationMs.toString(),e.startMs.toString(),e.endMs.toString()) }
         val auditSheets = if (reviewAudit.isEmpty()) emptyList() else listOf("Review Audit" to
-            (listOf(listOf("Event", "Original T0 ms", "Original T1 ms", "Reviewed T0 ms", "Reviewed T1 ms", "Status", "Original T0 Local", "Original T1 Local", "Reviewed T0 Local", "Reviewed T1 Local")) + reviewAudit.map { cells ->
-                cells + listOf(1,2,3,4).map { i -> cells.getOrNull(i)?.toLongOrNull()?.let(::readable).orEmpty() }
+            (listOf(listOf("Event", "Original T0", "Original T1", "Reviewed T0", "Reviewed T1", "Status", "Original T0 ms", "Original T1 ms", "Reviewed T0 ms", "Reviewed T1 ms")) + reviewAudit.map { cells ->
+                listOf(cells.getOrNull(0).orEmpty()) + listOf(1,2,3,4).map { i -> cells.getOrNull(i)?.toLongOrNull()?.let(::readable).orEmpty() } + listOf(cells.getOrNull(5).orEmpty()) + listOf(1,2,3,4).map { i -> cells.getOrNull(i).orEmpty() }
             }))
         val xlsx = workbook(listOf("Summary" to summary, "Lag Events" to raw) + auditSheets)
         val content = listOf(Triple("$base.csv","text/csv",csv), Triple("$base.xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",xlsx))
@@ -211,9 +216,9 @@ class ManualStallServiceV130 : Service() {
     private var saving=false
     private var ownsScreenRecording=false
     private var wm:WindowManager?=null;private var overlay:View?=null;private var params:WindowManager.LayoutParams?=null
-    private var statusText:TextView?=null;private var toggleButton:Button?=null
+    private var statusText:TextView?=null;private var clockText:TextView?=null;private var toggleButton:Button?=null
     private val handler=Handler(Looper.getMainLooper())
-    private val ticker=object:Runnable {override fun run(){ drawStatus(); if(startMs>0)handler.postDelayed(this,50L) }}
+    private val ticker=object:Runnable {override fun run(){ drawStatus(); if(startMs>0)handler.postDelayed(this,40L) }}
     override fun onBind(intent:Intent?)=null
     override fun onStartCommand(intent:Intent?,flags:Int,startId:Int):Int {
         try {
@@ -287,7 +292,10 @@ class ManualStallServiceV130 : Service() {
     private fun drawStatus() {
         val elapsed=(SystemClock.elapsedRealtime()-startedElapsed).coerceAtLeast(0L)
         val sum=events.sumOf{it.durationMs} + if(openElapsed!=null)(SystemClock.elapsedRealtime()-openElapsed!!).coerceAtLeast(0L) else 0L
-        statusText?.text="${kind.application}  ${elapsed/60000}:${((elapsed/1000)%60).toString().padStart(2,'0')}.${(elapsed%1000).toString().padStart(3,'0')}\nStalls ${events.size} · ${String.format(Locale.US,"%.3f",sum/1000.0)}s"
+        // Show the actual local wall clock separately from monotonic recording duration.
+        // The elapsed clock is monotonic so a network time correction cannot change test duration.
+        clockText?.text=SimpleDateFormat("HH:mm:ss.SSS",Locale.US).format(Date(System.currentTimeMillis()))
+        statusText?.text="REC ${elapsed/60000}:${((elapsed/1000)%60).toString().padStart(2,'0')}.${(elapsed%1000).toString().padStart(3,'0')}  ·  Lag ${events.size} · ${String.format(Locale.US,"%.3f",sum/1000.0)} s"
         toggleButton?.text=if(openAtMs!=null)"END" else "START"
     }
     private fun addOverlay() {
@@ -296,7 +304,8 @@ class ManualStallServiceV130 : Service() {
         fun px(value:Int)=(value*density+0.5f).toInt()
         val root=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL;setPadding(px(10),px(8),px(10),px(8));background=OverlayStyleV130.card(this@ManualStallServiceV130,.94f) }
         val header=TextView(this).apply {text="⋮⋮  CellTracker · Move";textSize=12f;setTextColor(OverlayStyleV130.secondaryTextColor(this@ManualStallServiceV130));setPadding(px(3),0,px(3),px(5))}
-        val text=TextView(this).apply {textSize=13f;setTextColor(OverlayStyleV130.textColor(this@ManualStallServiceV130));setPadding(px(3),0,px(3),px(7))};statusText=text
+        val clock=TextView(this).apply {textSize=22f;setSingleLine(true);typeface=android.graphics.Typeface.create("sans-serif-medium",android.graphics.Typeface.NORMAL);setTextColor(OverlayStyleV130.textColor(this@ManualStallServiceV130));setPadding(px(3),0,px(3),px(3))};clockText=clock
+        val text=TextView(this).apply {textSize=12f;setSingleLine(true);setTextColor(OverlayStyleV130.textColor(this@ManualStallServiceV130));setPadding(px(3),0,px(3),px(7))};statusText=text
         val toggle=Button(this).apply {this.text="START";this.isAllCaps=false;this.textSize=12f;this.setSingleLine(true);OverlayStyleV130.button(this@ManualStallServiceV130,this);setOnClickListener { command(this@ManualStallServiceV130,ACTION_TOGGLE) }};toggleButton=toggle
         val finish=Button(this).apply{this.text="FINISH";this.isAllCaps=false;this.textSize=12f;this.setSingleLine(true);OverlayStyleV130.button(this@ManualStallServiceV130,this,true)}
         val confirmPanel=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL;visibility=View.GONE }
@@ -307,7 +316,7 @@ class ManualStallServiceV130 : Service() {
         confirmPanel.addView(confirmText);confirmPanel.addView(confirmButtons)
         finish.setOnClickListener{confirmText.text=if(openAtMs!=null)"A stall is still open and will be excluded. Finish test?" else "Finish this test? Recording will stop.";confirmPanel.visibility=View.VISIBLE}
         val buttons=LinearLayout(this).apply {orientation=LinearLayout.HORIZONTAL;addView(toggle,LinearLayout.LayoutParams(0,px(44),1f));addView(View(this@ManualStallServiceV130),LinearLayout.LayoutParams(px(12),px(1)));addView(finish,LinearLayout.LayoutParams(0,px(44),1f))}
-        root.addView(header);root.addView(text);root.addView(buttons);root.addView(confirmPanel)
+        root.addView(header);root.addView(clock);root.addView(text);root.addView(buttons);root.addView(confirmPanel)
         val lp=WindowManager.LayoutParams(px(285),WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,PixelFormat.TRANSLUCENT).apply {gravity=Gravity.TOP or Gravity.START;x=px(15);y=px(110)}
         var initialX=0;var initialY=0;var downX=0f;var downY=0f
@@ -566,8 +575,14 @@ fun ManualStallScreenV130(kind: ManualStallKindV130, liveState: AppState, onBack
                     if(externalStatus.isNotBlank()) Text(externalStatus,style=MaterialTheme.typography.bodySmall)
                     Text("After recording, open Reports → ${kind.label} → Latest recording to review the video and mark stalls. The original MP4, CSV and SRT remain unchanged.",style=MaterialTheme.typography.bodySmall)
                 } else {
-                    androidx.compose.material3.Checkbox(checked=recordWithOverlay,onCheckedChange={recordWithOverlay=it},enabled=!active && !videoActive)
-                    Text(if(recordWithOverlay) "Auto Screen Recording ON · floating START/END controls remain available. FINISH stops both and saves the test." else "Screen Recording OFF · manual stall markers only.",style=MaterialTheme.typography.bodySmall)
+                    Row(modifier=Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                        androidx.compose.material3.Checkbox(checked=recordWithOverlay,onCheckedChange={recordWithOverlay=it},enabled=!active && !videoActive)
+                        Column(modifier=Modifier.weight(1f)) {
+                            Text("Auto Screen Recording",style=MaterialTheme.typography.titleSmall)
+                            Text(if(recordWithOverlay) "ON · MP4 and manual Lag markers recorded together" else "OFF · manual Lag markers only",style=MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                    Text("FINISH stops the test and any CellTracker recording after confirmation.",style=MaterialTheme.typography.bodySmall)
                     if(!permissionReady) Text("Overlay permission required to mark stalls while using ${kind.application}.",color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)
                     GradientActionV130(if(permissionReady)"START MANUAL STALL TEST" else "GRANT OVERLAY PERMISSION", {startManualTest()},Modifier.fillMaxWidth(),enabled=!active && task.isNotBlank() && !videoActive && !ManualStallStatusV130.state.value.running)
                 }
