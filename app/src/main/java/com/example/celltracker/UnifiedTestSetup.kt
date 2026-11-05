@@ -39,7 +39,7 @@ fun UnifiedTestSetupDialogV1270(
     val scrollState = rememberScrollState()
     LaunchedEffect(title) { scrollState.scrollTo(0) }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = true)) {
-        Box(Modifier.fillMaxWidth().fillMaxHeight(.90f).clip(RoundedCornerShape(28.dp))
+        Box(Modifier.fillMaxWidth().fillMaxHeight(.88f).clip(RoundedCornerShape(28.dp))
             .background(bunnyHeroBrush())) {
             Column(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(title, style=MaterialTheme.typography.headlineSmall, fontWeight=FontWeight.Bold)

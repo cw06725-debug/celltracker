@@ -1,3 +1,10 @@
+## Preview 31 — Test Setup Crash & UI Fix (versionCode 282)
+
+- Remove nested vertical scrolling in both TikTok setup dialogs to avoid infinite-height Compose layout crashes.
+- Use shared gradient action buttons in WhatsApp, YouTube, Call, and Speedtest setup.
+- Preserve existing test setup parameters and launch callbacks.
+- Gradle and real-device verification pending.
+
 ## Preview 28 (versionCode 279) — Per-event video review sync
 
 - Report event Review Video now passes report identity and event index to the player. START/END adjusts that event's T0/T1, and CONFIRM REVIEW writes changes to the report-specific review store, not the unrelated video-only marker list.

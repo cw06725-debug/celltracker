@@ -258,7 +258,7 @@ fun ThroughputScreen(onBack: () -> Unit, liveState: AppState,
                 },modifier=Modifier.fillMaxWidth()) { Text("ENABLE SPEEDTEST ACCESSIBILITY") }
             }
             Text("Each finished round: return here, enter confirmed DL and UL, then tap Complete Round. Original screen recording is stored separately. Ensure the Speedtest app uses the cellular connection under test.",style=MaterialTheme.typography.bodySmall)
-            Button(modifier=Modifier.fillMaxWidth(), enabled=(countText.toIntOrNull() ?: 0) in 1..10 && version != null, onClick={
+            GradientActionButtonV130(label="Start Test", modifier=Modifier.fillMaxWidth(), enabled=(countText.toIntOrNull() ?: 0) in 1..10 && version != null, onClick={
                 rounds.clear(); output=emptyList(); showSetup=false; onSetupFinished()
                 if (autoReadUi) SpeedtestCaptureStoreV130.arm()
                 if (!liveState.isRecording && liveState.sims.isNotEmpty()) {
@@ -269,7 +269,7 @@ fun ThroughputScreen(onBack: () -> Unit, liveState: AppState,
                 }
                 if (recordScreen) launcher.launch(projectionManager.createScreenCaptureIntent())
                 else if (!SpeedtestReportV130.launch(context)) status="Unable to launch Speedtest"
-            }) { Text("START SPEEDTEST SESSION") }
+            })
         }
     }
 }

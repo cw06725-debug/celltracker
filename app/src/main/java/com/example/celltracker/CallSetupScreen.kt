@@ -151,7 +151,8 @@ fun CallSetupScreen(
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically) {
                     TextButton(onClick = onBack, modifier = Modifier.weight(1f)) { Text("Cancel") }
-                    Button(
+                    GradientActionButtonV130(
+                        label = "Start Test",
                         onClick = {
                             showCallSetup = false
                             onSetupFinished()
@@ -165,7 +166,7 @@ fun CallSetupScreen(
                             ))
                         },
                         enabled = canStartCall, modifier = Modifier.weight(1.5f)
-                    ) { Text("Start Test") }
+                    )
                 }
             }
         ) {

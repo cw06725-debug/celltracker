@@ -4672,9 +4672,7 @@ private fun WhatsAppSendScreen(onBack: () -> Unit, setupOnly: Boolean = false, o
                         verticalAlignment = Alignment.CenterVertically) {
                         TextButton(onClick=onBack) { Text("Cancel", maxLines=1) }
                         Spacer(Modifier.width(8.dp))
-                        Button(onClick = { showSetup = false; onSetupFinished(); showMetadata = true }) {
-                            Text("Prepare Test", maxLines=1, style=MaterialTheme.typography.labelMedium)
-                        }
+                        GradientActionButtonV130(label = "Prepare Test", onClick = { showSetup = false; onSetupFinished(); showMetadata = true })
                     }
                 }
             ) {
@@ -5366,7 +5364,7 @@ private fun VideoLoadingScreen(onBack: () -> Unit, onVisualAiCollector: () -> Un
                         verticalAlignment = Alignment.CenterVertically) {
                         TextButton(onClick=onBack) { Text("Cancel", maxLines=1) }
                         Spacer(Modifier.width(8.dp))
-                Button(onClick = {
+                GradientActionButtonV130(label = "Prepare Test", onClick = {
                     pendingConfig = VideoLoadingConfig(
                         count = (count.toIntOrNull() ?: 10).coerceIn(1, 50),
                         timeoutMs = ((timeout.toLongOrNull() ?: 15) * 1000).coerceAtLeast(3000),
@@ -5376,7 +5374,7 @@ private fun VideoLoadingScreen(onBack: () -> Unit, onVisualAiCollector: () -> Un
                     showSetup = false
                     onSetupFinished()
                     showMetadata = true
-                }) { Text("Prepare Test", maxLines=1, style=MaterialTheme.typography.labelMedium) }
+                })
                     }
                 }
             ) {
@@ -6582,7 +6580,7 @@ private fun ScenarioTestsV1(
             title = { Column { Text(if (tool == "LAG") "TikTok Video Lag" else "TikTok Upload", fontWeight = FontWeight.SemiBold); Text("Test setup", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) } },
             text = {
                 Column(
-                    modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                    modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     OutlinedTextField(
@@ -6848,7 +6846,7 @@ private fun TikTokQuickLaunchDialogV123(
         },
         text = {
             Column(
-                modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 OutlinedTextField(
