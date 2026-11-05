@@ -1,6 +1,14 @@
 package com.example.celltracker
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -30,12 +38,9 @@ fun UnifiedTestSetupDialogV1270(
 ) {
     val scrollState = rememberScrollState()
     LaunchedEffect(title) { scrollState.scrollTo(0) }
-    Dialog(onDismissRequest = onDismiss) {
-        Surface(
-            modifier = Modifier.fillMaxWidth().fillMaxHeight(.90f),
-            shape = androidx.compose.foundation.shape.RoundedCornerShape(28.dp),
-            color = MaterialTheme.colorScheme.primaryContainer
-        ) {
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = true)) {
+        Box(Modifier.fillMaxWidth().fillMaxHeight(.90f).clip(RoundedCornerShape(28.dp))
+            .background(bunnyHeroBrush())) {
             Column(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(title, style=MaterialTheme.typography.headlineSmall, fontWeight=FontWeight.Bold)
                 Text("Test setup", style=MaterialTheme.typography.bodySmall,
@@ -92,6 +97,54 @@ fun SetupAccessibilityCardV130(
             OutlinedButton(onClick = onOpenSettings, modifier = Modifier.fillMaxWidth()) {
                 Text("Accessibility Settings", maxLines = 1, style = MaterialTheme.typography.labelMedium)
             }
+        }
+    }
+}
+
+
+/** Shared gradient setup dialog for legacy TikTok flows; business logic stays unchanged. */
+@Composable
+fun GradientSetupAlertDialogV130(
+    onDismissRequest: () -> Unit,
+    title: @Composable () -> Unit,
+    text: @Composable () -> Unit,
+    confirmButton: @Composable () -> Unit,
+    dismissButton: @Composable () -> Unit
+) {
+    Dialog(onDismissRequest = onDismissRequest) {
+        Box(Modifier.fillMaxWidth().fillMaxHeight(.90f)
+            .clip(RoundedCornerShape(28.dp)).background(bunnyHeroBrush())) {
+            Column(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                title()
+                Column(Modifier.weight(1f, fill = false).fillMaxWidth().verticalScroll(rememberScrollState())) {
+                    text()
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) { dismissButton() }
+                    Box(contentAlignment = Alignment.CenterEnd) { confirmButton() }
+                }
+            }
+        }
+    }
+}
+
+/** Reusable gradient primary action for new test and report screens. */
+@Composable
+fun GradientActionButtonV130(
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true
+) {
+    val gradient = Brush.horizontalGradient(listOf(Color(0xFFA46AD4), Color(0xFF7777D6), Color(0xFF54C9BE)))
+    Surface(onClick = onClick, enabled = enabled, modifier = modifier.heightIn(min = 48.dp),
+        shape = RoundedCornerShape(24.dp), color = Color.Transparent) {
+        Box(Modifier.fillMaxWidth().background(if (enabled) gradient else Brush.horizontalGradient(
+            listOf(Color(0xFFBDBAC8), Color(0xFFBDBAC8)))).padding(horizontal = 18.dp, vertical = 13.dp),
+            contentAlignment = Alignment.Center) {
+            Text(label, maxLines = 1, color = Color.White, fontWeight = FontWeight.SemiBold,
+                style = MaterialTheme.typography.labelLarge)
         }
     }
 }

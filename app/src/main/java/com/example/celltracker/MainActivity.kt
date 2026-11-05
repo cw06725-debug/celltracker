@@ -6577,7 +6577,7 @@ private fun ScenarioTestsV1(
             }
         }
         val accessibilityEnabled = isCellTrackerAccessibilityEnabledV1(context)
-        AlertDialog(
+        GradientSetupAlertDialogV130(
             onDismissRequest = { tikTokTool = null },
             title = { Column { Text(if (tool == "LAG") "TikTok Video Lag" else "TikTok Upload", fontWeight = FontWeight.SemiBold); Text("Test setup", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) } },
             text = {
@@ -6838,7 +6838,7 @@ private fun TikTokQuickLaunchDialogV123(
     }
 
     val accessibilityEnabled = isCellTrackerAccessibilityEnabledV1(context)
-    AlertDialog(
+    GradientSetupAlertDialogV130(
         onDismissRequest = onDismiss,
         title = {
             Column {

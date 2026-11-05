@@ -1,10 +1,21 @@
-## Preview 29 (versionCode 280) - Lag report corrections (partial)
-- PUBG/Tamasha report summary now has confirmed deletion for the selected XLSX and paired CSV, preserving original MP4.
-- Report UI and video-review annotation labels use Lag instead of Stall; legacy workbook field keys remain for old report compatibility.
-- Excel exports add human-readable local millisecond times, Lag Events sheet, and wider columns while retaining raw Unix milliseconds.
-- Report-specific video review no longer offers a redundant export action. Review each report event and confirm/export from the summary.
-- This is a partial UI pass. Adding new events to an already exported report and full TikTok/other test UI unification are not yet implemented.
-- Source ZIP integrity checked; Android Gradle compile and real-device tests pending.
+## Preview 28 (versionCode 279) — Per-event video review sync
+
+- Report event Review Video now passes report identity and event index to the player. START/END adjusts that event's T0/T1, and CONFIRM REVIEW writes changes to the report-specific review store, not the unrelated video-only marker list.
+- Returning to Summary reloads saved edits on lifecycle resume and refreshes reviewed totals in the summary.
+- Video player's EXPORT REPORT is hidden when reviewing a report event. Confirm all events and export once from the Summary screen; original XLSX remains unchanged.
+- PREVIEW: Android Gradle build and real-device verification remain pending. Timeline is estimated.
+
+## Preview 27 — Per-Stall Review & Calibration (versionCode 278)
+- PUBG/Tamasha saved reports show individual stall cards: original T0/T1, reviewed T0/T1, video review, edit, invalidate/restore.
+- Millisecond time edits persist per source report URI, invalidate review confirmation, and require reconfirmation before export.
+- Reviewed CSV/XLSX is a new export. XLSX adds a Review Audit sheet retaining original and adjusted event times and validity. Original XLSX and MP4 remain unchanged.
+- Video review can request seeking near the selected stall, using estimated recording time mapping; not frame-accurate. Requires the correct video to be linked.
+- Source-only preview: no Android SDK/Gradle build or real-device validation completed.
+
+## Preview 26 — CompileFix (versionCode 277)
+- Fix ManualStallTestV130 overlay confirmation TextView/Button text property shadowing.
+- Fix illegal return inside overlay-start lambda using labeled return.
+- No other feature changes. Full Android Gradle build and device validation pending.
 
 ## Preview 22 (versionCode 273)
 - Home / Cell Info root page fade-in and fade-out transitions: 580 ms.
@@ -1670,3 +1681,9 @@ Build note: local assembleDebug could not run because this environment cannot re
 - PUBG/Tamasha setup opens as a modal over Home rather than replacing the root page.
 - Existing test-specific options and reports remain intact.
 - Other test setup dialogs have NOT yet been fully standardized; this is an incremental preview.
+
+## v1.3.0 Preview 30 (versionCode 281) — UI setup consolidation (partial)
+- Shared Test Setup surface now uses the cached lavender/pink/mint gradient instead of a flat primary-container fill.
+- TikTok Video Lag and TikTok Upload (Home and quick-launch flows) use the shared gradient dialog container, while preserving original controls, permissions, and start actions.
+- Added a reusable gradient action component for subsequent screen migrations.
+- This is a partial UI pass; report screens, legacy setup controls and all button variants are not yet fully migrated. Android Gradle build and device validation remain pending.
