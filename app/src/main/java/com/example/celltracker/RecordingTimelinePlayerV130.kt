@@ -270,6 +270,13 @@ class RecordingTimelinePlayerV130 : Activity() {
                     if(event==null) Toast.makeText(this,"Event missing",Toast.LENGTH_SHORT).show()
                     else {
                         event.put("start",reportStart);event.put("end",reportEnd)
+                        // Keep the separately persisted user-added event index in sync.
+                        val originalCount=reportSaved.optInt("originalCount",Int.MAX_VALUE)
+                        val added=reportSaved.optJSONArray("addedEvents")
+                        val addedIndex=reportEventIndex-originalCount
+                        if (added != null && addedIndex >= 0 && addedIndex < added.length()) {
+                            added.optJSONObject(addedIndex)?.put("start",reportStart)?.put("end",reportEnd)
+                        }
                         reportSaved.put("confirmed",false) // All-event confirmation stays on the summary screen.
                         reportPrefs.edit().putString(reportReviewKey!!,reportSaved.toString()).commit()
                         reviewConfirmed=true
@@ -330,7 +337,7 @@ class RecordingTimelinePlayerV130 : Activity() {
                 }
             }
         }
-        if(!reportMode) reviewCard.addView(exportButton,LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,d(54)))
+        if(!reportMode && reportReviewKey.isNullOrBlank()) reviewCard.addView(exportButton,LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,d(54)))
         else reviewCard.addView(smallText("Export is available only after reviewing and confirming all events in the report summary.",12f))
         base.addView(smallText("Original MP4 is never modified. Exported event times remain ESTIMATED.",11f),
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT).apply{topMargin=d(10)})

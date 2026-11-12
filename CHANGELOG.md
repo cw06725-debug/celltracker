@@ -1,3 +1,10 @@
+## v1.3.1 Preview 2 (versionCode 290) — Recording start gate and Lag review additions
+- PUBG/Tamasha manual overlay starts its test clock only after CellTracker MediaRecorder reports recording active; waiting for landscape no longer starts a premature test clock. A 125-second timeout reports failure.
+- Added user-created Lag events in report Summary, persistent validity and editable T0/T1; confirmed review recalculates summary and replaces the original test report on export.
+- Linked-event review player keeps user-added T0/T1 updates in persistent review state.
+- Existing report-linked player does not expose a second Export action; Summary owns final export.
+- This is an incremental source preview, not a completed end-to-end YouTube/TikTok workflow refactor. No Android Gradle build or real-device regression was performed here. Recording start is still ESTIMATED relative to first video PTS.
+
 ## v1.3.1 Preview 1 (versionCode 289) — Landscape capture initialization
 
 - Bumped Android versionName to 1.3.1 and versionCode to 289.

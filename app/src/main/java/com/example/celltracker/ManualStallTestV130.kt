@@ -470,11 +470,26 @@ fun ManualStallScreenV130(kind: ManualStallKindV130, liveState: AppState, onBack
             })
             if (pendingOverlayStart) {
                 pendingOverlayStart=false
-                // The overlay test owns this recording and stops it on FINISH/CANCEL.
-                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                    startOverlayHolder[0](true)
-                    ManualStallReportV130.openOrInstall(context,kind)
-                }, 650L)
+                // Landscape capture can wait for rotation. Never start the test clock
+                // until MediaRecorder has actually started; avoid a ~60 s time offset.
+                val handler = android.os.Handler(android.os.Looper.getMainLooper())
+                val deadline = android.os.SystemClock.elapsedRealtime() + 125_000L
+                val awaitRecorder = object : Runnable {
+                    override fun run() {
+                        when {
+                            TestScreenRecordingService.isRecording -> {
+                                startOverlayHolder[0](true)
+                                ManualStallReportV130.openOrInstall(context,kind)
+                            }
+                            android.os.SystemClock.elapsedRealtime() >= deadline -> {
+                                pendingOverlayStart=false
+                                Toast.makeText(context,"Recording did not start. Test cancelled; rotate to landscape and retry.",Toast.LENGTH_LONG).show()
+                            }
+                            else -> handler.postDelayed(this,200L)
+                        }
+                    }
+                }
+                handler.post(awaitRecorder)
             } else {
                 android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
                     ManualStallReportV130.openOrInstall(context,kind)

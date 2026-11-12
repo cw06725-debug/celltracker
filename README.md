@@ -237,3 +237,7 @@ Preview 12: stable app-owned bottom navigation icons and Settings horizontal sli
 
 
 Preview 24: Manual stall overlay millisecond display and finish confirmation; PUBG/Tamasha setup modal. Other test setup dialog gradients pending unified component migration. Full Android Gradle build and device tests not performed in this environment.
+
+
+### Preview 2 validation note
+This incremental v1.3.1 preview requires GitHub Actions assembleDebug and real-device verification before use in field tests. Review report-added events and recording alignment on both PUBG and Tamasha.

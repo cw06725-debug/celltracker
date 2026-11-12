@@ -129,6 +129,7 @@ internal fun ManualStallReportDetailScreenV130(
     var reviewConfirmed by remember(uri) { mutableStateOf(false) }
     var reviewMessage by remember(uri) { mutableStateOf("") }
     var editingIndex by remember(uri) { mutableIntStateOf(-1) }
+    var addingLag by remember(uri) { mutableStateOf(false) }
     var editingStart by remember(uri) { mutableStateOf("") }
     var editingEnd by remember(uri) { mutableStateOf("") }
     var exportBusy by remember(uri) { mutableStateOf(false) }
@@ -162,7 +163,15 @@ internal fun ManualStallReportDetailScreenV130(
                 EventEdit(a, b, stored.optLong("start", a), stored.optLong("end", b), stored.optBoolean("valid", true))
             } else EventEdit(a, b, a, b, true)
         }
-        reviewConfirmed = saved.optBoolean("confirmed", false) && edits.isNotEmpty()
+        // User-added lag events are persisted separately from original XLSX rows.
+        val added = saved.optJSONArray("addedEvents") ?: JSONArray()
+        for (i in 0 until added.length()) {
+            val item = added.optJSONObject(i) ?: continue
+            val a = item.optLong("start", -1L)
+            val b = item.optLong("end", -1L)
+            if (a > 0L && b > a) edits[detail.events.size+i] = EventEdit(a,b,a,b,item.optBoolean("valid",true))
+        }
+        reviewConfirmed = saved.optBoolean("confirmed", false)
     }
     fun persistReview(confirmed: Boolean) {
         val arr = JSONArray()
@@ -170,7 +179,12 @@ internal fun ManualStallReportDetailScreenV130(
             put("originalStart",e.originalStart);put("originalEnd",e.originalEnd)
             put("start",e.start);put("end",e.end);put("valid",e.valid)
         }) }
-        reviewPrefs.edit().putString(reviewKey,JSONObject().put("events",arr).put("confirmed",confirmed).toString()).apply()
+        val originals = result?.getOrNull()?.events?.size ?: 0
+        val added = JSONArray()
+        edits.toSortedMap().filterKeys { it >= originals }.values.forEach { e ->
+            added.put(JSONObject().put("start",e.start).put("end",e.end).put("valid",e.valid))
+        }
+        reviewPrefs.edit().putString(reviewKey,JSONObject().put("events",arr).put("originalCount",originals).put("addedEvents",added).put("confirmed",confirmed).toString()).commit()
         reviewConfirmed=confirmed
     }
     val fields = result?.getOrNull()?.fields.orEmpty()
@@ -247,11 +261,10 @@ internal fun ManualStallReportDetailScreenV130(
                     Column(Modifier.fillMaxWidth().background(gradientCardBrushV130()).padding(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
                         Text("Lag Event Review",style=MaterialTheme.typography.titleMedium)
                         Text("Original: ${originalEvents.size} lag events · Reviewed: ${validEvents.size} lag events · ${"%.3f".format(Locale.US,total/1000.0)} s · ${"%.3f".format(Locale.US,100.0*total/testDuration)}%",style=MaterialTheme.typography.bodySmall)
-                        originalEvents.forEachIndexed { index, _ ->
-                            val e = edits[index] ?: return@forEachIndexed
+                        edits.toSortedMap().forEach { (index, e) ->
                             Column(Modifier.fillMaxWidth().background(gradientCardBrushV130(),RoundedCornerShape(18.dp)).padding(12.dp),verticalArrangement=Arrangement.spacedBy(7.dp)) {
                                 Text("Lag #${index+1} · ${if(e.valid) "Valid" else "Invalid"}",style=MaterialTheme.typography.titleSmall)
-                                Text("Original T0 → T1",style=MaterialTheme.typography.labelSmall)
+                                Text(if(index >= originalEvents.size) "Manually added T0 → T1" else "Original T0 → T1",style=MaterialTheme.typography.labelSmall)
                                 Text("${displayEventTime(e.originalStart)} → ${displayEventTime(e.originalEnd)}",style=MaterialTheme.typography.bodySmall)
                                 Text("Reviewed T0 → T1",style=MaterialTheme.typography.labelSmall)
                                 Text("${displayEventTime(e.start)} → ${displayEventTime(e.end)} · ${"%.3f".format(Locale.US,(e.end-e.start)/1000.0)} s",style=MaterialTheme.typography.bodySmall)
@@ -269,8 +282,14 @@ internal fun ManualStallReportDetailScreenV130(
                                 },Modifier.fillMaxWidth(),primary=false)
                             }
                         }
+                        GradientActionV130("ADD LAG EVENT",{
+                            addingLag=true
+                            val from=fields["Test Start (ms)"]?.toLongOrNull() ?: fields["Test Start"]?.let(::parseEventTime) ?: System.currentTimeMillis()
+                            editingStart=displayEventTime(from)
+                            editingEnd=displayEventTime(from+1000L)
+                        },Modifier.fillMaxWidth(),primary=false)
                         GradientActionV130(if(reviewConfirmed) "REVIEW CONFIRMED" else "CONFIRM REVIEW",{
-                            if(edits.size==originalEvents.size && edits.values.all { it.end>it.start }) {
+                            if(edits.values.all { it.end>it.start }) {
                                 persistReview(true);reviewMessage="Review confirmed. Export updates this report without adding another history entry."
                             } else reviewMessage="Some events have invalid time ranges."
                         },Modifier.fillMaxWidth())
@@ -296,6 +315,23 @@ internal fun ManualStallReportDetailScreenV130(
                         },Modifier.fillMaxWidth())
                         if(reviewMessage.isNotBlank()) Text(reviewMessage,style=MaterialTheme.typography.bodySmall)
                     }
+                }
+                if(addingLag) {
+                    AlertDialog(onDismissRequest={addingLag=false},title={Text("Add Lag Event")},
+                        text={Column(verticalArrangement=Arrangement.spacedBy(10.dp)) {
+                            Text("Use PREVIEW RECORDING to find the event, then enter its real T0/T1 time.",style=MaterialTheme.typography.bodySmall)
+                            OutlinedTextField(editingStart,{editingStart=it},label={Text("T0 · Start")},singleLine=true)
+                            OutlinedTextField(editingEnd,{editingEnd=it},label={Text("T1 · End")},singleLine=true)
+                        }},confirmButton={TextButton(onClick={
+                            val a=parseEventTime(editingStart);val b=parseEventTime(editingEnd)
+                            val from=fields["Test Start (ms)"]?.toLongOrNull() ?: fields["Test Start"]?.let(::parseEventTime)
+                            val to=fields["Test End (ms)"]?.toLongOrNull() ?: fields["Test End"]?.let(::parseEventTime)
+                            if(a!=null && b!=null && b>a && from!=null && to!=null && a>=from && b<=to) {
+                                val next=(edits.keys.maxOrNull() ?: -1)+1
+                                edits[next]=EventEdit(a,b,a,b,true);persistReview(false);addingLag=false
+                                reviewMessage="Lag added. Review and confirm all events before exporting."
+                            } else reviewMessage="Invalid event: T0/T1 must be within the test time range."
+                        }) { Text("ADD") }},dismissButton={TextButton(onClick={addingLag=false}) { Text("CANCEL") }})
                 }
                 if(editingIndex>=0) {
                     AlertDialog(onDismissRequest={editingIndex=-1},title={Text("Edit Lag #${editingIndex+1}")},
