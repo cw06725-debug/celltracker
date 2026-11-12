@@ -1,3 +1,10 @@
+## v1.3.1 Preview 1 (versionCode 289) — Landscape capture initialization
+
+- Bumped Android versionName to 1.3.1 and versionCode to 289.
+- PUBG (GAME) and Tamasha (LIVE) recording now waits for the actual display to become landscape before creating the fixed-size MediaRecorder and MediaProjection virtual display. The 120-second wait is cancellable via recording notification; failure is explicit.
+- Retains current TimeMap/SRT and report association paths; no fabricated rotation support or old-video conversion.
+- Source/ZIP checks only; Android Gradle and four-device/real-game verification pending.
+
 ## v1.3.0 Preview 37 — Recording association and shared setup controls (experimental)
 - Save each completed CellTracker recording in a durable URI/time-range/type/role index; match PUBG/Tamasha reports by actual test start/end and role, not just the latest video. Re-activate the matched timeline before preview/review.
 - Retain backward-compatible last-video matching only with validated type, role and overlapping time range.

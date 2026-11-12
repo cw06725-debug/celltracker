@@ -66,6 +66,66 @@ class TestScreenRecordingService : Service() {
         }
     }
     @Volatile private var stopping = false
+    private val orientationHandler = Handler(android.os.Looper.getMainLooper())
+    private var pendingLandscapeStart: Runnable? = null
+    private var waitingForLandscape = false
+    private val landscapeWaitTimeoutMs = 120_000L
+
+    /** Read the real display orientation, not the portrait Activity configuration. */
+    private fun isDisplayLandscape(): Boolean {
+        val metrics = DisplayMetrics()
+        @Suppress("DEPRECATION")
+        (getSystemService(WINDOW_SERVICE) as WindowManager).defaultDisplay.getRealMetrics(metrics)
+        return metrics.widthPixels > metrics.heightPixels
+    }
+
+    /** PUBG/Tamasha start from portrait setup but must initialize the encoder in landscape. */
+    private fun awaitLandscape(intent: Intent) {
+        if (waitingForLandscape) return
+        waitingForLandscape = true
+        val started = SystemClock.elapsedRealtime()
+        val stopAction = PendingIntent.getService(this, NID,
+            Intent(this, TestScreenRecordingService::class.java).apply { action = STOP },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val notification = NotificationCompat.Builder(this, CH)
+            .setSmallIcon(android.R.drawable.presence_video_online)
+            .setContentTitle("CellTracker · waiting for landscape")
+            .setContentText("Open PUBG/Tamasha in landscape to begin recording")
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Cancel", stopAction)
+            .setOngoing(true).build()
+        if (Build.VERSION.SDK_INT >= 29) startForeground(NID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+        else startForeground(NID, notification)
+        val runner = object : Runnable {
+            override fun run() {
+                if (!waitingForLandscape) return
+                when {
+                    isDisplayLandscape() -> {
+                        waitingForLandscape = false
+                        pendingLandscapeStart = null
+                        startRecording(Intent(intent).putExtra("ct_landscape_ready", true))
+                    }
+                    SystemClock.elapsedRealtime() - started >= landscapeWaitTimeoutMs -> {
+                        waitingForLandscape = false
+                        pendingLandscapeStart = null
+                        lastError = "Recording not started: landscape was not detected within 120 seconds"
+                        stopForeground(STOP_FOREGROUND_REMOVE)
+                        stopSelf()
+                    }
+                    else -> orientationHandler.postDelayed(this, 350L)
+                }
+            }
+        }
+        pendingLandscapeStart = runner
+        orientationHandler.post(runner)
+    }
+
+    private fun cancelLandscapeWait() {
+        waitingForLandscape = false
+        pendingLandscapeStart?.let { orientationHandler.removeCallbacks(it) }
+        pendingLandscapeStart = null
+    }
+
+
 
     private var diagnosticsEnabled = false
     private var diagnosticFile: File? = null
@@ -93,6 +153,12 @@ class TestScreenRecordingService : Service() {
 
     private fun startRecording(intent: Intent) {
         if (isRecording || recorderStarted) return
+        val gameKind = intent.getStringExtra(REVIEW_KIND).orEmpty().uppercase(Locale.US)
+        val isLandscapeGame = gameKind.contains("GAME") || gameKind.contains("PUBG") || gameKind.contains("TAMASHA") || gameKind.contains("STREAM") || gameKind == "LIVE"
+        if (isLandscapeGame && !intent.getBooleanExtra("ct_landscape_ready", false) && !isDisplayLandscape()) {
+            awaitLandscape(intent)
+            return
+        }
         val resultCode = intent.getIntExtra(CODE, Activity.RESULT_CANCELED)
         @Suppress("DEPRECATION")
         val data: Intent? = if (Build.VERSION.SDK_INT >= 33) {
@@ -151,6 +217,7 @@ class TestScreenRecordingService : Service() {
             val width = (metrics.widthPixels / 2) * 2
             val height = (metrics.heightPixels / 2) * 2
             diag("Display raw=${metrics.widthPixels}x${metrics.heightPixels} densityDpi=${metrics.densityDpi}; capture=${width}x${height}")
+            if (isLandscapeGame && width <= height) error("Landscape recording requires a landscape display; reopen the game and retry")
 
             recorder = if (Build.VERSION.SDK_INT >= 31) MediaRecorder(this) else @Suppress("DEPRECATION") MediaRecorder()
             recorder!!.apply {
@@ -225,6 +292,12 @@ class TestScreenRecordingService : Service() {
     }
 
     private fun stopRecording() {
+        if (waitingForLandscape) {
+            cancelLandscapeWait()
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return
+        }
         if (stopping) return
         if (!isRecording && !recorderStarted) {
             stopSelf()
@@ -371,6 +444,7 @@ class TestScreenRecordingService : Service() {
     }
 
     override fun onDestroy() {
+        cancelLandscapeWait()
         if (isRecording || recorderStarted) stopRecording()
         super.onDestroy()
     }

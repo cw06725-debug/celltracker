@@ -1,3 +1,14 @@
+# CellTracker v1.3.1 · Preview 1 (versionCode 289)
+
+**PREVIEW — not a verified stable release.** Based on v1.3.0 Preview 37. Android Gradle compilation and real-device tests remain pending.
+
+## Landscape gameplay recording fix
+
+PUBG Gaming and Tamasha Live Streaming previously initialized MediaRecorder while the test setup/consent UI was portrait, locking the MP4 to a portrait encoder canvas even when the game rotated to landscape. The shared TestScreenRecordingService now waits (up to 120 seconds) for a **real landscape display** before creating the recorder, virtual display, and MP4. During the wait a foreground notification says to open the game; Stop/Cancel cancels the pending recording. If the game never becomes landscape, the service exits with an explicit error rather than silently recording a tiny game image inside portrait black bars.
+
+**Testing:** start the PUBG/Tamasha screen recording, approve Android capture, then open the game in landscape. Confirm that the saved MP4 metadata reports width > height and that playback fills a landscape player. Confirm that video duration and TimeMap/SRT continue to align to actual recorder start. If recording must begin while still portrait or if the game rotates mid-recording, this implementation does **not** dynamically change the fixed MediaRecorder encoder resolution; a new capture session is required. The Android 14+ capture permission dialog may offer single-app vs entire-screen capture; use entire screen for a gameplay session spanning app transitions. This change does not rewrite old portrait MP4s.
+
+All existing recording/report association, test UIs, data collection and report history are carried over unchanged from Preview 37.
 ## Preview 28 (versionCode 279) — Per-event video review sync
 
 - Report event Review Video now passes report identity and event index to the player. START/END adjusts that event's T0/T1, and CONFIRM REVIEW writes changes to the report-specific review store, not the unrelated video-only marker list.
