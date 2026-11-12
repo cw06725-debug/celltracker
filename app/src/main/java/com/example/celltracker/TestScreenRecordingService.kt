@@ -153,6 +153,7 @@ class TestScreenRecordingService : Service() {
 
     private fun startRecording(intent: Intent) {
         if (isRecording || recorderStarted) return
+        if (!waitingForLandscape) lastError = ""
         val gameKind = intent.getStringExtra(REVIEW_KIND).orEmpty().uppercase(Locale.US)
         val isLandscapeGame = gameKind.contains("GAME") || gameKind.contains("PUBG") || gameKind.contains("TAMASHA") || gameKind.contains("STREAM") || gameKind == "LIVE"
         if (isLandscapeGame && !intent.getBooleanExtra("ct_landscape_ready", false) && !isDisplayLandscape()) {

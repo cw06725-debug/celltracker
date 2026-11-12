@@ -470,6 +470,12 @@ fun ManualStallScreenV130(kind: ManualStallKindV130, liveState: AppState, onBack
             })
             if (pendingOverlayStart) {
                 pendingOverlayStart=false
+                // The capture service waits for landscape before starting its encoder.
+                // Open the target app automatically after consent so the display can rotate;
+                // otherwise the old flow waited silently for up to two minutes.
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    ManualStallReportV130.openOrInstall(context, kind)
+                }, 500L)
                 // Landscape capture can wait for rotation. Never start the test clock
                 // until MediaRecorder has actually started; avoid a ~60 s time offset.
                 val handler = android.os.Handler(android.os.Looper.getMainLooper())
@@ -479,11 +485,12 @@ fun ManualStallScreenV130(kind: ManualStallKindV130, liveState: AppState, onBack
                         when {
                             TestScreenRecordingService.isRecording -> {
                                 startOverlayHolder[0](true)
-                                ManualStallReportV130.openOrInstall(context,kind)
+                            }
+                            TestScreenRecordingService.lastError.isNotBlank() -> {
+                                Toast.makeText(context, TestScreenRecordingService.lastError, Toast.LENGTH_LONG).show()
                             }
                             android.os.SystemClock.elapsedRealtime() >= deadline -> {
-                                pendingOverlayStart=false
-                                Toast.makeText(context,"Recording did not start. Test cancelled; rotate to landscape and retry.",Toast.LENGTH_LONG).show()
+                                Toast.makeText(context,"Recording did not start. Return to CellTracker and retry.",Toast.LENGTH_LONG).show()
                             }
                             else -> handler.postDelayed(this,200L)
                         }
